@@ -234,38 +234,39 @@ class FlowExtractor:
             col_count = len(table.rows[0]) if table.rows else 0
             logger.info("分析表格#%d: %d行 x %d列", table_idx, len(table.rows), col_count)
             
-            # AI分析表格
-            if not self.table_analyzer:
-                logger.warning("AI不可用，跳过表格分析")
-                continue
-            
-            mapping = self.table_analyzer.analyze_table(table)
-            
-            if mapping and mapping.is_flow_table:
-                # 是流水表格，保存映射供后续表格复用
-                doc_flow_mappings[col_count] = mapping
+            # 优先检查是否有可复用的映射（文档内统一映射）
+            mapping = None
+            if col_count in doc_flow_mappings:
+                mapping = doc_flow_mappings[col_count]
+                logger.info("表格#%d 复用已有的流水映射 (列数=%d)", table_idx, col_count)
                 stats['flow_tables'] += 1
-                logger.info("表格#%d 是流水表格 (confidence=%d%%)", 
-                           table_idx, mapping.confidence)
             else:
-                # AI判断不是流水表格，但检查是否可以复用之前的映射
-                # 条件：列数相同，且之前有成功识别的流水表格
-                if col_count in doc_flow_mappings:
-                    mapping = doc_flow_mappings[col_count]
-                    logger.info("表格#%d 复用之前的流水映射 (列数=%d)", table_idx, col_count)
+                # 尝试找列数接近的映射（允许±1列的误差，处理OCR问题）
+                for cached_col_count, cached_mapping in doc_flow_mappings.items():
+                    if abs(cached_col_count - col_count) <= 1:
+                        mapping = cached_mapping
+                        logger.info("表格#%d 复用相近列数的流水映射 (%d vs %d)", 
+                                   table_idx, col_count, cached_col_count)
+                        stats['flow_tables'] += 1
+                        break
+            
+            # 如果没有可复用的映射，才调用AI分析
+            if mapping is None:
+                if not self.table_analyzer:
+                    logger.warning("AI不可用，跳过表格分析")
+                    continue
+                
+                mapping = self.table_analyzer.analyze_table(table, document_name=doc_path.name)
+                
+                if mapping and mapping.is_flow_table:
+                    # 是流水表格，保存映射供后续表格复用
+                    doc_flow_mappings[col_count] = mapping
                     stats['flow_tables'] += 1
+                    logger.info("表格#%d 是流水表格 (confidence=%d%%)", 
+                               table_idx, mapping.confidence)
                 else:
-                    # 尝试找列数接近的映射（允许±1列的误差，处理OCR问题）
-                    for cached_col_count, cached_mapping in doc_flow_mappings.items():
-                        if abs(cached_col_count - col_count) <= 1:
-                            mapping = cached_mapping
-                            logger.info("表格#%d 复用相近列数的流水映射 (%d vs %d)", 
-                                       table_idx, col_count, cached_col_count)
-                            stats['flow_tables'] += 1
-                            break
-                    else:
-                        logger.info("表格#%d 不是流水表格，跳过", table_idx)
-                        continue
+                    logger.info("表格#%d 不是流水表格，跳过", table_idx)
+                    continue
             
             # 提取流水记录
             if mapping and mapping.is_flow_table:
@@ -280,8 +281,6 @@ class FlowExtractor:
             first_mapping = next(iter(doc_flow_mappings.values()))
             self.cache.set(task_id, doc_cache_key, first_mapping, doc_path)
             logger.info("保存文档级流水映射缓存: %s", doc_path.name)
-        
-        return records, stats
         
         return records, stats
     
