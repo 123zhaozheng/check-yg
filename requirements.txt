@@ -1,0 +1,23 @@
+# GUI Framework
+PyQt5>=5.15.0,<5.16
+
+# Document Parsing
+python-docx>=0.8.11
+openpyxl>=3.0.0
+pikepdf>=8.0.0
+
+# Data Processing
+pandas>=1.3.0
+
+# HTTP Requests
+requests>=2.25.0
+
+# Configuration
+PyYAML>=5.4.0
+
+# HTML Parsing
+beautifulsoup4>=4.9.0
+lxml>=4.6.0
+
+# Fuzzy Matching
+python-Levenshtein>=0.12.0
