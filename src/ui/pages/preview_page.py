@@ -9,14 +9,14 @@ from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
     QPushButton, QMessageBox, QLineEdit, QTableWidget,
     QTableWidgetItem, QHeaderView, QAbstractItemView,
-    QFrame, QGraphicsDropShadowEffect
+    QFrame, QFileDialog
 )
-from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor, QBrush, QFont
 
 from ..widgets import Card, StatCardRow
 from ..styles import COLORS
-from ...core.extractor import ExtractionResult
+from ...core.extraction_result import ExtractionResult
 from ...parsers.base import FlowRecord
 from ...export_flows import FlowExporter
 from ...config import get_config
@@ -58,7 +58,7 @@ class FlowPreviewTable(QWidget):
         search_layout = QHBoxLayout()
         search_layout.setSpacing(12)
         
-        # Search icon and input
+        # Search input
         search_container = QFrame()
         search_container.setStyleSheet(f"""
             QFrame {{
@@ -73,10 +73,6 @@ class FlowPreviewTable(QWidget):
         search_container_layout = QHBoxLayout(search_container)
         search_container_layout.setContentsMargins(12, 0, 12, 0)
         search_container_layout.setSpacing(8)
-        
-        search_icon = QLabel("🔍")
-        search_icon.setStyleSheet(f"color: {COLORS['text_light']}; font-size: 14px;")
-        search_container_layout.addWidget(search_icon)
         
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("搜索任意列内容...")
@@ -93,15 +89,15 @@ class FlowPreviewTable(QWidget):
         search_container_layout.addWidget(self.search_input, 1)
         
         # Clear button
-        self.clear_btn = QPushButton("✕")
-        self.clear_btn.setFixedSize(24, 24)
+        self.clear_btn = QPushButton("清空")
+        self.clear_btn.setFixedSize(48, 24)
         self.clear_btn.setCursor(Qt.PointingHandCursor)
         self.clear_btn.setStyleSheet(f"""
             QPushButton {{
                 background-color: transparent;
                 border: none;
                 color: {COLORS['text_light']};
-                font-size: 12px;
+                font-size: 11px;
                 border-radius: 12px;
             }}
             QPushButton:hover {{
@@ -406,13 +402,10 @@ class FlowPreviewTable(QWidget):
 class PreviewPage(QWidget):
     """
     Flow preview page for displaying extraction results
-    - Task info display
     - Statistics cards (documents, records, total amount)
     - Searchable/sortable flow table
-    - Export and audit actions
+    - Export action
     """
-    
-    start_audit = pyqtSignal()  # Signal to start audit
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -450,96 +443,6 @@ class PreviewPage(QWidget):
         header_layout.addStretch()
         
         layout.addLayout(header_layout)
-        
-        # Task info card
-        task_card = Card(padding=16)
-        task_info_layout = QHBoxLayout()
-        task_info_layout.setSpacing(24)
-        
-        # Task ID
-        task_id_container = QVBoxLayout()
-        task_id_label = QLabel("任务编号")
-        task_id_label.setStyleSheet(f"""
-            font-size: 11px;
-            color: {COLORS['text_light']};
-            text-transform: uppercase;
-            letter-spacing: 1px;
-        """)
-        task_id_container.addWidget(task_id_label)
-        
-        self.task_id_value = QLabel("--")
-        self.task_id_value.setStyleSheet(f"""
-            font-size: 14px;
-            font-weight: 600;
-            color: {COLORS['primary']};
-            font-family: Consolas, monospace;
-        """)
-        task_id_container.addWidget(self.task_id_value)
-        task_info_layout.addLayout(task_id_container)
-        
-        # Extraction time
-        time_container = QVBoxLayout()
-        time_label = QLabel("提取时间")
-        time_label.setStyleSheet(f"""
-            font-size: 11px;
-            color: {COLORS['text_light']};
-            text-transform: uppercase;
-            letter-spacing: 1px;
-        """)
-        time_container.addWidget(time_label)
-        
-        self.time_value = QLabel("--")
-        self.time_value.setStyleSheet(f"""
-            font-size: 14px;
-            font-weight: 500;
-            color: {COLORS['text_primary']};
-        """)
-        time_container.addWidget(self.time_value)
-        task_info_layout.addLayout(time_container)
-        
-        # Document count
-        doc_container = QVBoxLayout()
-        doc_label = QLabel("文档数量")
-        doc_label.setStyleSheet(f"""
-            font-size: 11px;
-            color: {COLORS['text_light']};
-            text-transform: uppercase;
-            letter-spacing: 1px;
-        """)
-        doc_container.addWidget(doc_label)
-        
-        self.doc_value = QLabel("0")
-        self.doc_value.setStyleSheet(f"""
-            font-size: 14px;
-            font-weight: 500;
-            color: {COLORS['text_primary']};
-        """)
-        doc_container.addWidget(self.doc_value)
-        task_info_layout.addLayout(doc_container)
-        
-        # Table count
-        table_container = QVBoxLayout()
-        table_label = QLabel("表格数量")
-        table_label.setStyleSheet(f"""
-            font-size: 11px;
-            color: {COLORS['text_light']};
-            text-transform: uppercase;
-            letter-spacing: 1px;
-        """)
-        table_container.addWidget(table_label)
-        
-        self.table_value = QLabel("0")
-        self.table_value.setStyleSheet(f"""
-            font-size: 14px;
-            font-weight: 500;
-            color: {COLORS['text_primary']};
-        """)
-        table_container.addWidget(self.table_value)
-        task_info_layout.addLayout(table_container)
-        
-        task_info_layout.addStretch()
-        task_card.layout.addLayout(task_info_layout)
-        layout.addWidget(task_card)
         
         # Statistics cards row
         self.stats_row = StatCardRow()
@@ -585,18 +488,7 @@ class PreviewPage(QWidget):
         self.export_btn.clicked.connect(self._export_excel)
         action_layout.addWidget(self.export_btn)
         
-        # Start audit button
-        self.audit_btn = QPushButton("🔍  开始审查")
-        self.audit_btn.setObjectName("primary_btn")
-        self.audit_btn.setMinimumSize(120, 40)
-        self.audit_btn.setCursor(Qt.PointingHandCursor)
-        self.audit_btn.clicked.connect(self._on_start_audit)
-        action_layout.addWidget(self.audit_btn)
-        
         layout.addLayout(action_layout)
-
-    # 添加审查请求信号
-    audit_requested = pyqtSignal(str)  # 携带流水Excel路径
     
     def set_extraction_result(self, result: ExtractionResult) -> None:
         """
@@ -607,24 +499,8 @@ class PreviewPage(QWidget):
         """
         self.result = result
         
-        # 更新任务信息
-        self.task_id_value.setText(result.task_id)
-        
-        # 格式化时间
-        try:
-            from datetime import datetime
-            dt = datetime.fromisoformat(result.task_time)
-            time_str = dt.strftime("%Y-%m-%d %H:%M:%S")
-        except (ValueError, TypeError):
-            time_str = result.task_time
-        self.time_value.setText(time_str)
-        
-        # 更新文档和表格数量
-        self.doc_value.setText(str(result.processed_documents))
-        self.table_value.setText(f"{result.flow_tables}/{result.total_tables}")
-        
         # 更新统计卡片
-        self.stat_docs.update_value(str(result.processed_documents))
+        self.stat_docs.update_value(str(result.total_documents))
         self.stat_records.update_value(str(result.total_records))
         self.stat_amount.update_value(f"¥{result.total_amount:,.2f}")
         
@@ -651,8 +527,12 @@ class PreviewPage(QWidget):
             return None
         
         try:
-            # 创建导出器并导出
-            exporter = FlowExporter()
+            output_dir = QFileDialog.getExistingDirectory(
+                self, "选择导出目录", "", QFileDialog.ShowDirsOnly
+            )
+            if not output_dir:
+                return None
+            exporter = FlowExporter(output_folder=Path(output_dir))
             output_path = exporter.export(
                 records=self.result.flow_records,
                 task_id=self.result.task_id
@@ -675,46 +555,9 @@ class PreviewPage(QWidget):
             )
             return None
     
-    def _on_start_audit(self) -> None:
-        """
-        处理开始审查按钮点击
-        1. 导出流水Excel
-        2. 发出审查请求信号
-        """
-        # 检查是否有数据
-        if not self.result or not self.result.flow_records:
-            QMessageBox.warning(
-                self,
-                "无法开始审查",
-                "没有流水记录，请先提取流水数据。"
-            )
-            return
-        
-        try:
-            # 导出流水Excel
-            exporter = FlowExporter()
-            output_path = exporter.export(
-                records=self.result.flow_records,
-                task_id=self.result.task_id
-            )
-            
-            # 发出审查请求信号
-            self.audit_requested.emit(str(output_path))
-            
-        except Exception as e:
-            QMessageBox.critical(
-                self,
-                "导出失败",
-                f"导出流水数据时发生错误:\n{str(e)}\n\n无法开始审查。"
-            )
-    
     def clear(self) -> None:
         """清空页面数据"""
         self.result = None
-        self.task_id_value.setText("--")
-        self.time_value.setText("--")
-        self.doc_value.setText("0")
-        self.table_value.setText("0")
         self.stat_docs.update_value("0")
         self.stat_records.update_value("0")
         self.stat_amount.update_value("¥0.00")

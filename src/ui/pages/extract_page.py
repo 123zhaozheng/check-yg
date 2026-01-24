@@ -6,8 +6,8 @@ Extract page - Flow extraction UI with progress tracking
 from datetime import datetime
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
-    QPushButton, QMessageBox, QLineEdit,
-    QApplication
+    QPushButton, QMessageBox,
+    QApplication, QSizePolicy
 )
 from PyQt5.QtCore import pyqtSignal, QTimer, QThread, QObject
 
@@ -161,6 +161,7 @@ class ExtractPage(QWidget):
             placeholder="选择文档目录...",
             mode="folder"
         )
+        self.folder_selector.path_changed.connect(self._on_folder_changed)
         folder_card.layout.addWidget(self.folder_selector)
         
         # Supported formats hint
@@ -170,86 +171,6 @@ class ExtractPage(QWidget):
         
         left_column.addWidget(folder_card)
         
-        # Extraction config card
-        config_card = Card()
-        config_card.add_title("提取配置")
-        
-        config_desc = QLabel("配置AI提取参数")
-        config_desc.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px; margin-bottom: 12px;")
-        config_desc.setWordWrap(True)
-        config_card.layout.addWidget(config_desc)
-        
-        # Rows per batch
-        rows_layout = QHBoxLayout()
-        rows_label = QLabel("每次给AI的行数：")
-        rows_label.setStyleSheet(f"""
-            font-size: 13px;
-            color: {COLORS['text_primary']};
-            font-weight: 500;
-            min-width: 120px;
-        """)
-        rows_layout.addWidget(rows_label)
-        
-        self.rows_input = QLineEdit()
-        self.rows_input.setText(str(self.config.flow_batch_size))
-        self.rows_input.setMinimumHeight(36)
-        self.rows_input.setMinimumWidth(150)
-        self.rows_input.setStyleSheet(f"""
-            QLineEdit {{
-                background-color: {COLORS['card']};
-                border: 1px solid {COLORS['border']};
-                border-radius: 6px;
-                padding: 8px 12px;
-                color: {COLORS['text_primary']};
-                font-size: 13px;
-            }}
-            QLineEdit:focus {{
-                border-color: {COLORS['primary']};
-            }}
-        """)
-        rows_layout.addWidget(self.rows_input)
-        rows_layout.addStretch()
-        config_card.layout.addLayout(rows_layout)
-        
-        # Confidence threshold
-        threshold_layout = QHBoxLayout()
-        threshold_label = QLabel("AI置信度阈值：")
-        threshold_label.setStyleSheet(f"""
-            font-size: 13px;
-            color: {COLORS['text_primary']};
-            font-weight: 500;
-            min-width: 120px;
-        """)
-        threshold_layout.addWidget(threshold_label)
-        
-        self.threshold_input = QLineEdit()
-        self.threshold_input.setText(str(self.config.flow_confidence_threshold))
-        self.threshold_input.setMinimumHeight(36)
-        self.threshold_input.setMinimumWidth(150)
-        self.threshold_input.setStyleSheet(f"""
-            QLineEdit {{
-                background-color: {COLORS['card']};
-                border: 1px solid {COLORS['border']};
-                border-radius: 6px;
-                padding: 8px 12px;
-                color: {COLORS['text_primary']};
-                font-size: 13px;
-            }}
-            QLineEdit:focus {{
-                border-color: {COLORS['primary']};
-            }}
-        """)
-        threshold_layout.addWidget(self.threshold_input)
-        threshold_layout.addStretch()
-        config_card.layout.addLayout(threshold_layout)
-        
-        # Config hint
-        config_hint = QLabel("注：更高的阈值会减少误判，但可能漏掉部分流水表格")
-        config_hint.setStyleSheet(f"color: {COLORS['text_light']}; font-size: 11px; margin-top: 4px;")
-        config_hint.setWordWrap(True)
-        config_card.layout.addWidget(config_hint)
-        
-        left_column.addWidget(config_card)
         left_column.addStretch()
         
         content_layout.addLayout(left_column, 1)
@@ -260,9 +181,9 @@ class ExtractPage(QWidget):
         
         # Statistics cards row
         stats_row = StatCardRow()
-        stats_row.add_stat("当前文档", "0", "文档", COLORS['primary'])
-        stats_row.add_stat("当前表格", "0", "表格", COLORS['text_primary'])
-        stats_row.add_stat("流水条数", "0", "记录", COLORS['success'])
+        stats_row.add_stat("文档数", "0", "个", COLORS['primary'])
+        stats_row.add_stat("已处理", "0", "个", COLORS['text_primary'])
+        stats_row.add_stat("流水条数", "0", "条", COLORS['success'])
         self.stats_row = stats_row
         right_column.addWidget(stats_row)
         
@@ -289,7 +210,9 @@ class ExtractPage(QWidget):
         # Progress card
         self.progress_card = ProgressCard(title="提取进度")
         self.progress_card.cancel_requested.connect(self._on_cancel)
-        right_column.addWidget(self.progress_card)
+        self.progress_card.setMinimumHeight(240)
+        self.progress_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        right_column.addWidget(self.progress_card, 1)
         
         content_layout.addLayout(right_column, 1)
         
@@ -322,37 +245,8 @@ class ExtractPage(QWidget):
             )
             return
         
-        # Validate rows input
-        try:
-            rows = int(self.rows_input.text())
-            if rows < 1 or rows > 100:
-                QMessageBox.warning(
-                    self, "参数无效",
-                    "每次给AI的行数必须在 1-100 之间"
-                )
-                return
-        except ValueError:
-            QMessageBox.warning(
-                self, "参数无效",
-                "请输入有效的行数（整数）"
-            )
-            return
-        
-        # Validate threshold input
-        try:
-            threshold = int(self.threshold_input.text())
-            if threshold < 0 or threshold > 100:
-                QMessageBox.warning(
-                    self, "参数无效",
-                    "AI置信度阈值必须在 0-100 之间"
-                )
-                return
-        except ValueError:
-            QMessageBox.warning(
-                self, "参数无效",
-                "请输入有效的阈值（整数）"
-            )
-            return
+        rows = int(self.config.flow_batch_size)
+        threshold = int(self.config.flow_confidence_threshold)
         
         # Update task ID
         self.task_id_display.setText(self._generate_task_id())
@@ -411,8 +305,8 @@ class ExtractPage(QWidget):
         card0 = self.stats_row.get_card(0)
         card1 = self.stats_row.get_card(1)
         card2 = self.stats_row.get_card(2)
-        if card0: card0.set_value(str(result.processed_documents))
-        if card1: card1.set_value(str(result.flow_tables))
+        if card0: card0.set_value(str(result.total_documents))
+        if card1: card1.set_value(str(result.processed_documents))
         if card2: card2.set_value(str(result.total_records))
         
         # Finish progress
@@ -464,41 +358,52 @@ class ExtractPage(QWidget):
         if "正在处理:" in message:
             filename = message.split("正在处理:")[-1].strip()
             self.current_file_display.setText(filename)
+        elif "正在标准化:" in message:
+            filename = message.split("正在标准化:")[-1].strip()
+            self.current_file_display.setText(filename)
+        
+        if "阶段1/2 已发现" in message and total > 0:
+            card0 = self.stats_row.get_card(0)
+            if card0:
+                card0.set_value(str(total))
+        
+        if "阶段1/2" in message and total > 0 and "阶段2/2" not in message:
+            card1 = self.stats_row.get_card(1)
+            if card1:
+                card1.set_value(str(current))
         
         # Update progress bar
         if total > 0:
             self.progress_card.update_progress(current, total)
         
-        # Update stats from message
-        if "提取了" in message and "条流水" in message:
-            # Extract count from message like "提取了 25 条流水: xxx.pdf"
-            try:
-                count = int(message.split("提取了")[1].split("条流水")[0].strip())
-                card2 = self.stats_row.get_card(2)
-                if card2 and card2.value_label:
-                    current_total = int(card2.value_label.text()) + count
-                    card2.set_value(str(current_total))
-            except (ValueError, IndexError):
-                pass
+        # Update progress bar
+        if total > 0:
+            self.progress_card.update_progress(current, total)
     
     def _on_cancel(self) -> None:
         """Handle cancel request"""
         if self._worker:
             self._worker.cancel()
         self.current_file_display.setText("正在取消...")
+
+    def _on_folder_changed(self, path: str) -> None:
+        """Update document count after folder selection"""
+        if not path:
+            return
+        try:
+            from ...core.scanner import DocumentScanner
+            scanner = DocumentScanner()
+            documents = scanner.scan_directory(path)
+            card0 = self.stats_row.get_card(0)
+            if card0:
+                card0.set_value(str(len(documents)))
+        except Exception:
+            pass
     
     def get_config(self) -> dict:
         """Get current extraction configuration"""
-        try:
-            rows = int(self.rows_input.text())
-        except ValueError:
-            rows = self.config.flow_preview_rows
-        
-        try:
-            threshold = int(self.threshold_input.text())
-        except ValueError:
-            threshold = self.config.flow_confidence_threshold
-        
+        rows = int(self.config.flow_batch_size)
+        threshold = int(self.config.flow_confidence_threshold)
         return {
             'rows': rows,
             'threshold': threshold,

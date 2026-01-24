@@ -98,7 +98,12 @@ class FlowExtractorV2:
 
         self.progress.report(f"正在扫描文档目录: {document_folder}", status=ProgressStatus.RUNNING)
         documents = self.scanner.scan_directory(document_folder)
-        self.progress.report(f"发现 {len(documents)} 个文档", len(documents), len(documents))
+        self._stage1_total_docs = len(documents)
+        self.progress.report(
+            f"阶段1/2 已发现 {len(documents)} 个文档",
+            0,
+            max(1, len(documents))
+        )
 
         self.checkpoints.start_task(task_id, [p.name for p in documents])
         existing_states = {
@@ -106,6 +111,7 @@ class FlowExtractorV2:
             for state in self.checkpoints.list_document_states(task_id)
             if state.get("document_name")
         }
+        total_stage2_rows = 0
 
         result = ExtractionResult(
             task_id=task_id,
@@ -121,18 +127,32 @@ class FlowExtractorV2:
         stage2_doc_names: List[str] = []
 
         # Stage 1: serial classification
+        processed_docs = 0
         for idx, doc_path in enumerate(documents):
             if self._cancel_requested:
                 self.progress.report("提取已取消", status=ProgressStatus.CANCELED)
                 break
 
-            self.progress.report(f"正在处理: {doc_path.name}", idx + 1, len(documents))
+            total_units = self._stage1_total_docs + total_stage2_rows
+            self.progress.report(
+                f"阶段1/2 正在处理: {doc_path.name}",
+                processed_docs,
+                max(1, total_units)
+            )
             existing_state = existing_states.get(doc_path.name)
             if existing_state and existing_state.get("status") in ("stage1_done", "stage2_running", "completed"):
                 stage2_doc_names.append(doc_path.name)
                 result.total_tables += int(existing_state.get("total_tables", 0) or 0)
                 result.flow_tables += int(existing_state.get("flow_tables_count", 0) or 0)
                 result.processed_documents += 1
+                total_stage2_rows += int(existing_state.get("total_flow_rows", 0) or 0)
+                processed_docs += 1
+                total_units = self._stage1_total_docs + total_stage2_rows
+                self.progress.report(
+                    f"阶段1/2 已处理: {doc_path.name}",
+                    processed_docs,
+                    max(1, total_units)
+                )
                 for err in existing_state.get("errors", []):
                     result.errors.append({
                         "document": doc_path.name,
@@ -148,6 +168,14 @@ class FlowExtractorV2:
                 result.total_tables += stats["total_tables"]
                 result.flow_tables += stats["flow_tables"]
                 result.processed_documents += 1
+                total_stage2_rows += int(doc_state.get("total_flow_rows", 0) or 0)
+                processed_docs += 1
+                total_units = self._stage1_total_docs + total_stage2_rows
+                self.progress.report(
+                    f"阶段1/2 已处理: {doc_path.name}",
+                    processed_docs,
+                    max(1, total_units)
+                )
                 for err in doc_state.get("errors", []):
                     result.errors.append({
                         "document": doc_path.name,
@@ -165,7 +193,7 @@ class FlowExtractorV2:
 
         # Stage 2: parallel normalization
         flow_records = self._process_documents_stage2(
-            stage2_doc_names, task_id, batch_size, workers, result
+            stage2_doc_names, task_id, batch_size, workers, result, total_stage2_rows
         )
         result.flow_records.extend(flow_records)
         result.total_records = len(result.flow_records)
@@ -192,6 +220,7 @@ class FlowExtractorV2:
             "flow_tables": [],
             "total_tables": 0,
             "flow_tables_count": 0,
+            "total_flow_rows": 0,
             "errors": []
         }
 
@@ -262,6 +291,7 @@ class FlowExtractorV2:
                 "data_start_row": data_start_row,
                 "rows": table_rows
             })
+            state["total_flow_rows"] += len(table_rows)
 
             self.checkpoints.save_document_state(task_id, doc_path.name, state)
 
@@ -277,12 +307,15 @@ class FlowExtractorV2:
         task_id: str,
         batch_size: int,
         workers: int,
-        result: ExtractionResult
+        result: ExtractionResult,
+        total_rows: int
     ) -> List[FlowRecord]:
         if not doc_names:
             return []
 
         flow_records: List[FlowRecord] = []
+        self._stage2_total_rows = max(0, int(total_rows))
+        self._stage2_done_rows = 0
 
         def process_doc(doc_name: str) -> List[FlowRecord]:
             state = self.checkpoints.load_document_state(task_id, doc_name) or {}
@@ -311,7 +344,6 @@ class FlowExtractorV2:
 
             doc_records: List[FlowRecord] = []
             processed_rows = 0
-            total_rows = sum(len(t.get("rows", [])) for t in rows_tables)
             checkpoint_interval = max(1, int(self.config.flow_checkpoint_interval))
 
             for table in rows_tables:
@@ -355,7 +387,7 @@ class FlowExtractorV2:
                                 transaction_type=item.get("transaction_type", "") or ""
                             ))
                     processed_rows += len(batch_rows)
-                    self._report_stage2_progress(doc_name, processed_rows, total_rows)
+                    self._report_stage2_progress(doc_name, len(batch_rows))
                     if processed_rows % checkpoint_interval == 0:
                         state["status"] = "stage2_running"
                         state["processed_rows"] = processed_rows
@@ -401,13 +433,17 @@ class FlowExtractorV2:
 
         return flow_records
 
-    def _report_stage2_progress(self, doc_name: str, current: int, total: int) -> None:
+    def _report_stage2_progress(self, doc_name: str, batch_rows: int) -> None:
         with self._lock:
-            self.progress.report(
-                f"正在标准化: {doc_name} ({current}/{total})",
-                current,
-                total
-            )
+            self._stage2_done_rows += batch_rows
+            done = self._stage2_done_rows
+            total = self._stage2_total_rows
+            total_units = self._stage1_total_docs + total
+            current_units = self._stage1_total_docs + done
+            message = f"阶段2/2 正在标准化: {doc_name}"
+            if total > 0:
+                message = f"{message} ({done}/{total})"
+            self.progress.report(message, current_units, max(1, total_units))
 
     def _get_parser_for_file(self, file_path: Path):
         ext = file_path.suffix.lower()

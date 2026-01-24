@@ -375,6 +375,86 @@ class SettingsDialog(QDialog):
         # 分隔线
         layout.addWidget(self._create_separator())
         
+        # ========== 流水提取设置 ==========
+        extract_title = QLabel("流水提取设置")
+        extract_title.setStyleSheet("font-size: 15px; font-weight: bold; color: #1F2937;")
+        layout.addWidget(extract_title)
+        
+        extract_row = QHBoxLayout()
+        extract_row.setSpacing(20)
+        
+        # 每次给AI行数
+        flow_batch_layout = QVBoxLayout()
+        flow_batch_label = QLabel("每次给AI行数")
+        flow_batch_label.setStyleSheet("font-size: 13px; color: #6B7280;")
+        flow_batch_layout.addWidget(flow_batch_label)
+        
+        flow_batch_desc = QLabel("标准化阶段每次发送的行数")
+        flow_batch_desc.setStyleSheet("font-size: 11px; color: #9CA3AF;")
+        flow_batch_layout.addWidget(flow_batch_desc)
+        
+        self.flow_batch_spin = QSpinBox()
+        self.flow_batch_spin.setRange(1, 100)
+        self.flow_batch_spin.setValue(20)
+        self.flow_batch_spin.setFixedHeight(40)
+        self.flow_batch_spin.setStyleSheet("""
+            QSpinBox {
+                background-color: #FFFFFF;
+                border: 1px solid #E5E7EB;
+                border-radius: 6px;
+                padding-left: 12px;
+                font-size: 13px;
+                color: #1F2937;
+            }
+            QSpinBox:focus {
+                border: 1px solid #3B82F6;
+            }
+            QSpinBox::up-button, QSpinBox::down-button {
+                width: 24px;
+            }
+        """)
+        flow_batch_layout.addWidget(self.flow_batch_spin)
+        extract_row.addLayout(flow_batch_layout)
+        
+        # 表格置信度阈值
+        flow_threshold_layout = QVBoxLayout()
+        flow_threshold_label = QLabel("表格置信度阈值")
+        flow_threshold_label.setStyleSheet("font-size: 13px; color: #6B7280;")
+        flow_threshold_layout.addWidget(flow_threshold_label)
+        
+        flow_threshold_desc = QLabel("高于此值才认定为流水表格")
+        flow_threshold_desc.setStyleSheet("font-size: 11px; color: #9CA3AF;")
+        flow_threshold_layout.addWidget(flow_threshold_desc)
+        
+        self.flow_threshold_spin = QSpinBox()
+        self.flow_threshold_spin.setRange(0, 100)
+        self.flow_threshold_spin.setValue(70)
+        self.flow_threshold_spin.setSuffix(" 分")
+        self.flow_threshold_spin.setFixedHeight(40)
+        self.flow_threshold_spin.setStyleSheet("""
+            QSpinBox {
+                background-color: #FFFFFF;
+                border: 1px solid #E5E7EB;
+                border-radius: 6px;
+                padding-left: 12px;
+                font-size: 13px;
+                color: #1F2937;
+            }
+            QSpinBox:focus {
+                border: 1px solid #3B82F6;
+            }
+            QSpinBox::up-button, QSpinBox::down-button {
+                width: 24px;
+            }
+        """)
+        flow_threshold_layout.addWidget(self.flow_threshold_spin)
+        extract_row.addLayout(flow_threshold_layout)
+        
+        layout.addLayout(extract_row)
+        
+        # 分隔线
+        layout.addWidget(self._create_separator())
+        
         # ========== 系统提示词 ==========
         prompt_title = QLabel("系统提示词")
         prompt_title.setStyleSheet("font-size: 15px; font-weight: bold; color: #1F2937;")
@@ -437,6 +517,8 @@ class SettingsDialog(QDialog):
         self.llm_key_input.setText(self.config.llm_api_key)
         self.batch_size_spin.setValue(self.config.llm_batch_size)
         self.threshold_spin.setValue(self.config.llm_match_threshold)
+        self.flow_batch_spin.setValue(self.config.flow_batch_size)
+        self.flow_threshold_spin.setValue(self.config.flow_confidence_threshold)
         
         # 加载自定义提示词
         custom_prompt = self.config.llm_system_prompt
@@ -456,6 +538,8 @@ class SettingsDialog(QDialog):
         self.config.set('llm.batch_size', self.batch_size_spin.value())
         self.config.set('llm.match_threshold', self.threshold_spin.value())
         self.config.set('llm.system_prompt', self.prompt_edit.toPlainText().strip())
+        self.config.set('flow_extraction.batch_size', self.flow_batch_spin.value())
+        self.config.set('flow_extraction.confidence_threshold', self.flow_threshold_spin.value())
         self.config.save()
         self.accept()
 
@@ -616,9 +700,6 @@ class MainWindow(QMainWindow):
         # ExtractPage -> PreviewPage (flow extraction complete)
         self.extract_page.extraction_completed.connect(self._on_extraction_complete)
         
-        # PreviewPage -> ReviewPage (user clicks "开始审查")
-        self.preview_page.audit_requested.connect(self._on_audit_requested)
-        
         # ReviewPage -> ResultPage (review complete)
         self.review_page.start_review.connect(self._on_review_start)
         
@@ -660,18 +741,6 @@ class MainWindow(QMainWindow):
         self.preview_page.set_extraction_result(result)
         # 切换到预览页面
         self._switch_page(self.PAGE_PREVIEW)
-    
-    def _on_audit_requested(self, flow_excel_path: str) -> None:
-        """
-        处理审查请求
-        1. 切换到审查页面
-        2. 设置流水Excel路径
-        """
-        # 设置流水Excel路径到审查页面
-        if hasattr(self.review_page, 'set_flow_excel_path'):
-            self.review_page.set_flow_excel_path(flow_excel_path)
-        # 切换到审查页面
-        self._switch_page(self.PAGE_REVIEW)
     
     def _on_review_start(self, flow_excel_path: str, customer_excel_path: str):
         """
