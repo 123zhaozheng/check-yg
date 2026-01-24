@@ -42,7 +42,9 @@ class Config:
         'flow_extraction': {
             'preview_rows': 10,  # 给AI看的行数
             'batch_size': 20,   # 每批处理的行数
-            'confidence_threshold': 70  # 流水表格判断的置信度阈值
+            'confidence_threshold': 70,  # 流水表格判断的置信度阈值
+            'parallelism': 4,   # 文档并行处理数
+            'checkpoint_interval': 50  # 断点保存间隔（行数）
         },
         'matching': {
             'enable_exact': True,
@@ -206,6 +208,16 @@ class Config:
     def flow_confidence_threshold(self) -> int:
         """流水提取：表格判断的置信度阈值（默认 70）"""
         return self.get('flow_extraction.confidence_threshold', 70)
+
+    @property
+    def flow_parallelism(self) -> int:
+        """流水提取：并行度（默认 4）"""
+        return self.get('flow_extraction.parallelism', 4)
+
+    @property
+    def flow_checkpoint_interval(self) -> int:
+        """流水提取：断点保存间隔（默认 50）"""
+        return self.get('flow_extraction.checkpoint_interval', 50)
     
     @property
     def enable_exact_match(self) -> bool:

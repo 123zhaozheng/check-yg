@@ -2,6 +2,7 @@
 """LLM integration"""
 
 from .judge import LLMJudge
-from .table_analyzer import TableAnalyzer
+from .flow_table_classifier import FlowTableClassifier
+from .data_normalizer import FlowDataNormalizer
 
-__all__ = ['LLMJudge', 'TableAnalyzer']
+__all__ = ['LLMJudge', 'FlowTableClassifier', 'FlowDataNormalizer']

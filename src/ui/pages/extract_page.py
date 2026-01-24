@@ -6,10 +6,10 @@ Extract page - Flow extraction UI with progress tracking
 from datetime import datetime
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
-    QPushButton, QMessageBox, QLineEdit, QSplitter, QFrame,
+    QPushButton, QMessageBox, QLineEdit,
     QApplication
 )
-from PyQt5.QtCore import pyqtSignal, Qt, QTimer, QThread, QObject
+from PyQt5.QtCore import pyqtSignal, QTimer, QThread, QObject
 
 from ..widgets import Card, FileSelector, ProgressCard, StatCardRow
 from ..styles import COLORS
@@ -22,12 +22,20 @@ class ExtractionWorker(QObject):
     finished = pyqtSignal(object)  # ExtractionResult
     error = pyqtSignal(str)  # error message
     
-    def __init__(self, config, folder_path: str, task_id: str, batch_size: int):
+    def __init__(
+        self,
+        config,
+        folder_path: str,
+        task_id: str,
+        batch_size: int,
+        confidence_threshold: int
+    ):
         super().__init__()
         self.config = config
         self.folder_path = folder_path
         self.task_id = task_id
         self.batch_size = batch_size
+        self.confidence_threshold = confidence_threshold
         self._extractor = None
         self._cancelled = False
     
@@ -42,7 +50,8 @@ class ExtractionWorker(QObject):
             result = self._extractor.extract_flows(
                 document_folder=self.folder_path,
                 task_id=self.task_id,
-                batch_size=self.batch_size
+                batch_size=self.batch_size,
+                confidence_threshold=self.confidence_threshold
             )
             
             if not self._cancelled:
@@ -182,7 +191,7 @@ class ExtractPage(QWidget):
         rows_layout.addWidget(rows_label)
         
         self.rows_input = QLineEdit()
-        self.rows_input.setText(str(self.config.flow_preview_rows))
+        self.rows_input.setText(str(self.config.flow_batch_size))
         self.rows_input.setMinimumHeight(36)
         self.rows_input.setMinimumWidth(150)
         self.rows_input.setStyleSheet(f"""
@@ -379,7 +388,8 @@ class ExtractPage(QWidget):
             config=self.config,
             folder_path=folder_path,
             task_id=self.task_id_display.text(),
-            batch_size=self.config.flow_batch_size
+            batch_size=rows,
+            confidence_threshold=threshold
         )
         self._worker.moveToThread(self._worker_thread)
         
