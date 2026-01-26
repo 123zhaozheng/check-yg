@@ -7,7 +7,7 @@ Handles loading and saving configuration from ~/.check-yg/config.yaml
 import os
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 import yaml
 
@@ -25,10 +25,7 @@ class Config:
         'llm': {
             'url': 'https://api.openai.com/v1',
             'model': 'gpt-4',
-            'api_key': '',
-            'batch_size': 10,
-            'match_threshold': 70,  # LLM 匹配置信度阈值，高于此值视为匹配
-            'system_prompt': ''  # 自定义系统提示词，为空则使用默认
+            'api_key': ''
         },
         'paths': {
             'input_folder': './data/input',
@@ -36,7 +33,6 @@ class Config:
             'reports_folder': './data/reports'
         },
         'search': {
-            'enable_llm_judge': True,
             'fuzzy_threshold': 60
         },
         'flow_extraction': {
@@ -173,24 +169,6 @@ class Config:
         return self.get('llm.api_key', '')
     
     @property
-    def llm_batch_size(self) -> int:
-        return self.get('llm.batch_size', 10)
-    
-    @property
-    def llm_match_threshold(self) -> int:
-        """LLM 匹配置信度阈值，高于此值视为匹配（默认 70）"""
-        return self.get('llm.match_threshold', 70)
-    
-    @property
-    def llm_system_prompt(self) -> str:
-        """自定义 LLM 系统提示词，为空则使用默认"""
-        return self.get('llm.system_prompt', '')
-    
-    @property
-    def enable_llm_judge(self) -> bool:
-        return self.get('search.enable_llm_judge', True)
-    
-    @property
     def fuzzy_threshold(self) -> int:
         return self.get('search.fuzzy_threshold', 60)
     
@@ -245,19 +223,6 @@ class Config:
     @property
     def reports_folder(self) -> Path:
         return Path(self.get('paths.reports_folder', './data/reports'))
-    
-    @property
-    def results_file(self) -> Path:
-        """Path to audit results JSON file (deprecated, use audit_{id}.json instead)"""
-        return self.config_dir / 'audit_results.json'
-    
-    def get_audit_file(self, audit_id: str) -> Path:
-        """Get path to specific audit result file"""
-        return self.config_dir / f'audit_{audit_id}.json'
-    
-    def list_audit_files(self) -> List[Path]:
-        """List all audit result files for history query"""
-        return sorted(self.config_dir.glob('audit_*.json'), reverse=True)
 
 
 # Global config instance

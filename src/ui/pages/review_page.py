@@ -6,7 +6,8 @@ Upload customer list and match against flow records
 
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
-    QPushButton, QMessageBox, QFrame, QCheckBox
+    QPushButton, QMessageBox, QCheckBox,
+    QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView
 )
 from PyQt5.QtCore import Qt, pyqtSignal
 
@@ -24,7 +25,7 @@ class ReviewPage(QWidget):
     - Start review action
     """
     
-    start_review = pyqtSignal(str, str)  # flow_excel_path, customer_excel_path
+    start_review = pyqtSignal(str, list)  # flow_excel_path, customers
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -103,6 +104,39 @@ class ReviewPage(QWidget):
         self.customer_selector.path_changed.connect(self._on_customer_file_changed)
         customer_card.layout.addWidget(self.customer_selector)
         
+        # Customer preview table
+        self.customer_table = QTableWidget()
+        self.customer_table.setColumnCount(1)
+        self.customer_table.setHorizontalHeaderLabels(["客户姓名"])
+        header = self.customer_table.horizontalHeader()
+        header.setStretchLastSection(True)
+        header.setSectionResizeMode(QHeaderView.Interactive)
+        self.customer_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.customer_table.setEditTriggers(QAbstractItemView.DoubleClicked | QAbstractItemView.SelectedClicked)
+        self.customer_table.setMinimumHeight(220)
+        self.customer_table.setStyleSheet(f"""
+            QTableWidget {{
+                background-color: {COLORS['card']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 6px;
+                gridline-color: {COLORS['border_light']};
+                font-size: 12px;
+            }}
+            QHeaderView::section {{
+                background-color: {COLORS['sidebar']};
+                color: {COLORS['text_primary']};
+                font-weight: 600;
+                font-size: 12px;
+                padding: 6px;
+                border: none;
+                border-bottom: 1px solid {COLORS['border']};
+            }}
+        """)
+        self.customer_table.itemChanged.connect(self._update_customer_count)
+        customer_card.layout.addWidget(self.customer_table)
+
+        customer_card.layout.addStretch()
+
         self.customer_count_label = QLabel("")
         self.customer_count_label.setStyleSheet(f"""
             color: {COLORS['primary']};
@@ -110,6 +144,25 @@ class ReviewPage(QWidget):
             padding: 8px 0;
         """)
         customer_card.layout.addWidget(self.customer_count_label)
+
+        # Customer table actions
+        customer_actions = QHBoxLayout()
+        customer_actions.setSpacing(8)
+
+        self.add_customer_btn = QPushButton("新增一行")
+        self.add_customer_btn.setObjectName("secondary_btn")
+        self.add_customer_btn.setFixedHeight(32)
+        self.add_customer_btn.clicked.connect(self._add_customer_row)
+        customer_actions.addWidget(self.add_customer_btn)
+
+        self.remove_customer_btn = QPushButton("删除所选")
+        self.remove_customer_btn.setObjectName("secondary_btn")
+        self.remove_customer_btn.setFixedHeight(32)
+        self.remove_customer_btn.clicked.connect(self._remove_selected_rows)
+        customer_actions.addWidget(self.remove_customer_btn)
+
+        customer_actions.addStretch()
+        customer_card.layout.addLayout(customer_actions)
         
         right_column.addWidget(customer_card)
         
@@ -191,10 +244,12 @@ class ReviewPage(QWidget):
         
         # 尝试读取流水数量
         try:
-            import pandas as pd
             from pathlib import Path
-            df = pd.read_excel(file_path)
-            record_count = len(df)
+            import openpyxl
+            wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
+            ws = wb.active
+            record_count = max(0, ws.max_row - 1)
+            wb.close()
             self.flow_info_label.setText(
                 f"流水条数: {record_count}\n文件: {Path(file_path).name}"
             )
@@ -204,7 +259,10 @@ class ReviewPage(QWidget):
     
     def _on_flow_file_changed(self, path: str) -> None:
         """Handle flow file selection"""
-        self.flow_excel_path = path
+        if path:
+            self.set_flow_excel_path(path)
+        else:
+            self.flow_excel_path = ""
     
     def _on_customer_file_changed(self, path: str) -> None:
         """Handle customer file selection"""
@@ -214,6 +272,7 @@ class ReviewPage(QWidget):
                 from ...core.customer import CustomerManager
                 manager = CustomerManager()
                 count = manager.load_from_excel(path)
+                self._load_customers_to_table(manager.customers)
                 self.customer_count_label.setText(f"已加载: {count} 个客户")
             except Exception as e:
                 self.customer_count_label.setText(f"加载失败: {str(e)}")
@@ -229,10 +288,11 @@ class ReviewPage(QWidget):
             )
             return
         
-        if not self.customer_excel_path:
+        customers = self._get_customers_from_table()
+        if not customers:
             QMessageBox.warning(
                 self, "缺少客户名单",
-                "请选择客户名单Excel文件"
+                "请导入或填写客户名单"
             )
             return
         
@@ -242,7 +302,7 @@ class ReviewPage(QWidget):
         self.config.save()
         
         # Emit signal
-        self.start_review.emit(self.flow_excel_path, self.customer_excel_path)
+        self.start_review.emit(self.flow_excel_path, customers)
     
     def clear(self) -> None:
         """Clear page state"""
@@ -252,3 +312,48 @@ class ReviewPage(QWidget):
         self.customer_count_label.setText("")
         self.flow_selector.set_path("")
         self.customer_selector.set_path("")
+        self.customer_table.setRowCount(0)
+
+    def _load_customers_to_table(self, customers: list) -> None:
+        self.customer_table.setRowCount(0)
+        for name in customers:
+            row = self.customer_table.rowCount()
+            self.customer_table.insertRow(row)
+            item = QTableWidgetItem(str(name))
+            self.customer_table.setItem(row, 0, item)
+        for row in range(self.customer_table.rowCount()):
+            self.customer_table.setRowHeight(row, 32)
+        self._customer_table_loaded = True
+
+    def _get_customers_from_table(self) -> list:
+        names = []
+        seen = set()
+        for row in range(self.customer_table.rowCount()):
+            item = self.customer_table.item(row, 0)
+            if not item:
+                continue
+            name = item.text().strip()
+            if name and name not in seen:
+                names.append(name)
+                seen.add(name)
+        return names
+
+    def _add_customer_row(self) -> None:
+        row = self.customer_table.rowCount()
+        self.customer_table.insertRow(row)
+        self.customer_table.setItem(row, 0, QTableWidgetItem(""))
+        self.customer_table.setCurrentCell(row, 0)
+        self._update_customer_count()
+
+    def _remove_selected_rows(self) -> None:
+        selected = self.customer_table.selectionModel().selectedRows()
+        for index in sorted(selected, key=lambda x: x.row(), reverse=True):
+            self.customer_table.removeRow(index.row())
+        self._update_customer_count()
+
+    def _update_customer_count(self) -> None:
+        count = len(self._get_customers_from_table())
+        if count > 0:
+            self.customer_count_label.setText(f"当前: {count} 个客户")
+        else:
+            self.customer_count_label.setText("")

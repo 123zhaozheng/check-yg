@@ -11,8 +11,6 @@ from pathlib import Path
 from typing import List, Optional
 
 import openpyxl
-import pandas as pd
-
 from ..core.matcher import NameMatcher, MatchResult, MatchType
 from ..core.customer import CustomerManager
 from ..config import get_config
@@ -25,10 +23,10 @@ class ReviewMatch:
     """审查匹配结果"""
     customer_name: str
     counterparty_name: str
+    counterparty_account: str
     match_type: str  # "精确匹配" / "脱敏匹配"
     confidence: int
     source_file: str
-    original_row: int
     transaction_time: str = ""
     amount: str = ""
     summary: str = ""
@@ -38,10 +36,10 @@ class ReviewMatch:
         return {
             'customer_name': self.customer_name,
             'counterparty_name': self.counterparty_name,
+            'counterparty_account': self.counterparty_account,
             'match_type': self.match_type,
             'confidence': self.confidence,
             'source_file': self.source_file,
-            'original_row': str(self.original_row),
             'transaction_time': self.transaction_time,
             'amount': self.amount,
             'summary': self.summary,
@@ -101,8 +99,33 @@ class Reviewer:
             List[dict]: 流水记录列表
         """
         try:
-            df = pd.read_excel(excel_path)
-            records = df.to_dict('records')
+            path = Path(excel_path)
+            if not path.exists():
+                raise FileNotFoundError(f"File not found: {excel_path}")
+            wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+            ws = wb.active
+
+            rows_iter = ws.iter_rows(values_only=True)
+            headers = []
+            for row in rows_iter:
+                headers = [str(cell).strip() if cell is not None else "" for cell in row]
+                break
+
+            if not any(headers):
+                wb.close()
+                raise ValueError("流水Excel缺少表头")
+
+            records = []
+            for row in rows_iter:
+                record = {}
+                for idx, header in enumerate(headers):
+                    if not header:
+                        continue
+                    value = row[idx] if idx < len(row) else ""
+                    record[header] = "" if value is None else str(value).strip()
+                if record:
+                    records.append(record)
+            wb.close()
             logger.info("加载流水: %d 条", len(records))
             return records
         except Exception as e:
@@ -126,7 +149,8 @@ class Reviewer:
     def run_review(
         self,
         flow_excel_path: str,
-        customer_excel_path: str
+        customer_excel_path: str = "",
+        customers: Optional[List[str]] = None
     ) -> ReviewResult:
         """
         执行审查
@@ -140,12 +164,17 @@ class Reviewer:
         """
         # 加载数据
         flows = self.load_flows(flow_excel_path)
-        customer_count = self.load_customers(customer_excel_path)
+        if customers is not None:
+            self.customer_manager.load_from_list(customers)
+            customer_count = self.customer_manager.count
+        else:
+            customer_count = self.load_customers(customer_excel_path)
         
         # 匹配
         matches = []
         for flow in flows:
             counterparty = str(flow.get('交易对手名', ''))
+            counterparty_account = str(flow.get('交易对手账号', ''))
             if not counterparty:
                 continue
             
@@ -156,7 +185,7 @@ class Reviewer:
                     result = self.matcher.match_exact(customer, counterparty)
                     if result:
                         matches.append(self._create_match(
-                            customer, result, flow, counterparty
+                            customer, result, flow, counterparty, counterparty_account
                         ))
                         continue
                 
@@ -165,7 +194,7 @@ class Reviewer:
                     result = self.matcher.match_desensitized(customer, counterparty)
                     if result:
                         matches.append(self._create_match(
-                            customer, result, flow, counterparty
+                            customer, result, flow, counterparty, counterparty_account
                         ))
         
         # 统计
@@ -192,16 +221,17 @@ class Reviewer:
         customer_name: str,
         match_result: MatchResult,
         flow: dict,
-        counterparty: str
+        counterparty: str,
+        counterparty_account: str
     ) -> ReviewMatch:
         """创建审查匹配对象"""
         return ReviewMatch(
             customer_name=customer_name,
             counterparty_name=counterparty,
+            counterparty_account=counterparty_account,
             match_type=match_result.match_type.value,
             confidence=match_result.confidence,
             source_file=str(flow.get('来源文件', '')),
-            original_row=int(flow.get('原始行号', 0)),
             transaction_time=str(flow.get('交易时间', '')),
             amount=str(flow.get('金额', '')),
             summary=str(flow.get('摘要', '')),

@@ -6,83 +6,14 @@ Main window - application shell with light sidebar navigation
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
     QPushButton, QLabel, QStackedWidget, QFrame,
-    QDialog, QLineEdit, QCheckBox, QSpinBox, QTextEdit,
-    QTabWidget, QScrollArea
+    QDialog, QLineEdit, QSpinBox,
+    QTabWidget
 )
 from PyQt5.QtCore import Qt
 
 from .styles import MAIN_STYLE, COLORS
-from .pages import ConfigPage, SearchPage, ResultPage, ExtractPage, ReviewPage
+from .pages import ResultPage, ExtractPage, ReviewPage
 from ..config import get_config
-
-
-# 默认系统提示词
-DEFAULT_SYSTEM_PROMPT = """你是一个银行流水审计助手。给定一条银行流水记录和一个客户姓名，你需要：
-
-1. 判断这条流水的交易对方是否是该客户，并给出置信度（0-100）
-2. 提取完整的交易信息
-
-## 判断步骤（必须按顺序执行）
-
-### 第一步：提取真正的人名部分
-流水中的交易对方可能包含前缀，需要先提取出真正的人名：
-- "支付宝-张*" → 人名是 "张*"
-- "微信-*三" → 人名是 "*三"  
-- "4******9202/*成停" → 人名是 "*成停"
-- "Z******0010/*德元" → 人名是 "*德元"
-- "财付通-李*明" → 人名是 "李*明"
-
-### 第二步：比较人名字数
-- 每个*代表一个被隐藏的字
-- 提取出的人名字数必须与客户姓名字数相同
-- 例如：客户"高成"(2字) vs 提取人名"*成停"(3字) → 字数不同，判0分
-- 例如：客户"张三"(2字) vs 提取人名"*三"(2字) → 字数相同，继续判断
-
-### 第三步：比较可见字符的位置
-- 脱敏人名中可见的字必须与客户姓名对应位置的字相同
-- 例如：客户"刘德元" vs "*德元" → 第2字"德"、第3字"元"都对应 → 匹配
-- 例如：客户"高成" vs "*成停" → 客户第2字是"成"，但"*成停"第2字也是"成"，第3字是"停"，字数不同 → 不匹配
-- 例如：客户"沈旭风" vs "李旭风" → 第1字"沈"≠"李" → 姓不同，判0分
-
-## 置信度评分标准
-
-【100分 - 完全确定】
-- 提取的人名与客户姓名完全一致
-
-【90分 - 高度确定】
-- 字数相同 + 所有可见字符位置完全对应
-- 例如：客户"刘德元"，人名"*德元" → 90分
-- 例如：客户"张三"，人名"张*" → 90分
-- 例如：客户"李明"，流水"支付宝-李*" → 90分
-
-【80分 - 很可能是】
-- 字数相同 + 可见字符对应 + 有账号前缀
-- 例如：客户"刘德元"，流水"Z******0010/*德元" → 80分
-- 或者有轻微OCR形近字错误（如"明"vs"眀"）
-
-【60分 - 可能是，需复核】
-- 有一定相似性但不完全确定
-
-【0-30分 - 明确不是】
-- 字数不同（最重要！）
-- 姓氏可见但不同
-- 可见字符位置不对应
-- 是店铺/公司/商户名
-
-## 必须判0分的情况
-- 客户"高成"(2字) vs "*成停"(3字) → 0分（字数不同）
-- 客户"沈旭风" vs "李旭风" → 0分（姓不同）
-- 客户"张伟"(2字) vs "*小伟"(3字) → 0分（字数不同）
-- 交易对方是"XX店"、"XX公司"等商户名 → 0分
-
-## 返回格式
-- confidence: 整数 0-100
-- matched_text: 原文中的交易对方（保持原样，包含前缀）
-- transaction_time: 交易时间
-- amount: 交易金额
-- transaction_type: 交易类型
-- summary: 摘要/备注
-- reason: 判断理由（说明提取的人名、字数比较结果、可见字符是否对应）"""
 
 
 class SettingsDialog(QDialog):
@@ -147,24 +78,6 @@ class SettingsDialog(QDialog):
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(12)
         btn_layout.addStretch()
-        
-        reset_btn = QPushButton("恢复默认提示词")
-        reset_btn.setFixedSize(120, 38)
-        reset_btn.setCursor(Qt.PointingHandCursor)
-        reset_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #FEF3C7;
-                color: #92400E;
-                border: 1px solid #FCD34D;
-                border-radius: 6px;
-                font-size: 13px;
-            }
-            QPushButton:hover {
-                background-color: #FDE68A;
-            }
-        """)
-        reset_btn.clicked.connect(self._reset_prompt)
-        btn_layout.addWidget(reset_btn)
         
         cancel_btn = QPushButton("取消")
         cancel_btn.setFixedSize(80, 38)
@@ -235,21 +148,6 @@ class SettingsDialog(QDialog):
         llm_title.setStyleSheet("font-size: 15px; font-weight: bold; color: #1F2937;")
         layout.addWidget(llm_title)
         
-        # 启用复选框
-        self.enable_llm_check = QCheckBox("启用 AI 辅助判断")
-        self.enable_llm_check.setStyleSheet("""
-            QCheckBox {
-                font-size: 13px;
-                color: #1F2937;
-                spacing: 8px;
-            }
-            QCheckBox::indicator {
-                width: 18px;
-                height: 18px;
-            }
-        """)
-        layout.addWidget(self.enable_llm_check)
-        
         # API 地址
         llm_url_label = QLabel("API 地址")
         llm_url_label.setStyleSheet("font-size: 13px; color: #6B7280; margin-top: 8px;")
@@ -293,87 +191,6 @@ class SettingsDialog(QDialog):
         layout = QVBoxLayout(widget)
         layout.setSpacing(12)
         layout.setContentsMargins(20, 20, 20, 20)
-        
-        # ========== AI 参数设置 ==========
-        params_title = QLabel("AI 参数设置")
-        params_title.setStyleSheet("font-size: 15px; font-weight: bold; color: #1F2937;")
-        layout.addWidget(params_title)
-        
-        # 批次大小和阈值放在一行
-        params_row = QHBoxLayout()
-        params_row.setSpacing(20)
-        
-        # 批次大小
-        batch_layout = QVBoxLayout()
-        batch_label = QLabel("AI 批次大小")
-        batch_label.setStyleSheet("font-size: 13px; color: #6B7280;")
-        batch_layout.addWidget(batch_label)
-        
-        batch_desc = QLabel("并发请求数量（同时处理的记录数）")
-        batch_desc.setStyleSheet("font-size: 11px; color: #9CA3AF;")
-        batch_layout.addWidget(batch_desc)
-        
-        self.batch_size_spin = QSpinBox()
-        self.batch_size_spin.setRange(1, 50)
-        self.batch_size_spin.setValue(10)
-        self.batch_size_spin.setFixedHeight(40)
-        self.batch_size_spin.setStyleSheet("""
-            QSpinBox {
-                background-color: #FFFFFF;
-                border: 1px solid #E5E7EB;
-                border-radius: 6px;
-                padding-left: 12px;
-                font-size: 13px;
-                color: #1F2937;
-            }
-            QSpinBox:focus {
-                border: 1px solid #3B82F6;
-            }
-            QSpinBox::up-button, QSpinBox::down-button {
-                width: 24px;
-            }
-        """)
-        batch_layout.addWidget(self.batch_size_spin)
-        params_row.addLayout(batch_layout)
-        
-        # 分数阈值
-        threshold_layout = QVBoxLayout()
-        threshold_label = QLabel("匹配分数阈值")
-        threshold_label.setStyleSheet("font-size: 13px; color: #6B7280;")
-        threshold_layout.addWidget(threshold_label)
-        
-        threshold_desc = QLabel("高于此分数视为匹配 (0-100)")
-        threshold_desc.setStyleSheet("font-size: 11px; color: #9CA3AF;")
-        threshold_layout.addWidget(threshold_desc)
-        
-        self.threshold_spin = QSpinBox()
-        self.threshold_spin.setRange(0, 100)
-        self.threshold_spin.setValue(70)
-        self.threshold_spin.setSuffix(" 分")
-        self.threshold_spin.setFixedHeight(40)
-        self.threshold_spin.setStyleSheet("""
-            QSpinBox {
-                background-color: #FFFFFF;
-                border: 1px solid #E5E7EB;
-                border-radius: 6px;
-                padding-left: 12px;
-                font-size: 13px;
-                color: #1F2937;
-            }
-            QSpinBox:focus {
-                border: 1px solid #3B82F6;
-            }
-            QSpinBox::up-button, QSpinBox::down-button {
-                width: 24px;
-            }
-        """)
-        threshold_layout.addWidget(self.threshold_spin)
-        params_row.addLayout(threshold_layout)
-        
-        layout.addLayout(params_row)
-        
-        # 分隔线
-        layout.addWidget(self._create_separator())
         
         # ========== 流水提取设置 ==========
         extract_title = QLabel("流水提取设置")
@@ -452,36 +269,6 @@ class SettingsDialog(QDialog):
         
         layout.addLayout(extract_row)
         
-        # 分隔线
-        layout.addWidget(self._create_separator())
-        
-        # ========== 系统提示词 ==========
-        prompt_title = QLabel("系统提示词")
-        prompt_title.setStyleSheet("font-size: 15px; font-weight: bold; color: #1F2937;")
-        layout.addWidget(prompt_title)
-        
-        prompt_desc = QLabel("自定义 AI 判断逻辑的提示词，留空则使用默认提示词")
-        prompt_desc.setStyleSheet("font-size: 11px; color: #9CA3AF; margin-bottom: 8px;")
-        layout.addWidget(prompt_desc)
-        
-        self.prompt_edit = QTextEdit()
-        self.prompt_edit.setPlaceholderText("留空使用默认提示词...")
-        self.prompt_edit.setStyleSheet("""
-            QTextEdit {
-                background-color: #FFFFFF;
-                border: 1px solid #E5E7EB;
-                border-radius: 6px;
-                padding: 12px;
-                font-size: 12px;
-                font-family: Consolas, Monaco, monospace;
-                color: #1F2937;
-            }
-            QTextEdit:focus {
-                border: 1px solid #3B82F6;
-            }
-        """)
-        layout.addWidget(self.prompt_edit, 1)
-        
         return widget
     
     def _input_style(self) -> str:
@@ -511,33 +298,17 @@ class SettingsDialog(QDialog):
     
     def _load_config(self):
         self.mineru_url_input.setText(self.config.mineru_url)
-        self.enable_llm_check.setChecked(self.config.enable_llm_judge)
         self.llm_url_input.setText(self.config.llm_url)
         self.llm_model_input.setText(self.config.llm_model)
         self.llm_key_input.setText(self.config.llm_api_key)
-        self.batch_size_spin.setValue(self.config.llm_batch_size)
-        self.threshold_spin.setValue(self.config.llm_match_threshold)
         self.flow_batch_spin.setValue(self.config.flow_batch_size)
         self.flow_threshold_spin.setValue(self.config.flow_confidence_threshold)
-        
-        # 加载自定义提示词
-        custom_prompt = self.config.llm_system_prompt
-        if custom_prompt:
-            self.prompt_edit.setPlainText(custom_prompt)
-    
-    def _reset_prompt(self):
-        """恢复默认提示词"""
-        self.prompt_edit.setPlainText(DEFAULT_SYSTEM_PROMPT)
     
     def _save_and_close(self):
         self.config.set('mineru.url', self.mineru_url_input.text().strip() or 'http://localhost:8000')
-        self.config.set('search.enable_llm_judge', self.enable_llm_check.isChecked())
         self.config.set('llm.url', self.llm_url_input.text().strip() or 'https://api.openai.com/v1')
         self.config.set('llm.model', self.llm_model_input.text().strip() or 'gpt-4')
         self.config.set('llm.api_key', self.llm_key_input.text())
-        self.config.set('llm.batch_size', self.batch_size_spin.value())
-        self.config.set('llm.match_threshold', self.threshold_spin.value())
-        self.config.set('llm.system_prompt', self.prompt_edit.toPlainText().strip())
         self.config.set('flow_extraction.batch_size', self.flow_batch_spin.value())
         self.config.set('flow_extraction.confidence_threshold', self.flow_threshold_spin.value())
         self.config.save()
@@ -703,7 +474,7 @@ class MainWindow(QMainWindow):
         # ReviewPage -> ResultPage (review complete)
         self.review_page.start_review.connect(self._on_review_start)
         
-        # ResultPage -> ExtractPage (new audit)
+        # ResultPage -> ExtractPage (new review)
         self.result_page.new_audit_btn.clicked.connect(
             lambda: self._switch_page(self.PAGE_EXTRACT)
         )
@@ -742,7 +513,7 @@ class MainWindow(QMainWindow):
         # 切换到预览页面
         self._switch_page(self.PAGE_PREVIEW)
     
-    def _on_review_start(self, flow_excel_path: str, customer_excel_path: str):
+    def _on_review_start(self, flow_excel_path: str, customers: list):
         """
         处理审查开始
         执行审查并切换到结果页面
@@ -750,7 +521,7 @@ class MainWindow(QMainWindow):
         try:
             from ..core.reviewer import Reviewer
             reviewer = Reviewer()
-            result = reviewer.run_review(flow_excel_path, customer_excel_path)
+            result = reviewer.run_review(flow_excel_path, customers=customers)
             
             # 传递结果到结果页面
             if hasattr(self.result_page, 'set_review_result'):

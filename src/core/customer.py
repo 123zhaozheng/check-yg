@@ -63,6 +63,26 @@ class CustomerManager:
         except Exception as e:
             logger.error("Failed to load Excel file: %s", e)
             raise
+
+    def load_from_list(self, names: List[str]) -> int:
+        """
+        Load customer names from a list, replacing existing data.
+
+        Args:
+            names: List of customer names
+
+        Returns:
+            Number of unique customers loaded
+        """
+        self.clear()
+        added = 0
+        for name in names:
+            clean = str(name).strip()
+            if clean and clean not in self._customer_set:
+                self._customers.append(clean)
+                self._customer_set.add(clean)
+                added += 1
+        return added
     
     def add_customer(self, name: str) -> bool:
         """

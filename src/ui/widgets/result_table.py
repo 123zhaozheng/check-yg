@@ -1,37 +1,30 @@
 # -*- coding: utf-8 -*-
 """
-Result table widget for displaying audit matches
+Result table widget for displaying review matches
 """
 
 from PyQt5.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, 
-    QTableWidgetItem, QHeaderView, QComboBox, QLabel,
-    QPushButton, QAbstractItemView
+    QWidget, QVBoxLayout, QTableWidget, 
+    QTableWidgetItem, QHeaderView, QAbstractItemView
 )
-from PyQt5.QtCore import Qt, pyqtSignal
-from PyQt5.QtGui import QColor, QBrush
+from PyQt5.QtCore import Qt
 
 from ..styles import COLORS
 
 
 class ResultTable(QWidget):
     """
-    Table widget for displaying audit match results
-    Supports filtering by risk level and confidence
+    Table widget for displaying review match results
     """
     
-    export_requested = pyqtSignal()
-    
     COLUMNS = [
-        ("客户姓名", 80),
-        ("匹配文本", 80),
-        ("匹配类型", 80),
-        ("置信度", 60),
+        ("匹配用户", 100),
         ("来源文件", 140),
         ("交易时间", 140),
-        ("交易金额", 100),
-        ("收支类型", 70),
-        ("摘要", 120),
+        ("对手名", 120),
+        ("对手账号", 140),
+        ("金额", 100),
+        ("摘要", 160),
     ]
     
     def __init__(self, parent=None):
@@ -43,29 +36,6 @@ class ResultTable(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(12)
-        
-        # Filter bar
-        filter_layout = QHBoxLayout()
-        
-        filter_label = QLabel("筛选:")
-        filter_label.setStyleSheet(f"color: {COLORS['text_secondary']};")
-        filter_layout.addWidget(filter_label)
-        
-        self.confidence_filter = QComboBox()
-        self.confidence_filter.addItems(["全部", "精确匹配", "脱敏匹配", "模糊匹配"])
-        self.confidence_filter.currentTextChanged.connect(self._apply_filter)
-        filter_layout.addWidget(self.confidence_filter)
-        
-        filter_layout.addStretch()
-        
-        # Export button
-        self.export_btn = QPushButton("导出 Excel")
-        self.export_btn.setObjectName("primary_btn")
-        self.export_btn.setMinimumSize(100, 36)
-        self.export_btn.clicked.connect(self.export_requested.emit)
-        filter_layout.addWidget(self.export_btn)
-        
-        layout.addLayout(filter_layout)
         
         # Table
         self.table = QTableWidget()
@@ -123,7 +93,7 @@ class ResultTable(QWidget):
         layout.addWidget(self.table)
     
     def set_data(self, matches: list) -> None:
-        """Set table data from list of AuditMatch objects"""
+        """Set table data from list of ReviewMatch dicts"""
         self._all_data = matches
         self._populate_table(matches)
     
@@ -132,48 +102,26 @@ class ResultTable(QWidget):
         self.table.setRowCount(len(matches))
         
         for row, match in enumerate(matches):
-            # Extract filename from path
             import os
-            filename = os.path.basename(match.source_file)
-            
+            source_file = match.get("source_file", "")
+            filename = os.path.basename(source_file)
             data = [
-                match.customer_name,
-                match.matched_text,
-                match.confidence,
-                f"{match.confidence_score}%",
+                match.get("customer_name", ""),
                 filename,
-                match.transaction_time,
-                match.amount,
-                match.transaction_type,
-                match.summary,
+                match.get("transaction_time", ""),
+                match.get("counterparty_name", ""),
+                match.get("counterparty_account", ""),
+                match.get("amount", ""),
+                match.get("summary", ""),
             ]
-            
             for col, value in enumerate(data):
                 item = QTableWidgetItem(str(value) if value else "")
                 item.setTextAlignment(Qt.AlignVCenter | Qt.AlignLeft)
-                
-                # Color code confidence column - 使用前景色而不是背景色
-                if col == 2:  # Confidence type
-                    if "精确" in str(value):
-                        item.setForeground(QBrush(QColor(COLORS['success'])))
-                    elif "脱敏" in str(value):
-                        item.setForeground(QBrush(QColor(COLORS['warning'])))
-                    else:
-                        item.setForeground(QBrush(QColor(COLORS['danger'])))
-                
                 self.table.setItem(row, col, item)
         
         # 调整行高
         for row in range(self.table.rowCount()):
             self.table.setRowHeight(row, 36)
-    
-    def _apply_filter(self, filter_text: str) -> None:
-        """Apply confidence filter"""
-        if filter_text == "全部":
-            self._populate_table(self._all_data)
-        else:
-            filtered = [m for m in self._all_data if m.confidence == filter_text]
-            self._populate_table(filtered)
     
     def clear(self) -> None:
         """Clear table"""
