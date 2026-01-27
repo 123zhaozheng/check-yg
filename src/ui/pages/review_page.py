@@ -111,8 +111,13 @@ class ReviewPage(QWidget):
         header = self.customer_table.horizontalHeader()
         header.setStretchLastSection(True)
         header.setSectionResizeMode(QHeaderView.Interactive)
+        header.setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self.customer_table.verticalHeader().setVisible(False)
+        self.customer_table.verticalHeader().setDefaultSectionSize(36)
         self.customer_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.customer_table.setEditTriggers(QAbstractItemView.DoubleClicked | QAbstractItemView.SelectedClicked)
+        self.customer_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.customer_table.setEditTriggers(QAbstractItemView.DoubleClicked | QAbstractItemView.EditKeyPressed)
+        self.customer_table.setAlternatingRowColors(True)
         self.customer_table.setMinimumHeight(220)
         self.customer_table.setStyleSheet(f"""
             QTableWidget {{
@@ -121,6 +126,17 @@ class ReviewPage(QWidget):
                 border-radius: 6px;
                 gridline-color: {COLORS['border_light']};
                 font-size: 12px;
+            }}
+            QTableWidget::item {{
+                padding: 6px 8px;
+                border: none;
+            }}
+            QTableWidget::item:selected {{
+                background-color: {COLORS['primary_light']};
+                color: {COLORS['text_primary']};
+            }}
+            QTableWidget::item:alternate {{
+                background-color: {COLORS['sidebar']};
             }}
             QHeaderView::section {{
                 background-color: {COLORS['sidebar']};
@@ -131,19 +147,16 @@ class ReviewPage(QWidget):
                 border: none;
                 border-bottom: 1px solid {COLORS['border']};
             }}
+            QTableWidget QLineEdit {{
+                padding: 2px 6px;
+                margin: 0px;
+                min-height: 20px;
+                color: {COLORS['text_primary']};
+                background-color: {COLORS['card']};
+            }}
         """)
         self.customer_table.itemChanged.connect(self._update_customer_count)
         customer_card.layout.addWidget(self.customer_table)
-
-        customer_card.layout.addStretch()
-
-        self.customer_count_label = QLabel("")
-        self.customer_count_label.setStyleSheet(f"""
-            color: {COLORS['primary']};
-            font-size: 13px;
-            padding: 8px 0;
-        """)
-        customer_card.layout.addWidget(self.customer_count_label)
 
         # Customer table actions
         customer_actions = QHBoxLayout()
@@ -160,6 +173,14 @@ class ReviewPage(QWidget):
         self.remove_customer_btn.setFixedHeight(32)
         self.remove_customer_btn.clicked.connect(self._remove_selected_rows)
         customer_actions.addWidget(self.remove_customer_btn)
+
+        self.customer_count_label = QLabel("")
+        self.customer_count_label.setStyleSheet(f"""
+            color: {COLORS['primary']};
+            font-size: 13px;
+            padding: 0 0 0 8px;
+        """)
+        customer_actions.addWidget(self.customer_count_label)
 
         customer_actions.addStretch()
         customer_card.layout.addLayout(customer_actions)
@@ -320,9 +341,10 @@ class ReviewPage(QWidget):
             row = self.customer_table.rowCount()
             self.customer_table.insertRow(row)
             item = QTableWidgetItem(str(name))
+            item.setTextAlignment(Qt.AlignVCenter | Qt.AlignLeft)
             self.customer_table.setItem(row, 0, item)
         for row in range(self.customer_table.rowCount()):
-            self.customer_table.setRowHeight(row, 32)
+            self.customer_table.setRowHeight(row, 36)
         self._customer_table_loaded = True
 
     def _get_customers_from_table(self) -> list:
@@ -341,7 +363,10 @@ class ReviewPage(QWidget):
     def _add_customer_row(self) -> None:
         row = self.customer_table.rowCount()
         self.customer_table.insertRow(row)
-        self.customer_table.setItem(row, 0, QTableWidgetItem(""))
+        item = QTableWidgetItem("")
+        item.setTextAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+        self.customer_table.setItem(row, 0, item)
+        self.customer_table.setRowHeight(row, 36)
         self.customer_table.setCurrentCell(row, 0)
         self._update_customer_count()
 

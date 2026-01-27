@@ -169,10 +169,24 @@ class Reviewer:
             customer_count = self.customer_manager.count
         else:
             customer_count = self.load_customers(customer_excel_path)
-        
+
+        # 过滤金额异常的流水（继续审查但丢弃该条）
+        valid_flows = []
+        skipped_amount_rows = 0
+        for flow in flows:
+            parsed_amount = self._parse_amount(flow.get('金额', ''))
+            if parsed_amount is None:
+                skipped_amount_rows += 1
+                continue
+            flow['_parsed_amount'] = parsed_amount
+            valid_flows.append(flow)
+
+        if skipped_amount_rows:
+            logger.warning("发现 %d 条金额无效的流水，已跳过", skipped_amount_rows)
+
         # 匹配
         matches = []
-        for flow in flows:
+        for flow in valid_flows:
             counterparty = str(flow.get('交易对手名', ''))
             counterparty_account = str(flow.get('交易对手账号', ''))
             if not counterparty:
@@ -196,11 +210,10 @@ class Reviewer:
                         matches.append(self._create_match(
                             customer, result, flow, counterparty, counterparty_account
                         ))
-        
+
         # 统计
         total_amount = sum(
-            float(str(flow.get('金额', '0')).replace(',', '').replace('¥', ''))
-            for flow in flows
+            float(flow.get('_parsed_amount', 0.0)) for flow in valid_flows
         )
         matched_customers = set(m.customer_name for m in matches)
         
@@ -215,6 +228,26 @@ class Reviewer:
             total_amount=total_amount,
             matches=matches
         )
+
+    def _parse_amount(self, amount_value: object) -> Optional[float]:
+        """Parse amount string to float; return None if invalid."""
+        if amount_value is None:
+            return None
+        amount_str = str(amount_value).strip()
+        if not amount_str:
+            return None
+        clean = (
+            amount_str.replace(',', '')
+            .replace('￥', '')
+            .replace('¥', '')
+            .replace('元', '')
+            .replace('+', '')
+            .replace('-', '')
+        )
+        try:
+            return abs(float(clean))
+        except (ValueError, TypeError):
+            return None
     
     def _create_match(
         self,
