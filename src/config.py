@@ -25,7 +25,8 @@ class Config:
         'llm': {
             'url': 'https://api.openai.com/v1',
             'model': 'gpt-4',
-            'api_key': ''
+            'api_key': '',
+            'timeout': 60
         },
         'paths': {
             'input_folder': './data/input',
@@ -167,6 +168,10 @@ class Config:
     @property
     def llm_api_key(self) -> str:
         return self.get('llm.api_key', '')
+
+    @property
+    def llm_timeout(self) -> int:
+        return int(self.get('llm.timeout', 60))
     
     @property
     def fuzzy_threshold(self) -> int:

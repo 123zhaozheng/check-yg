@@ -20,6 +20,7 @@ class ExtractionWorker(QObject):
     """后台提取工作线程"""
     progress = pyqtSignal(str, int, int)  # message, current, total
     finished = pyqtSignal(object)  # ExtractionResult
+    canceled = pyqtSignal(object)  # ExtractionResult (partial)
     error = pyqtSignal(str)  # error message
     
     def __init__(
@@ -53,8 +54,9 @@ class ExtractionWorker(QObject):
                 batch_size=self.batch_size,
                 confidence_threshold=self.confidence_threshold
             )
-            
-            if not self._cancelled:
+            if self._cancelled:
+                self.canceled.emit(result)
+            else:
                 self.finished.emit(result)
                 
         except Exception as e:
@@ -291,6 +293,7 @@ class ExtractPage(QWidget):
         self._worker_thread.started.connect(self._worker.run)
         self._worker.progress.connect(self._on_progress)
         self._worker.finished.connect(self._on_extraction_finished)
+        self._worker.canceled.connect(self._on_extraction_canceled)
         self._worker.error.connect(self._on_extraction_error)
         
         # 启动线程
@@ -385,6 +388,15 @@ class ExtractPage(QWidget):
         if self._worker:
             self._worker.cancel()
         self.current_file_display.setText("正在取消...")
+        self.progress_card.set_status("正在取消...")
+
+    def _on_extraction_canceled(self, result) -> None:
+        """Handle extraction canceled"""
+        self._cleanup_worker()
+        self.progress_card.finish(success=False)
+        self.current_file_display.setText("已取消")
+        self.progress_card.append_log("\n提取已取消")
+        self.start_btn.setEnabled(True)
 
     def _on_folder_changed(self, path: str) -> None:
         """Update document count after folder selection"""

@@ -44,14 +44,14 @@ class FlowExtractorV2:
             api_url=self.config.llm_url,
             model=self.config.llm_model,
             api_key=self.config.llm_api_key,
-            timeout=60,
+            timeout=self.config.llm_timeout,
             preview_rows=self.config.flow_preview_rows
         )
         self.data_normalizer = FlowDataNormalizer(
             api_url=self.config.llm_url,
             model=self.config.llm_model,
             api_key=self.config.llm_api_key,
-            timeout=60
+            timeout=self.config.llm_timeout
         )
 
         self.progress = ProgressManager()
@@ -96,8 +96,10 @@ class FlowExtractorV2:
                 errors=[{"stage": "init", "error": message}]
             )
 
+        logger.info("开始扫描文档目录: %s", document_folder)
         self.progress.report(f"正在扫描文档目录: {document_folder}", status=ProgressStatus.RUNNING)
         documents = self.scanner.scan_directory(document_folder)
+        logger.info("扫描完成，共发现 %d 个文档", len(documents))
         self._stage1_total_docs = len(documents)
         self.progress.report(
             f"阶段1/2 已发现 {len(documents)} 个文档",
@@ -127,6 +129,7 @@ class FlowExtractorV2:
         stage2_doc_names: List[str] = []
 
         # Stage 1: serial classification
+        logger.info("阶段1开始：逐文档表格识别与流水判定（串行）")
         processed_docs = 0
         for idx, doc_path in enumerate(documents):
             if self._cancel_requested:
@@ -139,6 +142,7 @@ class FlowExtractorV2:
                 processed_docs,
                 max(1, total_units)
             )
+            logger.info("阶段1处理文档: %s (%d/%d)", doc_path.name, idx + 1, len(documents))
             existing_state = existing_states.get(doc_path.name)
             if existing_state and existing_state.get("status") in ("stage1_done", "stage2_running", "completed"):
                 stage2_doc_names.append(doc_path.name)
@@ -152,6 +156,13 @@ class FlowExtractorV2:
                     f"阶段1/2 已处理: {doc_path.name}",
                     processed_docs,
                     max(1, total_units)
+                )
+                logger.info(
+                    "阶段1跳过已处理文档: %s (total_tables=%s, flow_tables=%s, flow_rows=%s)",
+                    doc_path.name,
+                    existing_state.get("total_tables", 0),
+                    existing_state.get("flow_tables_count", 0),
+                    existing_state.get("total_flow_rows", 0)
                 )
                 for err in existing_state.get("errors", []):
                     result.errors.append({
@@ -176,6 +187,13 @@ class FlowExtractorV2:
                     processed_docs,
                     max(1, total_units)
                 )
+                logger.info(
+                    "阶段1完成文档: %s (total_tables=%d, flow_tables=%d, flow_rows=%d)",
+                    doc_path.name,
+                    stats["total_tables"],
+                    stats["flow_tables"],
+                    int(doc_state.get("total_flow_rows", 0) or 0)
+                )
                 for err in doc_state.get("errors", []):
                     result.errors.append({
                         "document": doc_path.name,
@@ -192,6 +210,10 @@ class FlowExtractorV2:
                 })
 
         # Stage 2: parallel normalization
+        if self._cancel_requested:
+            logger.info("提取已取消，跳过阶段2")
+            return result
+        logger.info("阶段2开始：流水行标准化（并行度=%s）", workers)
         flow_records = self._process_documents_stage2(
             stage2_doc_names, task_id, batch_size, workers, result, total_stage2_rows
         )
@@ -200,6 +222,7 @@ class FlowExtractorV2:
 
         if not self._cancel_requested:
             self.progress.report(f"提取完成: {result.total_records} 条流水", status=ProgressStatus.COMPLETED)
+            logger.info("提取完成：%d 条流水，失败文档 %d 个", result.total_records, len(result.failed_documents))
             self._write_report(task_id, result)
             self.checkpoints.clear_task(task_id)
 
@@ -232,8 +255,13 @@ class FlowExtractorV2:
             return state, stats
 
         raw_tables = self._extract_raw_tables(doc_path, parser)
+        logger.info("文档解析完成: %s，抽取到表格 %d 个", doc_path.name, len(raw_tables))
         stats["total_tables"] = len(raw_tables)
         state["total_tables"] = len(raw_tables)
+        if not raw_tables:
+            state["errors"].append("未抽取到任何表格")
+            self.checkpoints.save_document_state(task_id, doc_path.name, state)
+            return state, stats
 
         doc_header_attributes: Optional[List[str]] = None
 
@@ -242,6 +270,7 @@ class FlowExtractorV2:
                 break
 
             if not table.rows:
+                logger.debug("表格为空，跳过: %s table#%s", doc_path.name, table.table_index)
                 continue
 
             decision = self.table_classifier.analyze_table(table, doc_path.name)
@@ -249,11 +278,20 @@ class FlowExtractorV2:
                 state["errors"].append(
                     f"AI表格判断失败: table#{table.table_index}"
                 )
+                logger.warning("AI表格判断失败: %s table#%s", doc_path.name, table.table_index)
                 continue
 
             is_flow = bool(decision.get("is_flow_table"))
             confidence = int(decision.get("confidence", 0))
+            logger.debug(
+                "表格判定: %s table#%s is_flow=%s confidence=%d threshold=%d",
+                doc_path.name, table.table_index, is_flow, confidence, confidence_threshold
+            )
             if not is_flow or confidence < confidence_threshold:
+                logger.debug(
+                    "表格未达标跳过: %s table#%s (is_flow=%s confidence=%d)",
+                    doc_path.name, table.table_index, is_flow, confidence
+                )
                 continue
 
             stats["flow_tables"] += 1
@@ -312,14 +350,19 @@ class FlowExtractorV2:
     ) -> List[FlowRecord]:
         if not doc_names:
             return []
+        if self._cancel_requested:
+            return []
 
         flow_records: List[FlowRecord] = []
         self._stage2_total_rows = max(0, int(total_rows))
         self._stage2_done_rows = 0
 
         def process_doc(doc_name: str) -> List[FlowRecord]:
+            if self._cancel_requested:
+                return []
             state = self.checkpoints.load_document_state(task_id, doc_name) or {}
             if state.get("status") == "completed" and state.get("records"):
+                logger.info("阶段2读取缓存结果: %s (%d 条)", doc_name, len(state.get("records", [])))
                 return [
                     FlowRecord(
                         source_file=item.get("source_file", doc_name),
@@ -334,6 +377,7 @@ class FlowExtractorV2:
                     for item in state.get("records", [])
                 ]
             if not state.get("flow_tables"):
+                logger.warning("阶段2无可处理流水表: %s", doc_name)
                 return []
             header_attributes = state.get("header_attributes", []) or []
             rows_tables = state.get("flow_tables", [])
@@ -344,7 +388,11 @@ class FlowExtractorV2:
 
             doc_records: List[FlowRecord] = []
             processed_rows = 0
+            total_rows = sum(len(t.get("rows", [])) for t in rows_tables)
+            invalid_rows = 0
+            normalized_rows = 0
             checkpoint_interval = max(1, int(self.config.flow_checkpoint_interval))
+            logger.info("阶段2处理文档: %s (表格=%d, 行数=%d)", doc_name, len(rows_tables), total_rows)
 
             for table in rows_tables:
                 if self._cancel_requested:
@@ -362,6 +410,8 @@ class FlowExtractorV2:
                         {"row_index": data_start_row + i + idx + 1, "cells": row}
                         for idx, row in enumerate(batch_rows)
                     ]
+                    if self._cancel_requested:
+                        break
                     normalized = self.data_normalizer.normalize_rows(
                         document_name=doc_name,
                         header_attributes=header_attributes,
@@ -372,9 +422,14 @@ class FlowExtractorV2:
                         state.setdefault("errors", []).append(
                             f"AI标准化失败: {doc_name} batch {i}-{i + len(batch_rows)}"
                         )
+                        logger.warning(
+                            "AI标准化失败: %s batch %d-%d", doc_name, i, i + len(batch_rows)
+                        )
                     else:
+                        normalized_rows += len(normalized)
                         for item in normalized:
                             if not item.get("is_valid", True):
+                                invalid_rows += 1
                                 continue
                             doc_records.append(FlowRecord(
                                 source_file=item.get("source_file", doc_name),
@@ -397,6 +452,10 @@ class FlowExtractorV2:
             state["normalized_records"] = len(doc_records)
             state["records"] = [r.to_dict() for r in doc_records]
             self.checkpoints.save_document_state(task_id, doc_name, state)
+            logger.info(
+                "阶段2完成文档: %s (标准化=%d, 无效行=%d, 产出记录=%d)",
+                doc_name, normalized_rows, invalid_rows, len(doc_records)
+            )
             if state.get("errors"):
                 with self._lock:
                     for err in state.get("errors", []):
