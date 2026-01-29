@@ -8,6 +8,7 @@ import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+import re
 
 from ..config import get_config
 from ..parsers import PDFParser, ExcelParser, DocxParser
@@ -228,6 +229,91 @@ class FlowExtractorV2:
 
         return result
 
+    @staticmethod
+    def _normalize_datetime(value: str) -> str:
+        if not value:
+            return ""
+        text = value.strip()
+        text = text.replace("年", "-").replace("月", "-").replace("日", "")
+        text = text.replace("/", "-").replace(".", "-")
+        text = re.sub(r"\s+", " ", text)
+        if " " in text:
+            date_part, time_part = text.split(" ", 1)
+        else:
+            date_part, time_part = text, ""
+        date_parts = [p for p in date_part.split("-") if p]
+        if len(date_parts) >= 3:
+            y, m, d = date_parts[0], date_parts[1], date_parts[2]
+            if len(m) == 1:
+                m = f"0{m}"
+            if len(d) == 1:
+                d = f"0{d}"
+            date_part = f"{y}-{m}-{d}"
+        else:
+            return value.strip()
+        if not time_part:
+            return f"{date_part} 00:00:00"
+        time_part = time_part.strip()
+        if re.match(r"^\d{1,2}:\d{2}$", time_part):
+            time_part = f"{time_part}:00"
+        if re.match(r"^\d{1,2}:\d{2}:\d{2}$", time_part):
+            hh, mm, ss = time_part.split(":")
+            if len(hh) == 1:
+                hh = f"0{hh}"
+            time_part = f"{hh}:{mm}:{ss}"
+        return f"{date_part} {time_part}"
+
+    @staticmethod
+    def _normalize_amount_and_type(amount: str, transaction_type: str, summary: str) -> Tuple[str, str]:
+        if not amount:
+            return amount, transaction_type
+        text_amount = amount.strip()
+        text_type = (transaction_type or "").strip()
+        text_summary = (summary or "").strip()
+
+        def has_any(text: str, keywords: List[str]) -> bool:
+            return any(k in text for k in keywords)
+
+        # 统一关键词：同时覆盖借记卡与信用卡常见语义
+        expense_keys = [
+            "支出", "消费", "付款", "借方", "转出", "扣款", "手续费",
+            "提现", "代扣", "刷卡", "分期", "利息支出"
+        ]
+        income_keys = [
+            "收入", "收款", "入账", "贷方", "退款", "返现", "利息",
+            "还款", "入金", "溢缴", "退货", "入账金额"
+        ]
+
+        sign = None
+        if text_amount.startswith("-"):
+            sign = -1
+        elif text_amount.startswith("+"):
+            sign = 1
+
+        hint = ""
+        if has_any(text_type, expense_keys) or has_any(text_summary, expense_keys):
+            hint = "expense"
+        elif has_any(text_type, income_keys) or has_any(text_summary, income_keys):
+            hint = "income"
+
+        # 金额清洗：去除币种前缀/符号/千分位
+        text_amount = re.sub(r"(?i)\bRMB\b", "", text_amount)
+        text_amount = text_amount.replace("￥", "").replace("¥", "")
+        text_amount = text_amount.replace(",", "").strip()
+
+        if hint == "expense":
+            if sign != -1:
+                text_amount = f"-{text_amount.lstrip('+')}"
+            if not text_type:
+                text_type = "支出"
+        elif hint == "income":
+            if sign == -1:
+                text_amount = text_amount.lstrip("-")
+            if not text_type:
+                text_type = "收入"
+
+        return text_amount, text_type
+
     def _process_document_stage1(
         self,
         doc_path: Path,
@@ -431,15 +517,20 @@ class FlowExtractorV2:
                             if not item.get("is_valid", True):
                                 invalid_rows += 1
                                 continue
+                            fixed_amount, fixed_type = self._normalize_amount_and_type(
+                                item.get("amount", "") or "",
+                                item.get("transaction_type", "") or "",
+                                item.get("summary", "") or ""
+                            )
                             doc_records.append(FlowRecord(
                                 source_file=item.get("source_file", doc_name),
                                 original_row=int(item.get("row_index", 0) or 0),
-                                transaction_time=item.get("transaction_time", "") or "",
+                                transaction_time=self._normalize_datetime(item.get("transaction_time", "") or ""),
                                 counterparty_name=item.get("counterparty_name", "") or "",
                                 counterparty_account=item.get("counterparty_account", "") or "",
-                                amount=item.get("amount", "") or "",
+                                amount=fixed_amount,
                                 summary=item.get("summary", "") or "",
-                                transaction_type=item.get("transaction_type", "") or ""
+                                transaction_type=fixed_type
                             ))
                     processed_rows += len(batch_rows)
                     self._report_stage2_progress(doc_name, len(batch_rows))
