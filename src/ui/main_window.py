@@ -6,7 +6,7 @@ Main window - application shell with light sidebar navigation
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
     QPushButton, QLabel, QStackedWidget, QFrame,
-    QDialog, QLineEdit, QSpinBox,
+    QDialog, QLineEdit, QSpinBox, QMessageBox,
     QTabWidget
 )
 from PyQt5.QtCore import Qt
@@ -529,8 +529,15 @@ class MainWindow(QMainWindow):
             
             # 切换到结果页面
             self._switch_page(self.PAGE_RESULT)
+            if getattr(result, "writeback_error", ""):
+                QMessageBox.warning(
+                    self,
+                    "写回失败",
+                    "已完成匹配，但写回流水Excel失败。\n"
+                    "请确认该Excel未被打开后重试。\n\n"
+                    f"错误信息: {result.writeback_error}"
+                )
         except Exception as e:
-            from PyQt5.QtWidgets import QMessageBox
             QMessageBox.critical(
                 self,
                 "审查失败",

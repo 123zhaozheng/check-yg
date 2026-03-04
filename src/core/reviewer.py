@@ -27,6 +27,7 @@ class ReviewMatch:
     match_type: str  # "精确匹配" / "脱敏匹配"
     confidence: int
     source_file: str
+    row_index: int = 0
     transaction_time: str = ""
     amount: str = ""
     summary: str = ""
@@ -40,6 +41,7 @@ class ReviewMatch:
             'match_type': self.match_type,
             'confidence': self.confidence,
             'source_file': self.source_file,
+            'row_index': self.row_index,
             'transaction_time': self.transaction_time,
             'amount': self.amount,
             'summary': self.summary,
@@ -58,6 +60,7 @@ class ReviewResult:
     total_matches: int
     total_amount: float
     matches: List[ReviewMatch] = field(default_factory=list)
+    writeback_error: str = ""
     
     def __post_init__(self):
         if self.matches is None:
@@ -116,7 +119,9 @@ class Reviewer:
                 raise ValueError("流水Excel缺少表头")
 
             records = []
+            row_index = 1
             for row in rows_iter:
+                row_index += 1
                 record = {}
                 for idx, header in enumerate(headers):
                     if not header:
@@ -124,6 +129,7 @@ class Reviewer:
                     value = row[idx] if idx < len(row) else ""
                     record[header] = "" if value is None else str(value).strip()
                 if record:
+                    record["_row_index"] = row_index
                     records.append(record)
             wb.close()
             logger.info("加载流水: %d 条", len(records))
@@ -185,7 +191,8 @@ class Reviewer:
             logger.warning("发现 %d 条金额无效的流水，已跳过", skipped_amount_rows)
 
         # 匹配
-        matches = []
+        matches: List[ReviewMatch] = []
+        best_match_by_row: dict = {}
         for flow in valid_flows:
             counterparty = str(flow.get('交易对手名', ''))
             counterparty_account = str(flow.get('交易对手账号', ''))
@@ -198,18 +205,33 @@ class Reviewer:
                 if self.config.enable_exact_match:
                     result = self.matcher.match_exact(customer, counterparty)
                     if result:
-                        matches.append(self._create_match(
+                        match = self._create_match(
                             customer, result, flow, counterparty, counterparty_account
-                        ))
+                        )
+                        matches.append(match)
+                        self._update_best_match(best_match_by_row, match)
                         continue
                 
                 # 脱敏匹配
                 if self.config.enable_desensitized_match:
                     result = self.matcher.match_desensitized(customer, counterparty)
                     if result:
-                        matches.append(self._create_match(
+                        match = self._create_match(
                             customer, result, flow, counterparty, counterparty_account
-                        ))
+                        )
+                        matches.append(match)
+                        self._update_best_match(best_match_by_row, match)
+                        continue
+
+                # 模糊匹配
+                if self.config.enable_fuzzy_match:
+                    result = self.matcher.match_fuzzy(customer, counterparty)
+                    if result:
+                        match = self._create_match(
+                            customer, result, flow, counterparty, counterparty_account
+                        )
+                        matches.append(match)
+                        self._update_best_match(best_match_by_row, match)
 
         # 统计
         total_amount = sum(
@@ -217,7 +239,7 @@ class Reviewer:
         )
         matched_customers = set(m.customer_name for m in matches)
         
-        return ReviewResult(
+        result = ReviewResult(
             review_id=datetime.now().strftime("%Y%m%d_%H%M%S"),
             review_time=datetime.now().isoformat(),
             flow_excel_path=flow_excel_path,
@@ -228,6 +250,13 @@ class Reviewer:
             total_amount=total_amount,
             matches=matches
         )
+        try:
+            self._write_back_results(flow_excel_path, best_match_by_row, matches)
+        except Exception as exc:
+            result.writeback_error = str(exc)
+            logger.warning("写回流水Excel失败: %s", exc)
+
+        return result
 
     def _parse_amount(self, amount_value: object) -> Optional[float]:
         """Parse amount string to float; return None if invalid."""
@@ -265,7 +294,123 @@ class Reviewer:
             match_type=match_result.match_type.value,
             confidence=match_result.confidence,
             source_file=str(flow.get('来源文件', '')),
+            row_index=int(flow.get('_row_index', 0) or 0),
             transaction_time=str(flow.get('交易时间', '')),
             amount=str(flow.get('金额', '')),
             summary=str(flow.get('摘要', '')),
         )
+
+    def _update_best_match(self, best_map: dict, match: ReviewMatch) -> None:
+        row_index = match.row_index
+        if row_index <= 0:
+            return
+        existing = best_map.get(row_index)
+        if not existing:
+            best_map[row_index] = match
+            return
+
+        def rank(m: ReviewMatch) -> tuple:
+            type_rank = {
+                "精确匹配": 3,
+                "脱敏匹配": 2,
+                "模糊匹配": 1,
+            }.get(m.match_type, 0)
+            return (int(m.confidence), type_rank)
+
+        if rank(match) > rank(existing):
+            best_map[row_index] = match
+
+    def _write_back_results(
+        self,
+        flow_excel_path: str,
+        best_match_by_row: dict,
+        matches: List[ReviewMatch]
+    ) -> None:
+        path = Path(flow_excel_path)
+        if not path.exists():
+            raise FileNotFoundError(f"File not found: {flow_excel_path}")
+
+        wb = openpyxl.load_workbook(path)
+        try:
+            ws = wb.active
+
+            headers = []
+            for col in range(1, ws.max_column + 1):
+                value = ws.cell(row=1, column=col).value
+                headers.append(str(value).strip() if value is not None else "")
+            if not any(headers):
+                raise ValueError("流水Excel缺少表头")
+
+            user_col = self._find_header_column(headers, "匹配用户")
+            conf_col = self._find_header_column(headers, "匹配度")
+
+            if user_col is None:
+                user_col = ws.max_column + 1
+                ws.cell(row=1, column=user_col, value="匹配用户")
+            if conf_col is None:
+                conf_col = ws.max_column + 1
+                ws.cell(row=1, column=conf_col, value="匹配度")
+
+            # 清空原有匹配列，避免旧数据残留
+            for row in range(2, ws.max_row + 1):
+                ws.cell(row=row, column=user_col, value=None)
+                ws.cell(row=row, column=conf_col, value=None)
+
+            # 写入最佳匹配
+            for row_index, match in best_match_by_row.items():
+                if row_index <= 1:
+                    continue
+                ws.cell(row=row_index, column=user_col, value=match.customer_name)
+                ws.cell(row=row_index, column=conf_col, value=int(match.confidence))
+
+            # 写入匹配详情Sheet
+            self._write_match_details_sheet(wb, matches)
+
+            wb.save(path)
+        finally:
+            wb.close()
+
+    @staticmethod
+    def _find_header_column(headers: List[str], name: str) -> Optional[int]:
+        for idx, header in enumerate(headers, 1):
+            if header == name:
+                return idx
+        return None
+
+    @staticmethod
+    def _write_match_details_sheet(wb, matches: List[ReviewMatch]) -> None:
+        sheet_name = "匹配详情"
+        if sheet_name in wb.sheetnames:
+            wb.remove(wb[sheet_name])
+        ws = wb.create_sheet(sheet_name)
+
+        headers = [
+            "流水行号",
+            "匹配用户",
+            "匹配度",
+            "匹配类型",
+            "来源文件",
+            "交易时间",
+            "对手名",
+            "对手账号",
+            "金额",
+            "摘要",
+        ]
+        for col_idx, header in enumerate(headers, 1):
+            ws.cell(row=1, column=col_idx, value=header)
+
+        for row_idx, match in enumerate(matches, 2):
+            data = [
+                match.row_index,
+                match.customer_name,
+                int(match.confidence),
+                match.match_type,
+                match.source_file,
+                match.transaction_time,
+                match.counterparty_name,
+                match.counterparty_account,
+                match.amount,
+                match.summary,
+            ]
+            for col_idx, value in enumerate(data, 1):
+                ws.cell(row=row_idx, column=col_idx, value=value)
