@@ -23,7 +23,7 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-
+.workflow/
 # PyInstaller
 *.manifest
 *.spec
@@ -71,6 +71,7 @@ venv.bak/
 data/input/
 data/output/
 data/reports/
+tests/
 
 # Logs
 *.log
@@ -78,3 +79,4 @@ data/reports/
 # OS
 .DS_Store
 Thumbs.db
+.ace-tool/

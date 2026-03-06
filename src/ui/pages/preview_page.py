@@ -3,6 +3,7 @@
 Preview page - Flow records preview with search, sort, and export
 """
 
+import os
 from pathlib import Path
 from typing import List, Optional
 from PyQt5.QtWidgets import (
@@ -11,7 +12,7 @@ from PyQt5.QtWidgets import (
     QTableWidgetItem, QHeaderView, QAbstractItemView,
     QFrame, QFileDialog
 )
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QColor, QBrush, QFont
 
 from ..widgets import Card, StatCardRow
@@ -266,7 +267,6 @@ class FlowPreviewTable(QWidget):
     
     def _set_row_data(self, row: int, record: FlowRecord) -> None:
         """Set data for a single row"""
-        import os
         filename = os.path.basename(record.source_file)
         
         data = [
@@ -407,6 +407,8 @@ class PreviewPage(QWidget):
     - Export action
     """
     
+    configure_review = pyqtSignal(str)  # flow_excel_path
+    
     def __init__(self, parent=None):
         super().__init__(parent)
         self.config = get_config()
@@ -488,7 +490,42 @@ class PreviewPage(QWidget):
         self.export_btn.clicked.connect(self._export_excel)
         action_layout.addWidget(self.export_btn)
         
+        # Next: Review button
+        self.next_btn = QPushButton("下一步：配置审查  →")
+        self.next_btn.setObjectName("primary_btn")
+        self.next_btn.setMinimumSize(160, 40)
+        self.next_btn.setCursor(Qt.PointingHandCursor)
+        self.next_btn.clicked.connect(self._on_next_clicked)
+        action_layout.addWidget(self.next_btn)
+        
         layout.addLayout(action_layout)
+    
+    def _on_next_clicked(self):
+        """Handle next button click"""
+        # First export to temp file if not already exported
+        excel_path = self._export_excel_temp()
+        if excel_path:
+            self.configure_review.emit(excel_path)
+            
+    def _export_excel_temp(self) -> Optional[str]:
+        """Export to a temporary file for processing"""
+        if not self.result or not self.result.flow_records:
+            QMessageBox.warning(self, "无法继续", "没有流水记录。")
+            return None
+            
+        try:
+            # Create temp path
+            temp_dir = Path(os.path.expanduser("~/.check-yg/temp"))
+            temp_dir.mkdir(parents=True, exist_ok=True)
+            exporter = FlowExporter(output_folder=temp_dir)
+            output_path = exporter.export(
+                records=self.result.flow_records,
+                task_id=self.result.task_id
+            )
+            return str(output_path)
+        except Exception as e:
+            QMessageBox.critical(self, "错误", f"准备流水数据失败: {str(e)}")
+            return None
     
     def set_extraction_result(self, result: ExtractionResult) -> None:
         """

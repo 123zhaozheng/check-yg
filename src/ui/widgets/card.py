@@ -7,6 +7,8 @@ from PyQt5.QtWidgets import QFrame, QVBoxLayout, QLabel, QGraphicsDropShadowEffe
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor
 
+from ..styles import COLORS
+
 
 class Card(QFrame):
     """
@@ -27,12 +29,12 @@ class Card(QFrame):
     
     def _setup_style(self, padding: int) -> None:
         """Setup card styling"""
-        self.setStyleSheet("""
-            QFrame#card {
-                background-color: #FFFFFF;
+        self.setStyleSheet(f"""
+            QFrame#card {{
+                background-color: {COLORS['card']};
                 border-radius: 12px;
-                border: 1px solid #F3F4F6;
-            }
+                border: 1px solid {COLORS['border_light']};
+            }}
         """)
     
     def _setup_shadow(self) -> None:
@@ -48,10 +50,10 @@ class Card(QFrame):
         """Add a title label to the card"""
         title = QLabel(text)
         title.setObjectName("section_title")
-        title.setStyleSheet("""
+        title.setStyleSheet(f"""
             font-size: 16px;
             font-weight: 600;
-            color: #1F2937;
+            color: {COLORS['text_primary']};
             margin-bottom: 8px;
         """)
         self.layout.insertWidget(0, title)
@@ -61,9 +63,9 @@ class Card(QFrame):
         """Add a subtitle/description label"""
         subtitle = QLabel(text)
         subtitle.setObjectName("subtitle")
-        subtitle.setStyleSheet("""
+        subtitle.setStyleSheet(f"""
             font-size: 13px;
-            color: #6B7280;
+            color: {COLORS['text_secondary']};
         """)
         subtitle.setWordWrap(True)
         self.layout.addWidget(subtitle)

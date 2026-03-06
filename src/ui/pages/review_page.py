@@ -26,6 +26,7 @@ class ReviewPage(QWidget):
     """
     
     start_review = pyqtSignal(str, list)  # flow_excel_path, customers
+    back_requested = pyqtSignal()
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -231,6 +232,14 @@ class ReviewPage(QWidget):
         
         # Bottom action bar
         action_layout = QHBoxLayout()
+        
+        self.back_btn = QPushButton("←  上一步")
+        self.back_btn.setObjectName("secondary_btn")
+        self.back_btn.setFixedSize(100, 40)
+        self.back_btn.setCursor(Qt.PointingHandCursor)
+        self.back_btn.clicked.connect(self.back_requested.emit)
+        action_layout.addWidget(self.back_btn)
+        
         action_layout.addStretch()
         
         self.start_btn = QPushButton("开始审查")

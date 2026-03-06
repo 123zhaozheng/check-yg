@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ccw cli:*)",
+      "Bash(python:*)",
+      "Bash(uv run:*)",
+      "mcp__exa__web_search_exa",
+      "Bash(ccw issue:*)",
+      "Bash(ccw mcp:*)",
+      "Bash(uvx mineru-mcp:*)",
+      "mcp__mineru-mcp__parse_documents",
+      "mcp__contextweaver__codebase-retrieval",
+      "mcp__ace-tool__search_context"
+    ]
+  }
+}

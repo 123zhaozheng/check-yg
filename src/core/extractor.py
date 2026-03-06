@@ -23,6 +23,9 @@ class FlowExtractor:
     def request_cancel(self) -> None:
         self._v2.request_cancel()
 
+    def request_pause(self, pause: bool) -> None:
+        self._v2.request_pause(pause)
+
     def extract_flows(
         self,
         document_folder: str,

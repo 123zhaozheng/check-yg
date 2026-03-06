@@ -57,6 +57,8 @@ class FlowExtractorV2:
         self.progress = ProgressManager()
         self.checkpoints = CheckpointManager(self.config.config_dir / "checkpoints")
         self._cancel_requested = False
+        self._pause_requested = False
+        self._pause_condition = threading.Condition()
         self._lock = threading.Lock()
 
     def set_progress_callback(self, callback) -> None:
@@ -64,6 +66,21 @@ class FlowExtractorV2:
 
     def request_cancel(self) -> None:
         self._cancel_requested = True
+        with self._pause_condition:
+            self._pause_condition.notify_all()
+
+    def request_pause(self, pause: bool) -> None:
+        """请求暂停或继续提取。"""
+        with self._pause_condition:
+            self._pause_requested = pause
+            if not pause:
+                self._pause_condition.notify_all()
+
+    def _check_pause(self) -> None:
+        """检查并执行暂停。"""
+        with self._pause_condition:
+            while self._pause_requested and not self._cancel_requested:
+                self._pause_condition.wait()
 
     def extract_flows(
         self,
@@ -74,6 +91,7 @@ class FlowExtractorV2:
         parallelism: Optional[int] = None
     ) -> ExtractionResult:
         self._cancel_requested = False
+        self._pause_requested = False
         threshold = confidence_threshold if confidence_threshold is not None else self.config.flow_confidence_threshold
         workers = parallelism if parallelism is not None else self.config.flow_parallelism
 
@@ -83,6 +101,13 @@ class FlowExtractorV2:
         if not self.table_classifier.is_available() or not self.data_normalizer.is_available():
             message = "未配置LLM API Key，无法进行AI流水提取"
             self.progress.report(message, status=ProgressStatus.FAILED)
+            self.checkpoints.start_task(
+                task_id,
+                documents=[],
+                title=task_id,
+                document_folder=document_folder,
+            )
+            self.checkpoints.update_task_status(task_id, "failed")
             return ExtractionResult(
                 task_id=task_id,
                 task_time=datetime.now().isoformat(),
@@ -107,12 +132,21 @@ class FlowExtractorV2:
             max(1, len(documents))
         )
 
-        self.checkpoints.start_task(task_id, [p.name for p in documents])
-        existing_states = {
-            state.get("document_name"): state
-            for state in self.checkpoints.list_document_states(task_id)
-            if state.get("document_name")
-        }
+        self.checkpoints.start_task(
+            task_id,
+            [str(p) for p in documents],
+            title=task_id,
+            document_folder=document_folder,
+        )
+        self.checkpoints.update_task_status(task_id, "extracting")
+        existing_states: Dict[str, Dict] = {}
+        for state in self.checkpoints.list_document_states(task_id):
+            document_path = str(state.get("document_path", "") or "").strip()
+            document_name = str(state.get("document_name", "") or "").strip()
+            if document_path:
+                existing_states[document_path] = state
+            elif document_name and document_name not in existing_states:
+                existing_states[document_name] = state
         total_stage2_rows = 0
 
         result = ExtractionResult(
@@ -126,12 +160,13 @@ class FlowExtractorV2:
             total_records=0
         )
 
-        stage2_doc_names: List[str] = []
+        stage2_doc_paths: List[str] = []
 
         # Stage 1: serial classification
         logger.info("阶段1开始：逐文档表格识别与流水判定（串行）")
         processed_docs = 0
         for idx, doc_path in enumerate(documents):
+            self._check_pause()
             if self._cancel_requested:
                 self.progress.report("提取已取消", status=ProgressStatus.CANCELED)
                 break
@@ -143,9 +178,14 @@ class FlowExtractorV2:
                 max(1, total_units)
             )
             logger.info("阶段1处理文档: %s (%d/%d)", doc_path.name, idx + 1, len(documents))
-            existing_state = existing_states.get(doc_path.name)
-            if existing_state and existing_state.get("status") in ("stage1_done", "stage2_running", "completed"):
-                stage2_doc_names.append(doc_path.name)
+            existing_state = existing_states.get(str(doc_path)) or existing_states.get(doc_path.name)
+            if existing_state and existing_state.get("status") in (
+                "stage1_done",
+                "stage2_running",
+                "normalizing",
+                "completed",
+            ):
+                stage2_doc_paths.append(str(doc_path))
                 result.total_tables += int(existing_state.get("total_tables", 0) or 0)
                 result.flow_tables += int(existing_state.get("flow_tables_count", 0) or 0)
                 result.processed_documents += 1
@@ -175,7 +215,7 @@ class FlowExtractorV2:
                 doc_state, stats = self._process_document_stage1(
                     doc_path, task_id, threshold
                 )
-                stage2_doc_names.append(doc_path.name)
+                stage2_doc_paths.append(str(doc_path))
                 result.total_tables += stats["total_tables"]
                 result.flow_tables += stats["flow_tables"]
                 result.processed_documents += 1
@@ -212,19 +252,31 @@ class FlowExtractorV2:
         # Stage 2: parallel normalization
         if self._cancel_requested:
             logger.info("提取已取消，跳过阶段2")
+            self.checkpoints.update_task_status(task_id, "canceled")
             return result
+        self.checkpoints.update_task_status(task_id, "normalizing")
         logger.info("阶段2开始：流水行标准化（并行度=%s）", workers)
         flow_records = self._process_documents_stage2(
-            stage2_doc_names, task_id, batch_size, workers, result, total_stage2_rows
+            stage2_doc_paths, task_id, batch_size, workers, result, total_stage2_rows
         )
         result.flow_records.extend(flow_records)
         result.total_records = len(result.flow_records)
 
-        if not self._cancel_requested:
-            self.progress.report(f"提取完成: {result.total_records} 条流水", status=ProgressStatus.COMPLETED)
+        if self._cancel_requested:
+            self.checkpoints.update_task_status(task_id, "canceled")
+        else:
+            final_status = "failed" if result.failed_documents else "completed"
+            self.checkpoints.update_task_status(task_id, final_status)
+            progress_status = ProgressStatus.FAILED if final_status == "failed" else ProgressStatus.COMPLETED
+            self.progress.report(f"提取完成: {result.total_records} 条流水", status=progress_status)
             logger.info("提取完成：%d 条流水，失败文档 %d 个", result.total_records, len(result.failed_documents))
             self._write_report(task_id, result)
-            self.checkpoints.clear_task(task_id)
+            if final_status != "completed":
+                logger.info("任务含失败文档，保留断点以便排查: %s", task_id)
+            elif self.config.flow_keep_checkpoint_on_success:
+                logger.info("配置要求保留断点，任务 checkpoint 未清理: %s", task_id)
+            else:
+                self.checkpoints.clear_task(task_id)
 
         return result
 
@@ -238,7 +290,7 @@ class FlowExtractorV2:
         state: Dict = {
             "document_name": doc_path.name,
             "document_path": str(doc_path),
-            "status": "stage1_done",
+            "status": "extracting",
             "header_attributes": [],
             "flow_tables": [],
             "total_tables": 0,
@@ -251,7 +303,9 @@ class FlowExtractorV2:
         if not parser:
             state["status"] = "failed"
             state["errors"].append("无解析器")
-            self.checkpoints.save_document_state(task_id, doc_path.name, state)
+            self.checkpoints.save_document_state(
+                task_id, doc_path.name, state, document_path=str(doc_path)
+            )
             return state, stats
 
         raw_tables = self._extract_raw_tables(doc_path, parser)
@@ -259,13 +313,17 @@ class FlowExtractorV2:
         stats["total_tables"] = len(raw_tables)
         state["total_tables"] = len(raw_tables)
         if not raw_tables:
+            state["status"] = "completed"
             state["errors"].append("未抽取到任何表格")
-            self.checkpoints.save_document_state(task_id, doc_path.name, state)
+            self.checkpoints.save_document_state(
+                task_id, doc_path.name, state, document_path=str(doc_path)
+            )
             return state, stats
 
         doc_header_attributes: Optional[List[str]] = None
 
         for table in raw_tables:
+            self._check_pause()
             if self._cancel_requested:
                 break
 
@@ -331,51 +389,51 @@ class FlowExtractorV2:
             })
             state["total_flow_rows"] += len(table_rows)
 
-            self.checkpoints.save_document_state(task_id, doc_path.name, state)
+            self.checkpoints.save_document_state(
+                task_id, doc_path.name, state, document_path=str(doc_path)
+            )
 
         if doc_header_attributes is None:
             state["status"] = "completed"
-            self.checkpoints.save_document_state(task_id, doc_path.name, state)
+        else:
+            state["status"] = "normalizing"
+        self.checkpoints.save_document_state(
+            task_id, doc_path.name, state, document_path=str(doc_path)
+        )
 
         return state, stats
 
     def _process_documents_stage2(
         self,
-        doc_names: List[str],
+        doc_paths: List[str],
         task_id: str,
         batch_size: int,
         workers: int,
         result: ExtractionResult,
         total_rows: int
     ) -> List[FlowRecord]:
-        if not doc_names:
+        if not doc_paths:
             return []
         if self._cancel_requested:
             return []
 
         flow_records: List[FlowRecord] = []
         self._stage2_total_rows = max(0, int(total_rows))
-        self._stage2_done_rows = 0
+        self._stage2_done_rows = self._get_stage2_done_rows(task_id, doc_paths)
 
-        def process_doc(doc_name: str) -> List[FlowRecord]:
+        def process_doc(document_path: str) -> List[FlowRecord]:
             if self._cancel_requested:
                 return []
-            state = self.checkpoints.load_document_state(task_id, doc_name) or {}
+            doc_path = Path(document_path)
+            doc_name = doc_path.name
+            state = self.checkpoints.load_document_state(
+                task_id,
+                doc_name,
+                document_path=document_path
+            ) or {}
             if state.get("status") == "completed" and state.get("records"):
                 logger.info("阶段2读取缓存结果: %s (%d 条)", doc_name, len(state.get("records", [])))
-                return [
-                    FlowRecord(
-                        source_file=item.get("source_file", doc_name),
-                        original_row=int(item.get("original_row", 0) or 0),
-                        transaction_time=item.get("transaction_time", "") or "",
-                        counterparty_name=item.get("counterparty_name", "") or "",
-                        counterparty_account=item.get("counterparty_account", "") or "",
-                        amount=item.get("amount", "") or "",
-                        summary=item.get("summary", "") or "",
-                        transaction_type=item.get("transaction_type", "") or ""
-                    )
-                    for item in state.get("records", [])
-                ]
+                return self._deserialize_records(state.get("records", []), doc_name)
             if not state.get("flow_tables"):
                 logger.warning("阶段2无可处理流水表: %s", doc_name)
                 return []
@@ -386,13 +444,24 @@ class FlowExtractorV2:
                 if first_rows:
                     header_attributes = [""] * len(first_rows[0])
 
-            doc_records: List[FlowRecord] = []
-            processed_rows = 0
-            total_rows = sum(len(t.get("rows", [])) for t in rows_tables)
+            total_doc_rows = sum(len(t.get("rows", [])) for t in rows_tables)
+            resume_offset = int(state.get("processed_rows", 0) or 0)
+            resume_offset = max(0, min(total_doc_rows, resume_offset))
+            doc_records: List[FlowRecord] = self._deserialize_records(state.get("records", []), doc_name)
+            if resume_offset > 0 and not doc_records:
+                logger.warning("文档 %s 存在 processed_rows 但无缓存记录，将从头重新处理", doc_name)
+                resume_offset = 0
+
+            processed_rows = resume_offset
             invalid_rows = 0
             normalized_rows = 0
             checkpoint_interval = max(1, int(self.config.flow_checkpoint_interval))
-            logger.info("阶段2处理文档: %s (表格=%d, 行数=%d)", doc_name, len(rows_tables), total_rows)
+            logger.info(
+                "阶段2处理文档: %s (表格=%d, 行数=%d, 续跑偏移=%d)",
+                doc_name, len(rows_tables), total_doc_rows, resume_offset
+            )
+
+            row_cursor = 0
 
             for table in rows_tables:
                 if self._cancel_requested:
@@ -401,11 +470,18 @@ class FlowExtractorV2:
                 rows = table.get("rows", [])
                 if not rows:
                     continue
+                if row_cursor + len(rows) <= resume_offset:
+                    row_cursor += len(rows)
+                    continue
 
-                for i in range(0, len(rows), batch_size):
+                table_start = max(0, resume_offset - row_cursor)
+                for i in range(table_start, len(rows), batch_size):
+                    self._check_pause()
                     if self._cancel_requested:
                         break
                     batch_rows = rows[i:i + batch_size]
+                    if not batch_rows:
+                        continue
                     payload_rows = [
                         {"row_index": data_start_row + i + idx + 1, "cells": row}
                         for idx, row in enumerate(batch_rows)
@@ -444,18 +520,41 @@ class FlowExtractorV2:
                     processed_rows += len(batch_rows)
                     self._report_stage2_progress(doc_name, len(batch_rows))
                     if processed_rows % checkpoint_interval == 0:
-                        state["status"] = "stage2_running"
+                        state["status"] = "normalizing"
                         state["processed_rows"] = processed_rows
-                        self.checkpoints.save_document_state(task_id, doc_name, state)
+                        state["normalized_records"] = len(doc_records)
+                        state["records"] = [r.to_dict() for r in doc_records]
+                        self.checkpoints.save_document_state(
+                            task_id,
+                            doc_name,
+                            state,
+                            document_path=document_path
+                        )
+                row_cursor += len(rows)
 
-            state["status"] = "completed"
+            if self._cancel_requested:
+                state["status"] = "canceled"
+            else:
+                state["status"] = "completed"
+            state["processed_rows"] = processed_rows
             state["normalized_records"] = len(doc_records)
             state["records"] = [r.to_dict() for r in doc_records]
-            self.checkpoints.save_document_state(task_id, doc_name, state)
-            logger.info(
-                "阶段2完成文档: %s (标准化=%d, 无效行=%d, 产出记录=%d)",
-                doc_name, normalized_rows, invalid_rows, len(doc_records)
+            self.checkpoints.save_document_state(
+                task_id,
+                doc_name,
+                state,
+                document_path=document_path
             )
+            if self._cancel_requested:
+                logger.info(
+                    "阶段2已取消并保存文档状态: %s (已处理行=%d, 产出记录=%d)",
+                    doc_name, processed_rows, len(doc_records)
+                )
+            else:
+                logger.info(
+                    "阶段2完成文档: %s (标准化=%d, 无效行=%d, 产出记录=%d)",
+                    doc_name, normalized_rows, invalid_rows, len(doc_records)
+                )
             if state.get("errors"):
                 with self._lock:
                     for err in state.get("errors", []):
@@ -467,20 +566,21 @@ class FlowExtractorV2:
             return doc_records
 
         if workers <= 1:
-            for doc_name in doc_names:
-                flow_records.extend(process_doc(doc_name))
+            for document_path in doc_paths:
+                flow_records.extend(process_doc(document_path))
             return flow_records
 
         from concurrent.futures import ThreadPoolExecutor, as_completed
         with ThreadPoolExecutor(max_workers=workers) as executor:
-            futures = {executor.submit(process_doc, name): name for name in doc_names}
+            futures = {executor.submit(process_doc, path): path for path in doc_paths}
             for future in as_completed(futures):
                 try:
                     records = future.result()
                     if records:
                         flow_records.extend(records)
                 except Exception as exc:
-                    doc_name = futures[future]
+                    document_path = futures[future]
+                    doc_name = Path(document_path).name
                     logger.error("Stage2 处理文档失败 %s: %s", doc_name, exc)
                     with self._lock:
                         result.failed_documents.append(doc_name)
@@ -491,6 +591,38 @@ class FlowExtractorV2:
                         })
 
         return flow_records
+
+    @staticmethod
+    def _deserialize_records(items: List[Dict], doc_name: str) -> List[FlowRecord]:
+        records: List[FlowRecord] = []
+        for item in items or []:
+            records.append(FlowRecord(
+                source_file=item.get("source_file", doc_name),
+                original_row=int(item.get("original_row", 0) or 0),
+                transaction_time=item.get("transaction_time", "") or "",
+                counterparty_name=item.get("counterparty_name", "") or "",
+                counterparty_account=item.get("counterparty_account", "") or "",
+                amount=item.get("amount", "") or "",
+                summary=item.get("summary", "") or "",
+                transaction_type=item.get("transaction_type", "") or ""
+            ))
+        return records
+
+    def _get_stage2_done_rows(self, task_id: str, doc_paths: List[str]) -> int:
+        done_rows = 0
+        for document_path in doc_paths:
+            doc_name = Path(document_path).name
+            state = self.checkpoints.load_document_state(
+                task_id,
+                doc_name,
+                document_path=document_path
+            ) or {}
+            status = state.get("status")
+            if status == "completed":
+                done_rows += int(state.get("total_flow_rows", 0) or 0)
+                continue
+            done_rows += int(state.get("processed_rows", 0) or 0)
+        return max(0, done_rows)
 
     def _report_stage2_progress(self, doc_name: str, batch_rows: int) -> None:
         with self._lock:

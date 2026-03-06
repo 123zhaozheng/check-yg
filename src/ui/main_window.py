@@ -11,8 +11,8 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt
 
-from .styles import MAIN_STYLE, COLORS
-from .pages import ResultPage, ExtractPage, ReviewPage
+from .styles import MAIN_STYLE, COLORS, SETTINGS_DIALOG_STYLE
+from .pages import ResultPage, ExtractPage, ReviewPage, HomePage
 from ..config import get_config
 
 
@@ -26,8 +26,8 @@ class SettingsDialog(QDialog):
         self.setMinimumSize(600, 650)
         self.setMaximumSize(700, 800)
         
-        # 清除父窗口样式的影响，设置独立样式
-        self.setStyleSheet("")
+        # 应用设置对话框样式
+        self.setStyleSheet(SETTINGS_DIALOG_STYLE)
         
         self._setup_ui()
         self._load_config()
@@ -39,30 +39,6 @@ class SettingsDialog(QDialog):
         
         # 使用 Tab 页面组织配置
         self.tab_widget = QTabWidget()
-        self.tab_widget.setStyleSheet("""
-            QTabWidget::pane {
-                border: 1px solid #E5E7EB;
-                border-radius: 6px;
-                background-color: #FFFFFF;
-            }
-            QTabBar::tab {
-                background-color: #F3F4F6;
-                color: #6B7280;
-                padding: 10px 20px;
-                margin-right: 2px;
-                border-top-left-radius: 6px;
-                border-top-right-radius: 6px;
-                font-size: 13px;
-            }
-            QTabBar::tab:selected {
-                background-color: #FFFFFF;
-                color: #1F2937;
-                font-weight: bold;
-            }
-            QTabBar::tab:hover:!selected {
-                background-color: #E5E7EB;
-            }
-        """)
         
         # 基础设置 Tab
         basic_tab = self._create_basic_tab()
@@ -80,39 +56,16 @@ class SettingsDialog(QDialog):
         btn_layout.addStretch()
         
         cancel_btn = QPushButton("取消")
+        cancel_btn.setObjectName("settings_cancel_btn")
         cancel_btn.setFixedSize(80, 38)
         cancel_btn.setCursor(Qt.PointingHandCursor)
-        cancel_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #FFFFFF;
-                color: #1F2937;
-                border: 1px solid #E5E7EB;
-                border-radius: 6px;
-                font-size: 13px;
-            }
-            QPushButton:hover {
-                background-color: #F3F4F6;
-            }
-        """)
         cancel_btn.clicked.connect(self.reject)
         btn_layout.addWidget(cancel_btn)
         
         save_btn = QPushButton("保存")
+        save_btn.setObjectName("settings_save_btn")
         save_btn.setFixedSize(80, 38)
         save_btn.setCursor(Qt.PointingHandCursor)
-        save_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #3B82F6;
-                color: #FFFFFF;
-                border: none;
-                border-radius: 6px;
-                font-size: 13px;
-                font-weight: 500;
-            }
-            QPushButton:hover {
-                background-color: #2563EB;
-            }
-        """)
         save_btn.clicked.connect(self._save_and_close)
         btn_layout.addWidget(save_btn)
         
@@ -127,17 +80,17 @@ class SettingsDialog(QDialog):
         
         # ========== MinerU 区域 ==========
         mineru_title = QLabel("MinerU PDF解析服务")
-        mineru_title.setStyleSheet("font-size: 15px; font-weight: bold; color: #1F2937;")
+        mineru_title.setObjectName("settings_title")
         layout.addWidget(mineru_title)
         
         mineru_url_label = QLabel("服务地址")
-        mineru_url_label.setStyleSheet("font-size: 13px; color: #6B7280;")
+        mineru_url_label.setObjectName("settings_label")
         layout.addWidget(mineru_url_label)
         
         self.mineru_url_input = QLineEdit()
+        self.mineru_url_input.setObjectName("settings_input")
         self.mineru_url_input.setPlaceholderText("http://localhost:8000")
         self.mineru_url_input.setFixedHeight(40)
-        self.mineru_url_input.setStyleSheet(self._input_style())
         layout.addWidget(self.mineru_url_input)
         
         # 分隔线
@@ -145,41 +98,41 @@ class SettingsDialog(QDialog):
         
         # ========== LLM 基础配置 ==========
         llm_title = QLabel("大模型 API 配置")
-        llm_title.setStyleSheet("font-size: 15px; font-weight: bold; color: #1F2937;")
+        llm_title.setObjectName("settings_title")
         layout.addWidget(llm_title)
         
         # API 地址
         llm_url_label = QLabel("API 地址")
-        llm_url_label.setStyleSheet("font-size: 13px; color: #6B7280; margin-top: 8px;")
+        llm_url_label.setObjectName("settings_label")
         layout.addWidget(llm_url_label)
         
         self.llm_url_input = QLineEdit()
+        self.llm_url_input.setObjectName("settings_input")
         self.llm_url_input.setPlaceholderText("https://api.openai.com/v1")
         self.llm_url_input.setFixedHeight(40)
-        self.llm_url_input.setStyleSheet(self._input_style())
         layout.addWidget(self.llm_url_input)
         
         # 模型名称
         llm_model_label = QLabel("模型名称")
-        llm_model_label.setStyleSheet("font-size: 13px; color: #6B7280; margin-top: 8px;")
+        llm_model_label.setObjectName("settings_label")
         layout.addWidget(llm_model_label)
         
         self.llm_model_input = QLineEdit()
+        self.llm_model_input.setObjectName("settings_input")
         self.llm_model_input.setPlaceholderText("gpt-4")
         self.llm_model_input.setFixedHeight(40)
-        self.llm_model_input.setStyleSheet(self._input_style())
         layout.addWidget(self.llm_model_input)
         
         # API Key
         llm_key_label = QLabel("API Key")
-        llm_key_label.setStyleSheet("font-size: 13px; color: #6B7280; margin-top: 8px;")
+        llm_key_label.setObjectName("settings_label")
         layout.addWidget(llm_key_label)
         
         self.llm_key_input = QLineEdit()
+        self.llm_key_input.setObjectName("settings_input")
         self.llm_key_input.setPlaceholderText("sk-...")
         self.llm_key_input.setEchoMode(QLineEdit.Password)
         self.llm_key_input.setFixedHeight(40)
-        self.llm_key_input.setStyleSheet(self._input_style())
         layout.addWidget(self.llm_key_input)
         
         layout.addStretch()
@@ -194,7 +147,7 @@ class SettingsDialog(QDialog):
         
         # ========== 流水提取设置 ==========
         extract_title = QLabel("流水提取设置")
-        extract_title.setStyleSheet("font-size: 15px; font-weight: bold; color: #1F2937;")
+        extract_title.setObjectName("settings_title")
         layout.addWidget(extract_title)
         
         extract_row = QHBoxLayout()
@@ -203,67 +156,37 @@ class SettingsDialog(QDialog):
         # 每次给AI行数
         flow_batch_layout = QVBoxLayout()
         flow_batch_label = QLabel("每次给AI行数")
-        flow_batch_label.setStyleSheet("font-size: 13px; color: #6B7280;")
+        flow_batch_label.setObjectName("settings_label")
         flow_batch_layout.addWidget(flow_batch_label)
         
         flow_batch_desc = QLabel("标准化阶段每次发送的行数")
-        flow_batch_desc.setStyleSheet("font-size: 11px; color: #9CA3AF;")
+        flow_batch_desc.setObjectName("settings_desc")
         flow_batch_layout.addWidget(flow_batch_desc)
         
         self.flow_batch_spin = QSpinBox()
+        self.flow_batch_spin.setObjectName("settings_input")
         self.flow_batch_spin.setRange(1, 100)
         self.flow_batch_spin.setValue(20)
         self.flow_batch_spin.setFixedHeight(40)
-        self.flow_batch_spin.setStyleSheet("""
-            QSpinBox {
-                background-color: #FFFFFF;
-                border: 1px solid #E5E7EB;
-                border-radius: 6px;
-                padding-left: 12px;
-                font-size: 13px;
-                color: #1F2937;
-            }
-            QSpinBox:focus {
-                border: 1px solid #3B82F6;
-            }
-            QSpinBox::up-button, QSpinBox::down-button {
-                width: 24px;
-            }
-        """)
         flow_batch_layout.addWidget(self.flow_batch_spin)
         extract_row.addLayout(flow_batch_layout)
         
         # 表格置信度阈值
         flow_threshold_layout = QVBoxLayout()
         flow_threshold_label = QLabel("表格置信度阈值")
-        flow_threshold_label.setStyleSheet("font-size: 13px; color: #6B7280;")
+        flow_threshold_label.setObjectName("settings_label")
         flow_threshold_layout.addWidget(flow_threshold_label)
         
         flow_threshold_desc = QLabel("高于此值才认定为流水表格")
-        flow_threshold_desc.setStyleSheet("font-size: 11px; color: #9CA3AF;")
+        flow_threshold_desc.setObjectName("settings_desc")
         flow_threshold_layout.addWidget(flow_threshold_desc)
         
         self.flow_threshold_spin = QSpinBox()
+        self.flow_threshold_spin.setObjectName("settings_input")
         self.flow_threshold_spin.setRange(0, 100)
         self.flow_threshold_spin.setValue(70)
         self.flow_threshold_spin.setSuffix(" 分")
         self.flow_threshold_spin.setFixedHeight(40)
-        self.flow_threshold_spin.setStyleSheet("""
-            QSpinBox {
-                background-color: #FFFFFF;
-                border: 1px solid #E5E7EB;
-                border-radius: 6px;
-                padding-left: 12px;
-                font-size: 13px;
-                color: #1F2937;
-            }
-            QSpinBox:focus {
-                border: 1px solid #3B82F6;
-            }
-            QSpinBox::up-button, QSpinBox::down-button {
-                width: 24px;
-            }
-        """)
         flow_threshold_layout.addWidget(self.flow_threshold_spin)
         extract_row.addLayout(flow_threshold_layout)
         
@@ -271,29 +194,12 @@ class SettingsDialog(QDialog):
         
         return widget
     
-    def _input_style(self) -> str:
-        """返回输入框的通用样式"""
-        return """
-            QLineEdit {
-                background-color: #FFFFFF;
-                border: 1px solid #E5E7EB;
-                border-radius: 6px;
-                padding-left: 12px;
-                padding-right: 12px;
-                font-size: 13px;
-                color: #1F2937;
-            }
-            QLineEdit:focus {
-                border: 1px solid #3B82F6;
-            }
-        """
-    
     def _create_separator(self) -> QFrame:
         """创建分隔线"""
         separator = QFrame()
         separator.setFrameShape(QFrame.HLine)
         separator.setFixedHeight(1)
-        separator.setStyleSheet("background-color: #E5E7EB; margin: 8px 0;")
+        separator.setStyleSheet(f"background-color: {COLORS['border']}; margin: 8px 0;")
         return separator
     
     def _load_config(self):
@@ -319,10 +225,11 @@ class MainWindow(QMainWindow):
     """Main application window with light sidebar navigation"""
     
     # 页面索引常量
-    PAGE_EXTRACT = 0   # 流水提取页
-    PAGE_PREVIEW = 1   # 流水预览页
-    PAGE_REVIEW = 2    # 审查配置页
-    PAGE_RESULT = 3    # 结果展示页
+    PAGE_HOME = 0      # 首页
+    PAGE_EXTRACT = 1   # 流水提取页
+    PAGE_PREVIEW = 2   # 流水预览页
+    PAGE_REVIEW = 3    # 审查配置页
+    PAGE_RESULT = 4    # 结果展示页
     
     def __init__(self):
         super().__init__()
@@ -352,6 +259,7 @@ class MainWindow(QMainWindow):
         self.page_stack = QStackedWidget()
         
         # 创建页面实例
+        self.home_page = HomePage()
         self.extract_page = ExtractPage()
         from .pages.preview_page import PreviewPage
         self.preview_page = PreviewPage()
@@ -359,10 +267,11 @@ class MainWindow(QMainWindow):
         self.result_page = ResultPage()
         
         # 按顺序添加页面
-        self.page_stack.addWidget(self.extract_page)   # 索引 0
-        self.page_stack.addWidget(self.preview_page)   # 索引 1
-        self.page_stack.addWidget(self.review_page)    # 索引 2
-        self.page_stack.addWidget(self.result_page)    # 索引 3
+        self.page_stack.addWidget(self.home_page)      # 索引 0
+        self.page_stack.addWidget(self.extract_page)   # 索引 1
+        self.page_stack.addWidget(self.preview_page)   # 索引 2
+        self.page_stack.addWidget(self.review_page)    # 索引 3
+        self.page_stack.addWidget(self.result_page)    # 索引 4
         
         content_layout.addWidget(self.page_stack)
         main_layout.addWidget(content_area, 1)
@@ -395,6 +304,7 @@ class MainWindow(QMainWindow):
         
         self.nav_buttons = []
         nav_items = [
+            ("🏠  首页", "仪表盘与任务历史", self.PAGE_HOME),
             ("📥  流水", "提取银行流水", self.PAGE_EXTRACT),
             ("📋  预览", "查看流水数据", self.PAGE_PREVIEW),
             ("🔍  审查", "匹配客户名单", self.PAGE_REVIEW),
@@ -457,7 +367,7 @@ class MainWindow(QMainWindow):
         settings_btn.clicked.connect(self._show_settings)
         layout.addWidget(settings_btn)
         
-        version_label = QLabel("v1.0.0")
+        version_label = QLabel("v1.1.0")
         version_label.setStyleSheet(f"""
             color: {COLORS['text_light']};
             font-size: 10px;
@@ -468,8 +378,20 @@ class MainWindow(QMainWindow):
         return sidebar
     
     def _connect_signals(self):
+        # HomePage signals
+        self.home_page.new_task_requested.connect(self._on_new_task)
+        self.home_page.resume_task_requested.connect(self._on_resume_task)
+        
         # ExtractPage -> PreviewPage (flow extraction complete)
         self.extract_page.extraction_completed.connect(self._on_extraction_complete)
+        
+        # PreviewPage -> ReviewPage (step navigation)
+        self.preview_page.configure_review.connect(self._on_configure_review)
+        
+        # ReviewPage -> PreviewPage (back navigation)
+        self.review_page.back_requested.connect(
+            lambda: self._switch_page(self.PAGE_PREVIEW)
+        )
         
         # ReviewPage -> ResultPage (review complete)
         self.review_page.start_review.connect(self._on_review_start)
@@ -482,14 +404,11 @@ class MainWindow(QMainWindow):
     def _switch_page(self, page_index: int) -> None:
         """
         切换到指定页面
-        
-        Args:
-            page_index: 页面索引
-                0 - ExtractPage (流水提取)
-                1 - PreviewPage (流水预览)
-                2 - ReviewPage (审查配置)
-                3 - ResultPage (结果展示)
         """
+        # 刷新首页任务列表（如果是切回首页）
+        if page_index == self.PAGE_HOME:
+            self.home_page.refresh_tasks()
+            
         # 切换页面栈
         self.page_stack.setCurrentIndex(page_index)
         
@@ -501,6 +420,19 @@ class MainWindow(QMainWindow):
         """显示设置对话框"""
         dialog = SettingsDialog(self)
         dialog.exec_()
+
+    def _on_new_task(self, task_id: str, task_title: str):
+        """处理新建任务"""
+        self._switch_page(self.PAGE_EXTRACT)
+        if hasattr(self.extract_page, "set_task_info"):
+            self.extract_page.set_task_info(task_title, task_id)
+
+    def _on_resume_task(self, task_id: str):
+        """恢复历史任务"""
+        # 切换到提取页并尝试恢复
+        self._switch_page(self.PAGE_EXTRACT)
+        if hasattr(self.extract_page, "resume_task"):
+            self.extract_page.resume_task(task_id)
     
     def _on_extraction_complete(self, result):
         """
@@ -512,6 +444,11 @@ class MainWindow(QMainWindow):
         self.preview_page.set_extraction_result(result)
         # 切换到预览页面
         self._switch_page(self.PAGE_PREVIEW)
+    
+    def _on_configure_review(self, excel_path: str):
+        """处理跳转到审查配置"""
+        self.review_page.set_flow_excel_path(excel_path)
+        self._switch_page(self.PAGE_REVIEW)
     
     def _on_review_start(self, flow_excel_path: str, customers: list):
         """

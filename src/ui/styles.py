@@ -366,12 +366,98 @@ QGroupBox {
 }
 
 QGroupBox::title {
-    subcontrol-origin: margin;
-    left: 12px;
-    padding: 0 6px;
+subcontrol-origin: margin;
+left: 12px;
+padding: 0 6px;
 }
 """ % COLORS
 
+# Settings Dialog Style
+SETTINGS_DIALOG_STYLE = """
+QTabWidget::pane {
+border: 1px solid %(border)s;
+border-radius: 6px;
+background-color: %(card)s;
+}
+
+QTabBar::tab {
+background-color: %(sidebar_hover)s;
+color: %(text_secondary)s;
+padding: 10px 20px;
+margin-right: 2px;
+border-top-left-radius: 6px;
+border-top-right-radius: 6px;
+font-size: 13px;
+}
+
+QTabBar::tab:selected {
+background-color: %(card)s;
+color: %(text_primary)s;
+font-weight: bold;
+}
+
+QTabBar::tab:hover:!selected {
+background-color: %(border)s;
+}
+
+/* Settings button styles */
+QPushButton#settings_cancel_btn {
+background-color: %(card)s;
+color: %(text_primary)s;
+border: 1px solid %(border)s;
+border-radius: 6px;
+font-size: 13px;
+}
+
+QPushButton#settings_cancel_btn:hover {
+background-color: %(sidebar_hover)s;
+}
+
+QPushButton#settings_save_btn {
+background-color: %(primary)s;
+color: %(text_white)s;
+border: none;
+border-radius: 6px;
+font-size: 13px;
+font-weight: 500;
+}
+
+QPushButton#settings_save_btn:hover {
+background-color: %(primary_hover)s;
+}
+
+/* Input fields in settings */
+QLineEdit#settings_input, QSpinBox#settings_input {
+background-color: %(card)s;
+border: 1px solid %(border)s;
+border-radius: 6px;
+padding-left: 12px;
+padding-right: 12px;
+font-size: 13px;
+color: %(text_primary)s;
+}
+
+QLineEdit#settings_input:focus, QSpinBox#settings_input:focus {
+border: 1px solid %(primary)s;
+}
+
+/* Labels in settings */
+QLabel#settings_title {
+font-size: 15px;
+font-weight: bold;
+color: %(text_primary)s;
+}
+
+QLabel#settings_label {
+font-size: 13px;
+color: %(text_secondary)s;
+}
+
+QLabel#settings_desc {
+font-size: 11px;
+color: %(text_light)s;
+}
+""" % COLORS
 
 def get_risk_style(risk_level: str) -> str:
     """Get background color style for risk level"""

@@ -74,6 +74,11 @@ class ExtractionWorker(QObject):
         if self._extractor:
             self._extractor.request_cancel()
 
+    def pause(self, pause: bool):
+        """暂停或继续提取"""
+        if self._extractor:
+            self._extractor.request_pause(pause)
+
 
 class ExtractPage(QWidget):
     """
@@ -83,6 +88,7 @@ class ExtractPage(QWidget):
     - Progress tracking with statistics
     - Log output
     - Cancel support
+    - Pause support
     """
     
     extraction_completed = pyqtSignal(object)  # ExtractionResult
@@ -90,8 +96,11 @@ class ExtractPage(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.config = get_config()
+        self._task_id = ""
+        self._task_title = ""
         self._worker = None
         self._worker_thread = None
+        self._is_paused = False
         self._setup_ui()
     
     def _setup_ui(self) -> None:
@@ -224,6 +233,15 @@ class ExtractPage(QWidget):
         action_layout = QHBoxLayout()
         action_layout.addStretch()
         
+        self.pause_btn = QPushButton("暂停")
+        self.pause_btn.setObjectName("secondary_btn")
+        self.pause_btn.setFixedSize(120, 40)
+        self.pause_btn.setEnabled(False)
+        self.pause_btn.clicked.connect(self._toggle_pause)
+        action_layout.addWidget(self.pause_btn)
+        
+        action_layout.addSpacing(12)
+
         self.start_btn = QPushButton("开始提取")
         self.start_btn.setObjectName("primary_btn")
         self.start_btn.setFixedSize(120, 40)
@@ -232,10 +250,35 @@ class ExtractPage(QWidget):
         
         layout.addLayout(action_layout)
     
+    def _toggle_pause(self) -> None:
+        """Toggle pause/resume state"""
+        if not self._worker:
+            return
+            
+        self._is_paused = not self._is_paused
+        self._worker.pause(self._is_paused)
+        
+        if self._is_paused:
+            self.pause_btn.setText("继续")
+            self.progress_card.set_status("已暂停")
+            self.progress_card.append_log("\n[任务已暂停]")
+        else:
+            self.pause_btn.setText("暂停")
+            self.progress_card.set_status("正在提取...")
+            self.progress_card.append_log("[任务已继续]")
+
     def _generate_task_id(self) -> str:
         """Generate task ID in YYYYMMDD_HHMMSS format"""
         return datetime.now().strftime("%Y%m%d_%H%M%S")
     
+    def set_task_info(self, title: str, task_id: str = "") -> None:
+        """Set task context from HomePage."""
+        self._task_title = title
+        self._task_id = str(task_id or "").strip()
+        if self._task_id:
+            self.task_id_display.setText(self._task_id)
+        self.progress_card.append_log(f"任务标题: {title}")
+
     def _start_extraction(self) -> None:
         """Validate and start extraction"""
         folder_path = self.folder_selector.get_path()
@@ -250,12 +293,28 @@ class ExtractPage(QWidget):
         rows = int(self.config.flow_batch_size)
         threshold = int(self.config.flow_confidence_threshold)
         
-        # Update task ID
-        self.task_id_display.setText(self._generate_task_id())
+        # Reuse task ID from HomePage when available.
+        task_id = self._task_id or self._generate_task_id()
+        self._task_id = task_id
+        self.task_id_display.setText(task_id)
         
-        # Disable start button
+        # Disable start button, enable pause button
         self.start_btn.setEnabled(False)
+        self.pause_btn.setEnabled(True)
+        self.pause_btn.setText("暂停")
+        self._is_paused = False
         
+        # Register task in checkpoint manager with title
+        try:
+            from ...core.checkpoint_manager import CheckpointManager
+            import os
+            from pathlib import Path
+            cm = CheckpointManager(Path(os.path.expanduser("~/.check-yg/checkpoints")))
+            # We don't have the document list yet, but we can start the task meta
+            cm.start_task(task_id, [], title=getattr(self, "_task_title", ""))
+        except Exception as e:
+            print(f"Failed to pre-register task: {e}")
+
         # Start extraction
         self._start_extraction_process(folder_path, rows, threshold)
     
@@ -321,8 +380,9 @@ class ExtractPage(QWidget):
         self.progress_card.append_log(f"流水记录: {result.total_records} 条")
         self.progress_card.append_log(f"总金额: ¥{result.total_amount:,.2f}")
         
-        # Re-enable start button
+        # Re-enable buttons
         self.start_btn.setEnabled(True)
+        self.pause_btn.setEnabled(False)
         
         # 让 UI 有时间刷新，然后再发送信号
         QApplication.processEvents()
@@ -337,6 +397,7 @@ class ExtractPage(QWidget):
         self.current_file_display.setText("错误")
         self.progress_card.append_log(f"\n提取失败: {error_msg}")
         self.start_btn.setEnabled(True)
+        self.pause_btn.setEnabled(False)
         
         QMessageBox.critical(
             self, "提取失败",
@@ -353,6 +414,9 @@ class ExtractPage(QWidget):
     
     def _on_progress(self, message: str, current: int, total: int) -> None:
         """Handle progress updates"""
+        if self._is_paused:
+            return
+
         # Update progress card
         self.progress_card.set_status(message)
         self.progress_card.append_log(message)
@@ -378,10 +442,6 @@ class ExtractPage(QWidget):
         # Update progress bar
         if total > 0:
             self.progress_card.update_progress(current, total)
-        
-        # Update progress bar
-        if total > 0:
-            self.progress_card.update_progress(current, total)
     
     def _on_cancel(self) -> None:
         """Handle cancel request"""
@@ -389,6 +449,7 @@ class ExtractPage(QWidget):
             self._worker.cancel()
         self.current_file_display.setText("正在取消...")
         self.progress_card.set_status("正在取消...")
+        self.pause_btn.setEnabled(False)
 
     def _on_extraction_canceled(self, result) -> None:
         """Handle extraction canceled"""
@@ -397,6 +458,7 @@ class ExtractPage(QWidget):
         self.current_file_display.setText("已取消")
         self.progress_card.append_log("\n提取已取消")
         self.start_btn.setEnabled(True)
+        self.pause_btn.setEnabled(False)
 
     def _on_folder_changed(self, path: str) -> None:
         """Update document count after folder selection"""

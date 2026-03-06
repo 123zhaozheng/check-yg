@@ -13,6 +13,7 @@ from typing import List, Optional
 import openpyxl
 from ..core.matcher import NameMatcher, MatchResult, MatchType
 from ..core.customer import CustomerManager
+from ..core.review_history import ReviewHistoryManager
 from ..config import get_config
 
 logger = logging.getLogger(__name__)
@@ -90,6 +91,7 @@ class Reviewer:
         self.config = config or get_config()
         self.matcher = NameMatcher(fuzzy_threshold=self.config.fuzzy_threshold)
         self.customer_manager = CustomerManager()
+        self.review_history = ReviewHistoryManager(self.config.config_dir / "reviews")
     
     def load_flows(self, excel_path: str) -> List[dict]:
         """
@@ -255,6 +257,10 @@ class Reviewer:
         except Exception as exc:
             result.writeback_error = str(exc)
             logger.warning("写回流水Excel失败: %s", exc)
+        try:
+            self.review_history.save_review_result(result, flow_excel_path)
+        except Exception as exc:
+            logger.warning("保存审查历史失败: %s", exc)
 
         return result
 
