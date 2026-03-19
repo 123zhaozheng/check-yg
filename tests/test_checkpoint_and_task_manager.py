@@ -148,6 +148,36 @@ class CheckpointAndTaskManagerTests(unittest.TestCase):
         tasks = self.checkpoints.get_all_tasks_with_titles()
         self.assertTrue(any(item.get("title") == "状态测试" for item in tasks))
 
+    def test_clear_document_states_preserves_task_history(self) -> None:
+        task_id = "task_keep_history"
+        self.checkpoints.start_task(
+            task_id,
+            ["doc1", "doc2"],
+            title="首页卡片保留",
+            document_folder="D:/audit/docs",
+        )
+        self.assertTrue(self.checkpoints.update_task_status(task_id, "completed"))
+        self.checkpoints.save_document_state(
+            task_id,
+            "doc1",
+            {"document_name": "doc1", "status": "completed", "total_flow_rows": 2},
+        )
+
+        self.checkpoints.clear_document_states(task_id)
+
+        self.assertEqual([], self.checkpoints.list_document_states(task_id))
+        meta = self.checkpoints.load_task(task_id)
+        self.assertIsNotNone(meta)
+        self.assertEqual("首页卡片保留", meta.get("title"))
+
+        summary = self.checkpoints.get_task_summary(task_id)
+        self.assertIsNotNone(summary)
+        self.assertEqual("completed", summary.get("status"))
+        self.assertEqual(2, summary.get("total_documents"))
+
+        tasks = self.checkpoints.get_all_tasks_with_titles()
+        self.assertTrue(any(item.get("task_id") == task_id for item in tasks))
+
     def test_task_manager_create_task_and_title_unique(self) -> None:
         manager = TaskManager(checkpoint_dir=self.base_dir)
         task_id = manager.create_task("唯一标题任务", "E:/audit/docs")

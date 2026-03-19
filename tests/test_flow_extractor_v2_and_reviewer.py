@@ -70,11 +70,11 @@ class _DummyConfig:
 class _SpyCheckpointManager(CheckpointManager):
     def __init__(self, base_dir: Path):
         super().__init__(base_dir)
-        self.clear_called = False
+        self.clear_document_states_called = False
 
-    def clear_task(self, task_id: str) -> None:
-        self.clear_called = True
-        super().clear_task(task_id)
+    def clear_document_states(self, task_id: str) -> None:
+        self.clear_document_states_called = True
+        super().clear_document_states(task_id)
 
 
 class _ResumeNormalizer:
@@ -270,7 +270,7 @@ class FlowExtractorV2AndReviewerTests(unittest.TestCase):
         self.assertEqual(1, int(saved_state.get("processed_rows", 0)))
         self.assertEqual(1, len(saved_state.get("records", [])))
 
-    def test_keep_checkpoint_config_controls_clear(self) -> None:
+    def test_keep_checkpoint_config_controls_document_checkpoint_cleanup(self) -> None:
         keep_config = _DummyConfig(self.base_dir / "keep", keep_checkpoint=True)
         keep_extractor = FlowExtractorV2(config=keep_config)
         keep_extractor.table_classifier = _AlwaysAvailable()
@@ -279,7 +279,7 @@ class FlowExtractorV2AndReviewerTests(unittest.TestCase):
         keep_checkpoints = _SpyCheckpointManager(keep_config.config_dir / "checkpoints")
         keep_extractor.checkpoints = keep_checkpoints
         keep_extractor.extract_flows(document_folder=str(self.base_dir), task_id="keep_task")
-        self.assertFalse(keep_checkpoints.clear_called)
+        self.assertFalse(keep_checkpoints.clear_document_states_called)
 
         clear_config = _DummyConfig(self.base_dir / "clear", keep_checkpoint=False)
         clear_extractor = FlowExtractorV2(config=clear_config)
@@ -289,7 +289,8 @@ class FlowExtractorV2AndReviewerTests(unittest.TestCase):
         clear_checkpoints = _SpyCheckpointManager(clear_config.config_dir / "checkpoints")
         clear_extractor.checkpoints = clear_checkpoints
         clear_extractor.extract_flows(document_folder=str(self.base_dir), task_id="clear_task")
-        self.assertTrue(clear_checkpoints.clear_called)
+        self.assertTrue(clear_checkpoints.clear_document_states_called)
+        self.assertIsNotNone(clear_checkpoints.load_task("clear_task"))
 
     def test_reviewer_saves_history_after_run(self) -> None:
         config = _DummyConfig(self.base_dir)

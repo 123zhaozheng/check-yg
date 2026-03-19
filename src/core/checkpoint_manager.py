@@ -207,6 +207,18 @@ class CheckpointManager:
         except Exception:
             pass
 
+    def clear_document_states(self, task_id: str) -> None:
+        """清理任务的文档断点文件，但保留 task.json 任务元数据。"""
+        task_dir = self._task_dir(task_id, create=False)
+        if not task_dir.exists():
+            return
+
+        for file_path in task_dir.glob("doc_*.json"):
+            try:
+                file_path.unlink()
+            except Exception as exc:
+                logger.warning("Failed to delete checkpoint %s: %s", file_path, exc)
+
     def list_all_tasks(self) -> List[str]:
         """列出所有任务 ID。"""
         if not self.base_dir.exists():

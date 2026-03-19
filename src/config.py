@@ -42,7 +42,7 @@ class Config:
             'confidence_threshold': 70,  # 流水表格判断的置信度阈值
             'parallelism': 4,   # 文档并行处理数
             'checkpoint_interval': 50,  # 断点保存间隔（行数）
-            'keep_checkpoint_on_success': False,  # 成功后保留断点
+            'keep_checkpoint_on_success': False,  # 成功后保留文档断点
         },
         'matching': {
             'enable_exact': True,
@@ -205,7 +205,7 @@ class Config:
 
     @property
     def flow_keep_checkpoint_on_success(self) -> bool:
-        """流水提取：成功后是否保留断点（默认 False）"""
+        """流水提取：成功后是否保留文档断点（默认 False）。"""
         return bool(self.get('flow_extraction.keep_checkpoint_on_success', False))
     
     @property

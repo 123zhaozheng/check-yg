@@ -274,9 +274,10 @@ class FlowExtractorV2:
             if final_status != "completed":
                 logger.info("任务含失败文档，保留断点以便排查: %s", task_id)
             elif self.config.flow_keep_checkpoint_on_success:
-                logger.info("配置要求保留断点，任务 checkpoint 未清理: %s", task_id)
+                logger.info("配置要求保留文档断点，任务 checkpoint 未清理: %s", task_id)
             else:
-                self.checkpoints.clear_task(task_id)
+                self.checkpoints.clear_document_states(task_id)
+                logger.info("任务已完成，已清理文档断点但保留任务历史: %s", task_id)
 
         return result
 
