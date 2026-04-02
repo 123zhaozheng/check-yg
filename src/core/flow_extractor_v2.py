@@ -649,18 +649,7 @@ class FlowExtractorV2:
 
     def _extract_raw_tables(self, file_path: Path, parser) -> List[RawTable]:
         try:
-            if file_path.suffix.lower() == ".pdf":
-                parse_result = parser.parse(file_path)
-                if not parse_result.success:
-                    return []
-                from ..parsers.html_parser import HTMLTableParser
-                html_parser = HTMLTableParser()
-                return html_parser.extract_raw_tables_from_html(parse_result.raw_text)
-            if file_path.suffix.lower() in (".xlsx", ".xls"):
-                return parser.extract_raw_tables(file_path)
-            if file_path.suffix.lower() == ".docx":
-                return parser.extract_raw_tables(file_path)
-            return []
+            return parser.extract_raw_tables(file_path)
         except Exception as exc:
             logger.error("提取原始表格失败 %s: %s", file_path.name, exc)
             return []

@@ -80,3 +80,9 @@ tests/
 .DS_Store
 Thumbs.db
 .ace-tool/
+
+# 文档资料
+场景应用说明表.md
+拍摄脚本.md
+作品简介.md
+*.docx

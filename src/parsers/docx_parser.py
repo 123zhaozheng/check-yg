@@ -10,7 +10,7 @@ from typing import List, Optional
 from docx import Document
 from docx.table import Table
 
-from .base import BaseParser, ParseResult, ParsedTable, TableRow, RawTable
+from .base import BaseParser, RawTable
 
 logger = logging.getLogger(__name__)
 
@@ -19,40 +19,6 @@ class DocxParser(BaseParser):
     """Parser for DOCX files using python-docx"""
     
     SUPPORTED_EXTENSIONS = ['.docx']
-    
-    def parse(self, file_path: Path) -> ParseResult:
-        """Parse DOCX file"""
-        if not self.can_parse(file_path):
-            return self._create_error_result(
-                file_path,
-                f"Unsupported file type: {file_path.suffix}"
-            )
-        
-        try:
-            doc = Document(file_path)
-            
-            # Extract text
-            paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
-            raw_text = '\n'.join(paragraphs)
-            
-            # Extract tables
-            tables = []
-            for table in doc.tables:
-                parsed = self._parse_table(table)
-                if parsed and parsed.rows:
-                    tables.append(parsed)
-            
-            return ParseResult(
-                file_path=file_path,
-                success=True,
-                tables=tables,
-                raw_text=raw_text,
-                metadata={'parser': 'python-docx'}
-            )
-            
-        except Exception as e:
-            self.logger.error("Failed to parse DOCX %s: %s", file_path.name, e)
-            return self._create_error_result(file_path, str(e))
     
     def extract_raw_tables(self, file_path: Path) -> List[RawTable]:
         """
@@ -126,28 +92,3 @@ class DocxParser(BaseParser):
             rows=rows
         )
     
-    def _parse_table(self, table: Table) -> ParsedTable:
-        """Parse a docx table into ParsedTable"""
-        headers = []
-        rows = []
-        
-        for row_idx, row in enumerate(table.rows):
-            cells = [cell.text.strip() for cell in row.cells]
-            
-            # First row as headers
-            if row_idx == 0:
-                headers = cells
-                continue
-            
-            raw_text = ' | '.join(cells)
-            table_row = TableRow(
-                row_index=row_idx - 1,
-                cells=cells,
-                raw_text=raw_text
-            )
-            
-            # Extract transaction fields
-            self._extract_transaction_fields(table_row, headers)
-            rows.append(table_row)
-        
-        return ParsedTable(headers=headers, rows=rows)

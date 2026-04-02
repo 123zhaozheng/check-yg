@@ -1,0 +1,30 @@
+{
+  "inviteSkillSelections": {
+    "assistant": [],
+    "member": []
+  },
+  "memberSequence": {
+    "claude-assistant-xxx": 2,
+    "codex-member-xxx": 4
+  },
+  "members": [
+    {
+      "avatar": "css:orbit",
+      "id": "01J00000000000000000000000",
+      "name": "Owner",
+      "role": "",
+      "roleKey": "members.roles.owner",
+      "roleType": "owner",
+      "status": "online"
+    }
+  ],
+  "projectId": "baffb75d33cc31f3b804bfe2dff2a9dfc89ecd74d5777a61380e22386a7ce9f1",
+  "roadmap": {
+    "objective": "",
+    "tasks": []
+  },
+  "terminal": {
+    "recentClosedTabs": []
+  },
+  "version": 1
+}

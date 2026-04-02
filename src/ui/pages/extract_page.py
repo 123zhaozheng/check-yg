@@ -157,6 +157,14 @@ class ExtractPage(QWidget):
         task_info_layout.addStretch()
         
         task_card.layout.addLayout(task_info_layout)
+
+        self.task_title_label = QLabel("当前未绑定审计任务")
+        self.task_title_label.setStyleSheet(f"""
+            font-size: 12px;
+            color: {COLORS['text_secondary']};
+            padding-top: 4px;
+        """)
+        task_card.layout.addWidget(self.task_title_label)
         left_column.addWidget(task_card)
         
         # Document folder card
@@ -277,10 +285,18 @@ class ExtractPage(QWidget):
         self._task_id = str(task_id or "").strip()
         if self._task_id:
             self.task_id_display.setText(self._task_id)
+        self.task_title_label.setText(f"任务标题：{title}" if title else "当前未绑定审计任务")
         self.progress_card.append_log(f"任务标题: {title}")
 
     def _start_extraction(self) -> None:
         """Validate and start extraction"""
+        if not self._task_id:
+            QMessageBox.warning(
+                self, "缺少审计任务",
+                "请先在首页新建或选择一个审计任务，再开始提取。"
+            )
+            return
+
         folder_path = self.folder_selector.get_path()
         
         if not folder_path:

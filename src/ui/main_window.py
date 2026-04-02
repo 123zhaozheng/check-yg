@@ -3,6 +3,9 @@
 Main window - application shell with light sidebar navigation
 """
 
+import json
+from pathlib import Path
+
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
     QPushButton, QLabel, QStackedWidget, QFrame,
@@ -12,8 +15,12 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt
 
 from .styles import MAIN_STYLE, COLORS, SETTINGS_DIALOG_STYLE
-from .pages import ResultPage, ExtractPage, ReviewPage, HomePage
+from .pages import ResultPage, ExtractPage, ReviewPage, HomePage, ReportPage
 from ..config import get_config
+from ..core.extraction_result import ExtractionResult
+from ..core.reviewer import ReviewMatch, ReviewResult
+from ..core.review_history import ReviewHistoryManager
+from ..parsers.base import FlowRecord
 
 
 class SettingsDialog(QDialog):
@@ -230,15 +237,22 @@ class MainWindow(QMainWindow):
     PAGE_PREVIEW = 2   # 流水预览页
     PAGE_REVIEW = 3    # 审查配置页
     PAGE_RESULT = 4    # 结果展示页
+    PAGE_REPORT = 5    # 审查报告页
     
     def __init__(self):
         super().__init__()
+        self.config = get_config()
         self.setWindowTitle("员工-客户金额往来审计系统")
         self.setMinimumSize(1100, 700)
         self.resize(1280, 800)
         self.setStyleSheet(MAIN_STYLE)
+        self.current_task_id = ""
+        self.current_task_title = ""
+        self.current_flow_excel_path = ""
+        self.current_review_result = None
         self._setup_ui()
         self._connect_signals()
+        self._update_navigation_state()
     
     def _setup_ui(self):
         central = QWidget()
@@ -265,6 +279,7 @@ class MainWindow(QMainWindow):
         self.preview_page = PreviewPage()
         self.review_page = ReviewPage()
         self.result_page = ResultPage()
+        self.report_page = ReportPage()
         
         # 按顺序添加页面
         self.page_stack.addWidget(self.home_page)      # 索引 0
@@ -272,6 +287,7 @@ class MainWindow(QMainWindow):
         self.page_stack.addWidget(self.preview_page)   # 索引 2
         self.page_stack.addWidget(self.review_page)    # 索引 3
         self.page_stack.addWidget(self.result_page)    # 索引 4
+        self.page_stack.addWidget(self.report_page)    # 索引 5
         
         content_layout.addWidget(self.page_stack)
         main_layout.addWidget(content_area, 1)
@@ -309,6 +325,7 @@ class MainWindow(QMainWindow):
             ("📋  预览", "查看流水数据", self.PAGE_PREVIEW),
             ("🔍  审查", "匹配客户名单", self.PAGE_REVIEW),
             ("📊  结果", "查看审查结果", self.PAGE_RESULT),
+            ("📝  报告", "查看审查报告", self.PAGE_REPORT),
         ]
         
         for text, tooltip, page_idx in nav_items:
@@ -398,13 +415,16 @@ class MainWindow(QMainWindow):
         
         # ResultPage -> ExtractPage (new review)
         self.result_page.new_audit_btn.clicked.connect(
-            lambda: self._switch_page(self.PAGE_EXTRACT)
+            self._on_new_audit_requested
         )
     
     def _switch_page(self, page_index: int) -> None:
         """
         切换到指定页面
         """
+        if page_index != self.PAGE_HOME and not self._ensure_task_selected():
+            return
+
         # 刷新首页任务列表（如果是切回首页）
         if page_index == self.PAGE_HOME:
             self.home_page.refresh_tasks()
@@ -415,6 +435,47 @@ class MainWindow(QMainWindow):
         # 更新导航按钮状态
         for i, btn in enumerate(self.nav_buttons):
             btn.setChecked(i == page_index)
+
+    def _ensure_task_selected(self) -> bool:
+        if self.current_task_id:
+            return True
+        QMessageBox.information(
+            self,
+            "请先创建审计任务",
+            "当前没有激活的审计任务。\n请先到首页新建或恢复一个审计任务，再进入后续流程。"
+        )
+        self.page_stack.setCurrentIndex(self.PAGE_HOME)
+        for i, btn in enumerate(self.nav_buttons):
+            btn.setChecked(i == self.PAGE_HOME)
+        return False
+
+    def _update_navigation_state(self) -> None:
+        has_task = bool(self.current_task_id)
+        for index, btn in enumerate(self.nav_buttons):
+            btn.setEnabled(index == self.PAGE_HOME or has_task)
+
+    def _activate_task_context(self, task_id: str, task_title: str = "") -> None:
+        self.current_task_id = str(task_id or "").strip()
+        self.current_task_title = str(task_title or "").strip()
+        self._update_navigation_state()
+
+    def _reset_task_context(self) -> None:
+        self.current_task_id = ""
+        self.current_task_title = ""
+        self.current_flow_excel_path = ""
+        self.current_review_result = None
+        self.extract_page._task_id = ""
+        self.extract_page._task_title = ""
+        self.extract_page.task_title_label.setText("当前未绑定审计任务")
+        self.result_page.clear()
+        self.review_page.clear()
+        self.preview_page.clear()
+        self.report_page.clear()
+        self._update_navigation_state()
+
+    def _on_new_audit_requested(self) -> None:
+        self._reset_task_context()
+        self._switch_page(self.PAGE_HOME)
     
     def _show_settings(self) -> None:
         """显示设置对话框"""
@@ -423,12 +484,27 @@ class MainWindow(QMainWindow):
 
     def _on_new_task(self, task_id: str, task_title: str):
         """处理新建任务"""
+        self._activate_task_context(task_id, task_title)
         self._switch_page(self.PAGE_EXTRACT)
         if hasattr(self.extract_page, "set_task_info"):
             self.extract_page.set_task_info(task_title, task_id)
 
     def _on_resume_task(self, task_id: str):
         """恢复历史任务"""
+        task_detail = self.home_page.checkpoint_manager.load_task(task_id) or {}
+        task_title = str(task_detail.get("title", "") or "")
+        self._activate_task_context(task_id, task_title)
+        if hasattr(self.extract_page, "set_task_info"):
+            self.extract_page.set_task_info(task_title, task_id)
+
+        if self._restore_review_result(task_id, task_title):
+            self._switch_page(self.PAGE_RESULT)
+            return
+
+        if self._restore_extraction_preview(task_id):
+            self._switch_page(self.PAGE_PREVIEW)
+            return
+
         # 切换到提取页并尝试恢复
         self._switch_page(self.PAGE_EXTRACT)
         if hasattr(self.extract_page, "resume_task"):
@@ -447,6 +523,7 @@ class MainWindow(QMainWindow):
     
     def _on_configure_review(self, excel_path: str):
         """处理跳转到审查配置"""
+        self.current_flow_excel_path = excel_path
         self.review_page.set_flow_excel_path(excel_path)
         self._switch_page(self.PAGE_REVIEW)
     
@@ -459,10 +536,17 @@ class MainWindow(QMainWindow):
             from ..core.reviewer import Reviewer
             reviewer = Reviewer()
             result = reviewer.run_review(flow_excel_path, customers=customers)
+            self.current_flow_excel_path = flow_excel_path
+            self.current_review_result = result
             
             # 传递结果到结果页面
             if hasattr(self.result_page, 'set_review_result'):
                 self.result_page.set_review_result(result)
+            self.report_page.set_report_result(
+                result,
+                task_title=self.current_task_title,
+                task_id=self.current_task_id,
+            )
             
             # 切换到结果页面
             self._switch_page(self.PAGE_RESULT)
@@ -480,3 +564,115 @@ class MainWindow(QMainWindow):
                 "审查失败",
                 f"执行审查时发生错误:\n{str(e)}"
             )
+
+    def _restore_review_result(self, task_id: str, task_title: str) -> bool:
+        review_data = self._find_review_data_for_task(task_id)
+        if not review_data:
+            return False
+
+        result = self._review_result_from_dict(review_data)
+        self.current_flow_excel_path = result.flow_excel_path
+        self.current_review_result = result
+        self.result_page.set_review_result(result)
+        self.report_page.set_report_result(
+            result,
+            task_title=task_title,
+            task_id=task_id,
+        )
+        return True
+
+    def _restore_extraction_preview(self, task_id: str) -> bool:
+        report_path = self.config.reports_folder / f"extract_{task_id}.json"
+        if not report_path.exists():
+            return False
+        try:
+            with open(report_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            result = self._extraction_result_from_dict(data)
+        except Exception as exc:
+            QMessageBox.warning(self, "恢复失败", f"读取提取结果失败:\n{exc}")
+            return False
+
+        self.preview_page.set_extraction_result(result)
+        return True
+
+    def _find_review_data_for_task(self, task_id: str):
+        manager = ReviewHistoryManager(self.config.config_dir / "reviews")
+        candidates = []
+        for item in manager.list_reviews():
+            flow_excel_path = str(item.get("flow_excel_path", "") or "")
+            stem = Path(flow_excel_path).stem
+            if stem == f"流水_{task_id}" or task_id in flow_excel_path:
+                detail = manager.load_review(str(item.get("review_id", "") or ""))
+                if detail:
+                    candidates.append(detail)
+        if not candidates:
+            return None
+        candidates.sort(
+            key=lambda entry: str(entry.get("review_time", "") or entry.get("saved_at", "")),
+            reverse=True,
+        )
+        return candidates[0]
+
+    @staticmethod
+    def _review_result_from_dict(data: dict) -> ReviewResult:
+        matches = [
+            ReviewMatch(
+                customer_name=str(item.get("customer_name", "") or ""),
+                counterparty_name=str(item.get("counterparty_name", "") or ""),
+                counterparty_account=str(item.get("counterparty_account", "") or ""),
+                match_type=str(item.get("match_type", "") or ""),
+                confidence=int(item.get("confidence", 0) or 0),
+                source_file=str(item.get("source_file", "") or ""),
+                row_index=int(item.get("row_index", 0) or 0),
+                transaction_time=str(item.get("transaction_time", "") or ""),
+                amount=str(item.get("amount", "") or ""),
+                summary=str(item.get("summary", "") or ""),
+            )
+            for item in (data.get("matches", []) or [])
+        ]
+        return ReviewResult(
+            review_id=str(data.get("review_id", "") or ""),
+            review_time=str(data.get("review_time", "") or ""),
+            flow_excel_path=str(data.get("flow_excel_path", "") or ""),
+            customer_excel_path=str(data.get("customer_excel_path", "") or ""),
+            total_customers=int(data.get("total_customers", 0) or 0),
+            matched_customers=int(data.get("matched_customers", 0) or 0),
+            total_matches=int(data.get("total_matches", 0) or 0),
+            total_amount=float(data.get("total_amount", 0.0) or 0.0),
+            matches=matches,
+            writeback_error=str(data.get("writeback_error", "") or ""),
+        )
+
+    @staticmethod
+    def _extraction_result_from_dict(data: dict) -> ExtractionResult:
+        records = [
+            FlowRecord(
+                source_file=str(item.get("source_file", "") or ""),
+                original_row=int(item.get("original_row", 0) or 0),
+                transaction_time=str(item.get("transaction_time", "") or ""),
+                counterparty_name=str(item.get("counterparty_name", "") or ""),
+                counterparty_account=str(item.get("counterparty_account", "") or ""),
+                amount=str(item.get("amount", "") or ""),
+                summary=str(item.get("summary", "") or ""),
+                transaction_type=str(item.get("transaction_type", "") or ""),
+            )
+            for item in (data.get("flow_records", []) or [])
+        ]
+        return ExtractionResult(
+            task_id=str(data.get("task_id", "") or ""),
+            task_time=str(data.get("task_time", "") or ""),
+            document_folder=str(data.get("document_folder", "") or ""),
+            total_documents=int(data.get("total_documents", 0) or 0),
+            processed_documents=int(data.get("processed_documents", 0) or 0),
+            total_tables=int(data.get("total_tables", 0) or 0),
+            flow_tables=int(data.get("flow_tables", 0) or 0),
+            total_records=int(data.get("total_records", 0) or 0),
+            flow_records=records,
+            failed_documents=[str(item) for item in (data.get("failed_documents", []) or [])],
+            errors=[
+                {str(k): str(v) for k, v in item.items()}
+                for item in (data.get("errors", []) or [])
+                if isinstance(item, dict)
+            ],
+        )

@@ -12,7 +12,10 @@
       "mcp__contextweaver__codebase-retrieval",
       "mcp__ace-tool__search_context",
       "Skill(team-tech-debt)",
-      "Bash(git:*)"
+      "Bash(git:*)",
+      "Read(//Users/jason/**)",
+      "Read(//c/Users/**)",
+      "Read(//mnt/c/**)"
     ]
   }
 }

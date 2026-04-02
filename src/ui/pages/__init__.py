@@ -5,5 +5,6 @@ from .result_page import ResultPage
 from .extract_page import ExtractPage
 from .review_page import ReviewPage
 from .home_page import HomePage
+from .report_page import ReportPage
 
-__all__ = ['ResultPage', 'ExtractPage', 'ReviewPage', 'HomePage']
+__all__ = ['ResultPage', 'ExtractPage', 'ReviewPage', 'HomePage', 'ReportPage']

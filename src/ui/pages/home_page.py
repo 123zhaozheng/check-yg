@@ -413,8 +413,8 @@ class HomePage(QWidget):
             for i, task in enumerate(tasks):
                 card = TaskCard(task)
                 card.resume_requested.connect(self.resume_task_requested.emit)
+                card.view_requested.connect(self.resume_task_requested.emit)
                 card.delete_requested.connect(self._delete_task)
-                # card.view_requested.connect(...)
                 
                 # Simple implementation: 2 cards per row
                 if i % 2 == 0:

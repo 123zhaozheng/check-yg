@@ -8,12 +8,12 @@ import re
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import pikepdf
 import requests
 
-from .base import BaseParser, ParseResult, ParsedTable, TableRow
+from .base import BaseParser, RawTable
 from .html_parser import HTMLTableParser
 
 logger = logging.getLogger(__name__)
@@ -200,13 +200,10 @@ class PDFParser(BaseParser):
         """
         self._password_callback = callback
     
-    def parse(self, file_path: Path) -> ParseResult:
-        """Parse PDF file using MinerU API"""
+    def _get_markdown(self, file_path: Path) -> str:
+        """Parse PDF with MinerU and return markdown content."""
         if not self.can_parse(file_path):
-            return self._create_error_result(
-                file_path, 
-                f"Unsupported file type: {file_path.suffix}"
-            )
+            raise ValueError(f"Unsupported file type: {file_path.suffix}")
         
         actual_path = file_path
         temp_file: Optional[Path] = None
@@ -234,7 +231,7 @@ class PDFParser(BaseParser):
                         if temp_file:
                             actual_path = temp_file
                         elif error:
-                            return self._create_error_result(file_path, error)
+                            raise ValueError(error)
                 else:
                     # 没有自动密码，直接请求用户输入
                     self.logger.info("No auto password found, requesting user input")
@@ -243,30 +240,16 @@ class PDFParser(BaseParser):
                     if temp_file:
                         actual_path = temp_file
                     elif error:
-                        return self._create_error_result(file_path, error)
+                        raise ValueError(error)
             
             # Get markdown content from MinerU
-            md_content = self.client.get_markdown(actual_path)
-            
-            # Extract tables from markdown (HTML tables)
-            tables = self.html_parser.extract_tables_from_markdown(md_content)
-            
-            return ParseResult(
-                file_path=file_path,  # 返回原始路径
-                success=True,
-                tables=tables,
-                raw_text=md_content,
-                metadata={'parser': 'MinerU', 'was_encrypted': temp_file is not None}
-            )
+            return self.client.get_markdown(actual_path)
             
         except requests.exceptions.ConnectionError:
-            return self._create_error_result(
-                file_path,
-                "无法连接到 MinerU 服务，请检查服务是否启动"
-            )
+            raise RuntimeError("无法连接到 MinerU 服务，请检查服务是否启动")
         except Exception as e:
             self.logger.error("Failed to parse PDF %s: %s", file_path.name, e)
-            return self._create_error_result(file_path, str(e))
+            raise
         finally:
             # 清理临时文件
             if temp_file and temp_file.exists():
@@ -309,3 +292,12 @@ class PDFParser(BaseParser):
     def check_service(self) -> bool:
         """Check if MinerU service is available"""
         return self.client.health_check()
+
+    def extract_raw_tables(self, file_path: Path) -> List[RawTable]:
+        """Extract raw HTML tables from MinerU markdown output."""
+        try:
+            markdown = self._get_markdown(file_path)
+        except Exception as exc:
+            self.logger.error("Failed to extract raw tables from PDF %s: %s", file_path.name, exc)
+            return []
+        return self.html_parser.extract_raw_tables_from_html(markdown)

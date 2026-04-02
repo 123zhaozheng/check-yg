@@ -2,6 +2,9 @@
 """
 Result page - review results display and export
 """
+import shutil
+from pathlib import Path
+
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
     QPushButton, QMessageBox, QFileDialog
@@ -97,7 +100,7 @@ class ResultPage(QWidget):
             self.subtitle.setText(f"发现 {result.total_matches} 条匹配记录")
     
     def _export_excel(self) -> None:
-        """Export review results to Excel"""
+        """Export the reviewed flow workbook with match columns written back."""
         if not self.result:
             QMessageBox.warning(self, "无数据", "没有可导出的审查结果")
             return
@@ -111,58 +114,23 @@ class ResultPage(QWidget):
         )
         if not file_path:
             return
+        if not file_path.lower().endswith(".xlsx"):
+            file_path = f"{file_path}.xlsx"
         
         try:
-            from openpyxl import Workbook
-            from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
-            from openpyxl.utils import get_column_letter
-            from pathlib import Path as SysPath
-            
-            wb = Workbook()
-            ws = wb.active
-            ws.title = "匹配明细"
-            
-            headers = ["匹配用户", "来源文件", "交易时间", "对手名", "对手账号", "金额", "摘要"]
-            widths = [15, 30, 20, 18, 20, 12, 30]
-            
-            header_fill = PatternFill(start_color="3B82F6", end_color="3B82F6", fill_type="solid")
-            header_font = Font(bold=True, color="FFFFFF", size=11)
-            border = Border(
-                left=Side(style='thin'),
-                right=Side(style='thin'),
-                top=Side(style='thin'),
-                bottom=Side(style='thin')
-            )
-            
-            for col_idx, header in enumerate(headers, 1):
-                cell = ws.cell(row=1, column=col_idx, value=header)
-                cell.fill = header_fill
-                cell.font = header_font
-                cell.border = border
-                cell.alignment = Alignment(horizontal='center')
-                ws.column_dimensions[get_column_letter(col_idx)].width = widths[col_idx - 1]
-            
-            for row_idx, match in enumerate(self.result.matches, 2):
-                data = [
-                    match.customer_name,
-                    SysPath(match.source_file).name,
-                    match.transaction_time,
-                    match.counterparty_name,
-                    match.counterparty_account,
-                    match.amount,
-                    match.summary,
-                ]
-                for col_idx, value in enumerate(data, 1):
-                    cell = ws.cell(row=row_idx, column=col_idx, value=value)
-                    cell.border = border
-                    cell.alignment = Alignment(vertical='center')
-            
-            ws.freeze_panes = 'A2'
-            wb.save(file_path)
+            source_path = Path(str(self.result.flow_excel_path or "")).expanduser()
+            if not source_path.exists():
+                raise FileNotFoundError(f"审查后的流水文件不存在: {source_path}")
+
+            target_path = Path(file_path)
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source_path, target_path)
             
             QMessageBox.information(
                 self, "导出成功",
-                f"审查结果已导出到:\n{file_path}"
+                "审查结果已导出到:\n"
+                f"{file_path}\n\n"
+                "导出文件保留了原流水表，并已写入“匹配用户/匹配度”列。"
             )
         except Exception as e:
             QMessageBox.warning(
