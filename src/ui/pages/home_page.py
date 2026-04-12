@@ -11,7 +11,7 @@ from typing import List, Dict, Optional
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
     QPushButton, QScrollArea, QFrame, QMenu, QAction,
-    QMessageBox, QDialog, QLineEdit, QFormLayout
+    QMessageBox, QDialog, QLineEdit, QFormLayout, QFileDialog, QCheckBox
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QSize
 from PyQt5.QtGui import QIcon, QFont
@@ -20,6 +20,7 @@ from ..widgets import Card
 from ..styles import COLORS
 from ...core.checkpoint_manager import CheckpointManager
 from ...config import get_config
+from ...export_flows import BoardSkillExporter
 
 
 class NewTaskDialog(QDialog):
@@ -133,8 +134,9 @@ class TaskCard(Card):
     resume_requested = pyqtSignal(str)  # task_id
     view_requested = pyqtSignal(str)    # task_id
     delete_requested = pyqtSignal(str)  # task_id
+    selection_changed = pyqtSignal(str, bool)  # task_id, checked
 
-    def __init__(self, task_data: Dict, parent=None):
+    def __init__(self, task_data: Dict, selected: bool = False, parent=None):
         super().__init__(parent, padding=16)
         self.task_id = task_data.get("task_id", "Unknown")
         self.task_title = task_data.get("title", f"任务: {self.task_id}")
@@ -142,11 +144,19 @@ class TaskCard(Card):
         self.raw_status = self._get_raw_status()
         self.display_status = self._get_display_status(self.raw_status)
         self.can_resume = self._can_resume()
+        self.selected = bool(selected)
         self._setup_task_ui()
 
     def _setup_task_ui(self):
         # Header: Icon and Status
         header = QHBoxLayout()
+
+        self.select_box = QCheckBox()
+        self.select_box.setChecked(self.selected)
+        self.select_box.stateChanged.connect(
+            lambda state: self.selection_changed.emit(self.task_id, bool(state))
+        )
+        header.addWidget(self.select_box)
 
         # Task Icon (Placeholder for now)
         icon_label = QLabel("📊")
@@ -329,6 +339,7 @@ class HomePage(QWidget):
         self.checkpoint_manager = CheckpointManager(
             Path(os.path.expanduser("~/.check-yg/checkpoints"))
         )
+        self.selected_task_ids = set()
         self._setup_ui()
     
     def _setup_ui(self):
@@ -358,6 +369,13 @@ class HomePage(QWidget):
         self.new_task_btn.setCursor(Qt.PointingHandCursor)
         self.new_task_btn.clicked.connect(self._on_new_task_clicked)
         header.addWidget(self.new_task_btn)
+
+        self.export_board_skill_btn = QPushButton("导出看板 Skills")
+        self.export_board_skill_btn.setObjectName("secondary_btn")
+        self.export_board_skill_btn.setFixedSize(160, 44)
+        self.export_board_skill_btn.setCursor(Qt.PointingHandCursor)
+        self.export_board_skill_btn.clicked.connect(self._export_board_skill)
+        header.addWidget(self.export_board_skill_btn)
         
         main_layout.addLayout(header)
         
@@ -411,10 +429,11 @@ class HomePage(QWidget):
             # Let's use a Grid for cards if we want multiple per row
             
             for i, task in enumerate(tasks):
-                card = TaskCard(task)
+                card = TaskCard(task, selected=task.get("task_id") in self.selected_task_ids)
                 card.resume_requested.connect(self.resume_task_requested.emit)
                 card.view_requested.connect(self.resume_task_requested.emit)
                 card.delete_requested.connect(self._delete_task)
+                card.selection_changed.connect(self._on_task_selection_changed)
                 
                 # Simple implementation: 2 cards per row
                 if i % 2 == 0:
@@ -429,6 +448,7 @@ class HomePage(QWidget):
                 self.task_list_layout.itemAt(self.task_list_layout.count()-1).layout().addStretch()
         
         self.task_list_layout.addStretch()
+        self._update_export_button_state()
 
     def _get_all_tasks(self) -> List[Dict]:
         """Fetch tasks from checkpoint manager"""
@@ -482,4 +502,65 @@ class HomePage(QWidget):
         
         if reply == QMessageBox.Yes:
             self.checkpoint_manager.clear_task(task_id)
+            self.selected_task_ids.discard(task_id)
             self.refresh_tasks()
+
+    def _on_task_selection_changed(self, task_id: str, checked: bool) -> None:
+        if checked:
+            self.selected_task_ids.add(task_id)
+        else:
+            self.selected_task_ids.discard(task_id)
+        self._update_export_button_state()
+
+    def _update_export_button_state(self) -> None:
+        count = len(self.selected_task_ids)
+        if count > 0:
+            self.export_board_skill_btn.setText(f"导出看板 Skills ({count})")
+            self.export_board_skill_btn.setEnabled(True)
+        else:
+            self.export_board_skill_btn.setText("导出看板 Skills")
+            self.export_board_skill_btn.setEnabled(False)
+
+    def _export_board_skill(self) -> None:
+        selected_tasks = [
+            task for task in self._get_all_tasks()
+            if task.get("task_id") in self.selected_task_ids
+        ]
+        if not selected_tasks:
+            QMessageBox.information(self, "未选择任务", "请先在看板上勾选要导出的审查任务。")
+            return
+
+        default_name = f"看板Skills_{len(selected_tasks)}项任务.zip"
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "导出看板 Skills",
+            str(self.config.reports_folder / default_name),
+            "Zip Files (*.zip)"
+        )
+        if not file_path:
+            return
+        if not file_path.lower().endswith(".zip"):
+            file_path = f"{file_path}.zip"
+
+        try:
+            exporter = BoardSkillExporter(self.config)
+            output_path, meta = exporter.export_board_skill(selected_tasks, output_path=file_path)
+            skipped_count = int(meta.get("skipped_count", 0) or 0)
+            message = [
+                f"看板 Skills 已导出到:\n{output_path}",
+                "",
+                f"成功导出任务: {meta.get('exported_count', 0)} 个",
+                f"跳过任务: {skipped_count} 个",
+                "",
+                "导出内容包含：审查任务目录、HTML 模板、汇总脚本、索引资料与 SKILL.md。",
+            ]
+            if skipped_count:
+                skipped_preview = "；".join(
+                    f"{item.get('task_id', '')}({item.get('reason', '')})"
+                    for item in (meta.get("skipped_tasks", []) or [])[:5]
+                )
+                if skipped_preview:
+                    message.extend(["", f"已跳过: {skipped_preview}"])
+            QMessageBox.information(self, "导出成功", "\n".join(message))
+        except Exception as exc:
+            QMessageBox.warning(self, "导出失败", f"导出看板 Skills 时出错:\n{exc}")

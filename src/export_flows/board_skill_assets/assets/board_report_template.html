@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{REPORT_TITLE}}</title>
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+  <style>
+    body { margin: 0; font-family: 'Microsoft YaHei', sans-serif; background: #f6f8fb; color: #102a43; }
+    .wrap { max-width: 1280px; margin: 0 auto; padding: 28px; }
+    .hero { background: linear-gradient(135deg, #143a5b 0%, #1f5d90 100%); color: #fff; border-radius: 22px; padding: 26px 30px; }
+    .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-top: 18px; }
+    .card { background: #fff; border-radius: 16px; padding: 18px; }
+    .chart { margin-top: 22px; background: #fff; border-radius: 18px; padding: 16px; height: 380px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="hero"><h1>{{REPORT_TITLE}}</h1><div>{{REPORT_SUBTITLE}}</div></div>
+    <div class="stats">
+      <div class="card">任务数：{{TASK_COUNT}}</div>
+      <div class="card">匹配条数：{{TOTAL_MATCHES}}</div>
+      <div class="card">命中客户：{{MATCHED_CUSTOMERS}}</div>
+      <div class="card">审查金额：{{TOTAL_AMOUNT}}</div>
+    </div>
+    <div id="taskChart" class="chart"></div>
+  </div>
+  <script>
+    const taskSeries = {{TASK_SERIES_JSON}};
+    echarts.init(document.getElementById('taskChart')).setOption({tooltip:{trigger:'axis'},xAxis:{type:'category',data:taskSeries.labels},yAxis:{type:'value'},series:[{type:'bar',data:taskSeries.matches}]});
+  </script>
+</body>
+</html>

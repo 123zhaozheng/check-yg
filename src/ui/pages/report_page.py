@@ -11,6 +11,7 @@ from PyQt5.QtWidgets import QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayo
 from ..styles import COLORS
 from ..widgets import Card, StatCardRow
 from ...config import get_config
+from ...export_flows import SkillsExporter
 from ...llm import AuditAgent
 
 
@@ -96,6 +97,11 @@ class ReportPage(QWidget):
         self.export_btn.setObjectName("secondary_btn")
         self.export_btn.clicked.connect(self._export_report)
         action_layout.addWidget(self.export_btn)
+
+        self.export_skill_btn = QPushButton("导出 Skills 包")
+        self.export_skill_btn.setObjectName("secondary_btn")
+        self.export_skill_btn.clicked.connect(self._export_skills_bundle)
+        action_layout.addWidget(self.export_skill_btn)
 
         layout.addLayout(action_layout)
 
@@ -238,6 +244,42 @@ class ReportPage(QWidget):
             QMessageBox.information(self, "导出成功", f"审查报告已导出到:\n{file_path}")
         except Exception as exc:
             QMessageBox.warning(self, "导出失败", f"导出报告时出错:\n{exc}")
+
+    def _export_skills_bundle(self) -> None:
+        if not self.result:
+            QMessageBox.warning(self, "无数据", "当前没有可导出的 Skills 包")
+            return
+
+        default_name = f"审查Skills包_{self.task_id or self.result.review_id}.zip"
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "导出 Skills 包",
+            str(self.config.reports_folder / default_name),
+            "Zip Files (*.zip)",
+        )
+        if not file_path:
+            return
+        if not file_path.lower().endswith(".zip"):
+            file_path = f"{file_path}.zip"
+
+        try:
+            exporter = SkillsExporter(self.config)
+            output_path = exporter.export_bundle(
+                self.result,
+                task_title=self.task_title,
+                task_id=self.task_id,
+                report_text=self.generated_report or self.summary_output.toPlainText(),
+                output_path=file_path,
+            )
+            QMessageBox.information(
+                self,
+                "导出成功",
+                "Skills 包已导出到:\n"
+                f"{output_path}\n\n"
+                "其中包含当前任务资料、标准化流水、固定工作流说明，以及历史审查目录。",
+            )
+        except Exception as exc:
+            QMessageBox.warning(self, "导出失败", f"导出 Skills 包时出错:\n{exc}")
 
     def clear(self) -> None:
         self._cleanup_worker()

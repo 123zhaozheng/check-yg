@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{REPORT_TITLE}}</title>
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+  <style>
+    body { margin: 0; font-family: 'Microsoft YaHei', sans-serif; background: radial-gradient(circle at top left, #f4f8fb 0%, #eef3f8 38%, #ffffff 100%); color: #102a43; }
+    .wrap { max-width: 1320px; margin: 0 auto; padding: 28px; }
+    .hero { background: linear-gradient(135deg, #0f3c68 0%, #1e6aa8 100%); color: #fff; border-radius: 24px; padding: 28px 32px; box-shadow: 0 18px 42px rgba(15, 60, 104, 0.22); }
+    .hero h1 { margin: 0; font-size: 30px; }
+    .hero .meta { margin-top: 10px; font-size: 14px; opacity: .92; }
+    .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-top: 18px; }
+    .card,.section { background: #fff; border-radius: 18px; padding: 18px 20px; box-shadow: 0 10px 28px rgba(15,23,42,.06); }
+    .card .label { color: #627d98; font-size: 13px; }
+    .card .value { margin-top: 8px; color: #0f3c68; font-size: 28px; font-weight: 700; }
+    .section { margin-top: 22px; }
+    .section h2 { margin: 0 0 16px 0; font-size: 20px; }
+    .section h3 { margin: 0 0 10px 0; font-size: 16px; color: #1e6aa8; }
+    .chart-grid { display: grid; grid-template-columns: 1.4fr 1fr; gap: 18px; }
+    .chart-grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+    .chart { width: 100%; height: 340px; }
+    .chart.small { height: 300px; }
+    .narrative { line-height: 1.9; font-size: 15px; color: #243b53; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th, td { text-align: left; padding: 12px 10px; border-bottom: 1px solid #e7edf3; vertical-align: top; }
+    th { background: #f8fbfd; color: #486581; }
+    .badge { display: inline-block; padding: 4px 10px; background: #d9ebfb; color: #1e6aa8; border-radius: 999px; font-size: 12px; margin-right: 8px; margin-bottom: 8px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="hero">
+      <h1>{{REPORT_TITLE}}</h1>
+      <div class="meta">任务编号：{{TASK_ID}} ｜ 审查时间：{{REVIEW_TIME}} ｜ 任务标题：{{TASK_TITLE}}</div>
+    </div>
+    <div class="grid">
+      <div class="card"><div class="label">标准化流水数</div><div class="value">{{FLOW_COUNT}}</div></div>
+      <div class="card"><div class="label">命中流水数</div><div class="value">{{MATCHED_FLOW_COUNT}}</div></div>
+      <div class="card"><div class="label">命中客户数</div><div class="value">{{MATCHED_CUSTOMER_COUNT}}</div></div>
+      <div class="card"><div class="label">审查金额</div><div class="value">{{TOTAL_AMOUNT}}</div></div>
+    </div>
+    <div class="section"><h2>业务结论</h2><div class="narrative">{{NARRATIVE_HTML}}</div></div>
+    <div class="section">
+      <h2>核心指标</h2>
+      <span class="badge">精确匹配 {{EXACT_MATCH_COUNT}}</span>
+      <span class="badge">脱敏匹配 {{DESENSITIZED_MATCH_COUNT}}</span>
+      <span class="badge">模糊匹配 {{FUZZY_MATCH_COUNT}}</span>
+      <span class="badge">夜间交易 {{NIGHT_COUNT}}</span>
+      <span class="badge">短时集中交易 {{SHORT_INTERVAL_COUNT}}</span>
+      <span class="badge">同日同额交易 {{SAME_AMOUNT_COUNT}}</span>
+    </div>
+    <div class="section"><h2>趋势与分布</h2><div class="chart-grid"><div id="monthlyChart" class="chart"></div><div id="matchTypeChart" class="chart"></div></div></div>
+    <div class="section"><h2>重点对象</h2><div class="chart-grid-3"><div id="counterpartyChart" class="chart small"></div><div id="customerChart" class="chart small"></div><div id="nightChart" class="chart small"></div></div></div>
+    <div class="section"><h2>重点交易对手</h2><table><thead><tr><th>交易对手</th><th>交易笔数</th><th>累计金额</th><th>时间范围</th></tr></thead><tbody>{{COUNTERPARTY_ROWS}}</tbody></table></div>
+    <div class="section"><h2>命中样本明细</h2><table><thead><tr><th>流水行号</th><th>匹配用户</th><th>交易时间</th><th>交易对手</th><th>金额</th><th>摘要</th></tr></thead><tbody>{{EVIDENCE_ROWS}}</tbody></table></div>
+  </div>
+  <script>
+    const monthlySeries = {{MONTHLY_SERIES_JSON}}, matchTypeSeries = {{MATCH_TYPE_SERIES_JSON}}, counterpartySeries = {{COUNTERPARTY_SERIES_JSON}}, customerSeries = {{CUSTOMER_SERIES_JSON}}, nightSeries = {{NIGHT_SERIES_JSON}};
+    echarts.init(document.getElementById('monthlyChart')).setOption({tooltip:{trigger:'axis'},title:{text:'月度交易金额趋势',left:12,top:10},xAxis:{type:'category',data:monthlySeries.labels},yAxis:{type:'value'},series:[{type:'bar',data:monthlySeries.amounts,itemStyle:{color:'#1e6aa8'},barMaxWidth:36}]});
+    echarts.init(document.getElementById('matchTypeChart')).setOption({tooltip:{trigger:'item'},title:{text:'匹配类型分布',left:12,top:10},series:[{type:'pie',radius:['42%','70%'],data:matchTypeSeries}]});
+    echarts.init(document.getElementById('counterpartyChart')).setOption({tooltip:{trigger:'axis'},title:{text:'交易对手 Top',left:10,top:10},xAxis:{type:'value'},yAxis:{type:'category',data:counterpartySeries.labels,axisLabel:{width:110,overflow:'truncate'}},series:[{type:'bar',data:counterpartySeries.counts,itemStyle:{color:'#3b82f6'}}]});
+    echarts.init(document.getElementById('customerChart')).setOption({tooltip:{trigger:'axis'},title:{text:'命中客户 Top',left:10,top:10},xAxis:{type:'value'},yAxis:{type:'category',data:customerSeries.labels,axisLabel:{width:110,overflow:'truncate'}},series:[{type:'bar',data:customerSeries.counts,itemStyle:{color:'#ef8a17'}}]});
+    echarts.init(document.getElementById('nightChart')).setOption({tooltip:{trigger:'item'},title:{text:'夜间交易概况',left:10,top:10},series:[{type:'pie',radius:['40%','68%'],data:nightSeries}]});
+  </script>
+</body>
+</html>
