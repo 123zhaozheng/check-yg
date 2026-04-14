@@ -71,7 +71,8 @@ venv.bak/
 data/input/
 data/output/
 data/reports/
-tests/
+tests/*
+!tests/test_pdf_parser.py
 
 # Logs
 *.log
@@ -85,4 +86,6 @@ Thumbs.db
 场景应用说明表.md
 拍摄脚本.md
 作品简介.md
+复赛PPT*.md
+*讲解稿*.md
 *.docx

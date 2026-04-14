@@ -9,6 +9,7 @@ import tempfile
 import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
+from urllib.parse import urlparse
 
 import pikepdf
 import requests
@@ -177,14 +178,140 @@ class MinerUClient:
             return False
 
 
+class PublicMinerUClient:
+    """Client for MinerU public agent parsing API."""
+
+    def __init__(
+        self,
+        base_url: str = "https://mineru.net/api/v1/agent",
+        timeout: int = 300,
+        max_retries: int = 3,
+        retry_delay: int = 2,
+        poll_interval: int = 3,
+    ):
+        self.base_url = base_url.rstrip("/")
+        self.timeout = timeout
+        self.max_retries = max_retries
+        self.retry_delay = retry_delay
+        self.poll_interval = poll_interval
+        self.session = requests.Session()
+        self.session.headers.update({
+            "User-Agent": "MinerU-Public-Client/1.0",
+            "Accept": "application/json",
+        })
+
+    def _request(self, method: str, url: str, **kwargs) -> requests.Response:
+        last_error: Optional[Exception] = None
+        for attempt in range(self.max_retries):
+            try:
+                response = self.session.request(method, url, timeout=self.timeout, **kwargs)
+                response.raise_for_status()
+                return response
+            except requests.exceptions.RequestException as exc:
+                last_error = exc
+                logger.warning(
+                    "Public MinerU request failed (attempt %d/%d): %s %s - %s",
+                    attempt + 1, self.max_retries, method, url, exc
+                )
+                if attempt < self.max_retries - 1:
+                    time.sleep(self.retry_delay)
+        if last_error:
+            raise last_error
+        raise requests.exceptions.RequestException("Max retries exceeded")
+
+    @staticmethod
+    def _extract_api_data(result: Dict[str, Any], action: str) -> Dict[str, Any]:
+        if result.get("code") != 0:
+            raise RuntimeError(result.get("msg") or f"{action}失败")
+        data = result.get("data")
+        if not isinstance(data, dict):
+            raise ValueError(f"{action}返回数据格式错误")
+        return data
+
+    def parse_file(self, file_path: Path) -> Dict[str, Any]:
+        """Upload a local PDF file to the public MinerU API and wait for completion."""
+        if not file_path.exists():
+            raise FileNotFoundError(f"File not found: {file_path}")
+
+        create_resp = self._request(
+            "POST",
+            f"{self.base_url}/parse/file",
+            json={"file_name": file_path.name},
+        )
+        create_data = self._extract_api_data(create_resp.json(), "创建公网 MinerU 任务")
+        task_id = str(create_data.get("task_id") or "").strip()
+        file_url = str(create_data.get("file_url") or "").strip()
+        if not task_id or not file_url:
+            raise ValueError("公网 MinerU 返回缺少 task_id 或 file_url")
+
+        with open(file_path, "rb") as fh:
+            upload_resp = self._request(
+                "PUT",
+                file_url,
+                data=fh,
+            )
+        if upload_resp.status_code not in (200, 201):
+            raise RuntimeError(f"公网 MinerU 文件上传失败: HTTP {upload_resp.status_code}")
+
+        deadline = time.time() + self.timeout
+        while time.time() < deadline:
+            poll_resp = self._request("GET", f"{self.base_url}/parse/{task_id}")
+            poll_data = self._extract_api_data(poll_resp.json(), "查询公网 MinerU 任务")
+            state = str(poll_data.get("state") or "").strip()
+            if state == "done":
+                markdown_url = str(poll_data.get("markdown_url") or "").strip()
+                if not markdown_url:
+                    raise ValueError("公网 MinerU 任务完成，但未返回 markdown_url")
+                return {
+                    "task_id": task_id,
+                    "markdown_url": markdown_url,
+                    "state": state,
+                }
+            if state == "failed":
+                err_msg = str(poll_data.get("err_msg") or poll_data.get("msg") or "解析失败")
+                raise RuntimeError(f"公网 MinerU 解析失败: {err_msg}")
+            time.sleep(self.poll_interval)
+
+        raise requests.exceptions.Timeout(f"公网 MinerU 解析超时: {file_path.name}")
+
+    def get_markdown(self, file_path: Path) -> str:
+        """Parse file and return markdown content."""
+        result = self.parse_file(file_path)
+        markdown_url = result["markdown_url"]
+        response = self._request("GET", markdown_url, headers={"Accept": "text/markdown, text/plain"})
+        if not response.text:
+            raise ValueError("公网 MinerU 未返回 markdown 内容")
+        return response.text
+
+    def health_check(self) -> bool:
+        """Check if the public API host is reachable."""
+        try:
+            parsed = urlparse(self.base_url)
+            target = f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme and parsed.netloc else self.base_url
+            response = self.session.get(target, timeout=5)
+            return response.status_code < 500
+        except Exception:
+            return False
+
+
 class PDFParser(BaseParser):
     """PDF parser using MinerU API"""
     
     SUPPORTED_EXTENSIONS = ['.pdf']
     
-    def __init__(self, mineru_url: str = "http://localhost:8000", timeout: int = 300):
+    def __init__(
+        self,
+        mineru_url: str = "http://localhost:8000",
+        timeout: int = 300,
+        mineru_mode: str = "local",
+        mineru_public_url: str = "https://mineru.net/api/v1/agent",
+    ):
         super().__init__()
-        self.client = MinerUClient(base_url=mineru_url, timeout=timeout)
+        self.mineru_mode = (mineru_mode or "local").strip().lower()
+        if self.mineru_mode == "public":
+            self.client = PublicMinerUClient(base_url=mineru_public_url, timeout=timeout)
+        else:
+            self.client = MinerUClient(base_url=mineru_url, timeout=timeout)
         self.html_parser = HTMLTableParser()
         self.decryptor = PDFDecryptor()
         self._password_callback: Optional[Callable[[str], Optional[str]]] = None
@@ -246,6 +373,8 @@ class PDFParser(BaseParser):
             return self.client.get_markdown(actual_path)
             
         except requests.exceptions.ConnectionError:
+            if self.mineru_mode == "public":
+                raise RuntimeError("无法连接到公网 MinerU 服务，请检查网络或接口地址配置")
             raise RuntimeError("无法连接到 MinerU 服务，请检查服务是否启动")
         except Exception as e:
             self.logger.error("Failed to parse PDF %s: %s", file_path.name, e)

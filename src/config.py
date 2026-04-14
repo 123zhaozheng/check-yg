@@ -19,7 +19,9 @@ class Config:
     
     DEFAULT_CONFIG = {
         'mineru': {
+            'mode': 'local',
             'url': 'http://localhost:8000',
+            'public_url': 'https://mineru.net/api/v1/agent',
             'timeout': 300
         },
         'llm': {
@@ -153,6 +155,14 @@ class Config:
     @property
     def mineru_url(self) -> str:
         return self.get('mineru.url', 'http://localhost:8000')
+
+    @property
+    def mineru_mode(self) -> str:
+        return self.get('mineru.mode', 'local')
+
+    @property
+    def mineru_public_url(self) -> str:
+        return self.get('mineru.public_url', 'https://mineru.net/api/v1/agent')
     
     @property
     def mineru_timeout(self) -> int:

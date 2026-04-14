@@ -35,7 +35,13 @@ class FlowExtractorV2:
 
         self.pdf_parser = PDFParser(
             mineru_url=self.config.mineru_url,
-            timeout=self.config.mineru_timeout
+            timeout=self.config.mineru_timeout,
+            mineru_mode=getattr(self.config, "mineru_mode", "local"),
+            mineru_public_url=getattr(
+                self.config,
+                "mineru_public_url",
+                "https://mineru.net/api/v1/agent",
+            ),
         )
         self.excel_parser = ExcelParser()
         self.docx_parser = DocxParser()

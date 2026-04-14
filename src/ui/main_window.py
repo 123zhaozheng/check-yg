@@ -10,6 +10,7 @@ from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
     QPushButton, QLabel, QStackedWidget, QFrame,
     QDialog, QLineEdit, QSpinBox, QMessageBox,
+    QComboBox,
     QTabWidget
 )
 from PyQt5.QtCore import Qt
@@ -89,16 +90,37 @@ class SettingsDialog(QDialog):
         mineru_title = QLabel("MinerU PDF解析服务")
         mineru_title.setObjectName("settings_title")
         layout.addWidget(mineru_title)
-        
-        mineru_url_label = QLabel("服务地址")
+
+        mineru_mode_label = QLabel("接入方式")
+        mineru_mode_label.setObjectName("settings_label")
+        layout.addWidget(mineru_mode_label)
+
+        self.mineru_mode_input = QComboBox()
+        self.mineru_mode_input.setObjectName("settings_input")
+        self.mineru_mode_input.setFixedHeight(40)
+        self.mineru_mode_input.addItem("原始服务（本地/自建）", "local")
+        self.mineru_mode_input.addItem("公网 Agent 接口", "public")
+        layout.addWidget(self.mineru_mode_input)
+
+        mineru_url_label = QLabel("原始服务地址")
         mineru_url_label.setObjectName("settings_label")
         layout.addWidget(mineru_url_label)
-        
+
         self.mineru_url_input = QLineEdit()
         self.mineru_url_input.setObjectName("settings_input")
         self.mineru_url_input.setPlaceholderText("http://localhost:8000")
         self.mineru_url_input.setFixedHeight(40)
         layout.addWidget(self.mineru_url_input)
+
+        mineru_public_url_label = QLabel("公网接口地址")
+        mineru_public_url_label.setObjectName("settings_label")
+        layout.addWidget(mineru_public_url_label)
+
+        self.mineru_public_url_input = QLineEdit()
+        self.mineru_public_url_input.setObjectName("settings_input")
+        self.mineru_public_url_input.setPlaceholderText("https://mineru.net/api/v1/agent")
+        self.mineru_public_url_input.setFixedHeight(40)
+        layout.addWidget(self.mineru_public_url_input)
         
         # 分隔线
         layout.addWidget(self._create_separator())
@@ -210,7 +232,11 @@ class SettingsDialog(QDialog):
         return separator
     
     def _load_config(self):
+        mode = self.config.mineru_mode
+        mode_index = self.mineru_mode_input.findData(mode)
+        self.mineru_mode_input.setCurrentIndex(mode_index if mode_index >= 0 else 0)
         self.mineru_url_input.setText(self.config.mineru_url)
+        self.mineru_public_url_input.setText(self.config.mineru_public_url)
         self.llm_url_input.setText(self.config.llm_url)
         self.llm_model_input.setText(self.config.llm_model)
         self.llm_key_input.setText(self.config.llm_api_key)
@@ -218,7 +244,12 @@ class SettingsDialog(QDialog):
         self.flow_threshold_spin.setValue(self.config.flow_confidence_threshold)
     
     def _save_and_close(self):
+        self.config.set('mineru.mode', self.mineru_mode_input.currentData() or 'local')
         self.config.set('mineru.url', self.mineru_url_input.text().strip() or 'http://localhost:8000')
+        self.config.set(
+            'mineru.public_url',
+            self.mineru_public_url_input.text().strip() or 'https://mineru.net/api/v1/agent'
+        )
         self.config.set('llm.url', self.llm_url_input.text().strip() or 'https://api.openai.com/v1')
         self.config.set('llm.model', self.llm_model_input.text().strip() or 'gpt-4')
         self.config.set('llm.api_key', self.llm_key_input.text())
