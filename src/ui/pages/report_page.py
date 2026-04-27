@@ -11,7 +11,7 @@ from PyQt5.QtWidgets import QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayo
 from ..styles import COLORS
 from ..widgets import Card, StatCardRow
 from ...config import get_config
-from ...export_flows import SkillsExporter
+from ...export_flows import BoardSkillExporter
 from ...llm import AuditAgent
 
 
@@ -263,21 +263,29 @@ class ReportPage(QWidget):
             file_path = f"{file_path}.zip"
 
         try:
-            exporter = SkillsExporter(self.config)
-            output_path = exporter.export_bundle(
-                self.result,
-                task_title=self.task_title,
-                task_id=self.task_id,
-                report_text=self.generated_report or self.summary_output.toPlainText(),
-                output_path=file_path,
-            )
-            QMessageBox.information(
-                self,
-                "导出成功",
-                "Skills 包已导出到:\n"
-                f"{output_path}\n\n"
-                "其中包含当前任务资料、标准化流水、固定工作流说明，以及历史审查目录。",
-            )
+            exporter = BoardSkillExporter(self.config)
+            selected_tasks = [{
+                "task_id": str(self.task_id or self.result.review_id or "").strip(),
+                "title": str(self.task_title or self.task_id or self.result.review_id or "当前任务").strip(),
+            }]
+            output_path, meta = exporter.export_board_skill(selected_tasks, output_path=file_path)
+            skipped_count = int(meta.get("skipped_count", 0) or 0)
+            message = [
+                f"Skills 包已导出到:\n{output_path}",
+                "",
+                f"成功导出任务: {meta.get('exported_count', 0)} 个",
+                f"跳过任务: {skipped_count} 个",
+                "",
+                "导出内容包含：统一审查任务目录、HTML 模板、汇总脚本、索引资料、专家工作流与 SKILL.md。",
+            ]
+            if skipped_count:
+                skipped_preview = "；".join(
+                    f"{item.get('task_id', '')}({item.get('reason', '')})"
+                    for item in (meta.get("skipped_tasks", []) or [])[:5]
+                )
+                if skipped_preview:
+                    message.extend(["", f"已跳过: {skipped_preview}"])
+            QMessageBox.information(self, "导出成功", "\n".join(message))
         except Exception as exc:
             QMessageBox.warning(self, "导出失败", f"导出 Skills 包时出错:\n{exc}")
 
