@@ -93,6 +93,10 @@ def load_history_index() -> Dict:
     return load_json(HISTORY_ROOT / "history_index.json")
 
 
+def load_dimension_catalog() -> Dict:
+    return load_json(REF_ROOT / "审查维度清单.json")
+
+
 def get_field(row: Dict, field: str) -> str:
     aliases = {
         "交易对手名": ["交易对手名", "对手名"],
@@ -277,6 +281,95 @@ def build_short_interval_cases(rows: List[Dict]) -> List[Dict]:
             cases.append({"counterparty_name": name, "transaction_count": len(cluster)})
     cases.sort(key=lambda x: x["transaction_count"], reverse=True)
     return cases[:20]
+
+
+def build_evidence_rows(rows: List[Dict], limit: int = 20) -> List[Dict]:
+    return [{
+        "流水行号": row.get("流水行号", ""),
+        "匹配用户": get_field(row, "匹配用户"),
+        "交易时间": get_field(row, "交易时间"),
+        "交易对手名": get_field(row, "交易对手名"),
+        "金额": get_field(row, "金额"),
+        "摘要": get_field(row, "摘要"),
+    } for row in matched_rows(rows)[:limit]]
+
+
+def build_historical_similarity() -> Dict:
+    history = load_history_index()
+    dimension_counter = Counter()
+    for item in history.get("history_reviews", []) or []:
+        for dimension in item.get("notable_dimensions", []) or []:
+            name = normalize_text(dimension)
+            if name:
+                dimension_counter[name] += 1
+    return {
+        "history_review_count": history.get("history_review_count", 0),
+        "historical_focus_dimensions": [
+            {"dimension": name, "count": count}
+            for name, count in dimension_counter.most_common(10)
+        ],
+    }
+
+
+def build_dimension_results(include_disabled: bool = False) -> Dict:
+    profile = load_task_profile()
+    review = load_task_review()
+    rows = load_final_rows()
+    hits = matched_rows(rows)
+    match_type_counts = build_match_type_counts(review)
+    catalog = load_dimension_catalog()
+
+    operator_results = {
+        "basic_scope_hits": {
+            "task_id": profile.get("task_id", ""),
+            "task_title": profile.get("task_title", ""),
+            "review_time": profile.get("review_time", ""),
+            "review_id": profile.get("review_id", ""),
+            "flow_count": len(rows),
+            "matched_flow_count": len(hits),
+            "total_matches": int(review.get("total_matches", 0) or 0),
+            "customer_count": int(review.get("total_customers", 0) or 0),
+            "matched_customer_count": int(review.get("matched_customers", 0) or 0),
+            "total_amount": format_amount(sum(parse_amount(get_field(row, "金额")) for row in rows)),
+            "matched_amount": format_amount(sum(parse_amount(get_field(row, "金额")) for row in hits)),
+        },
+        "match_type_distribution": {
+            "match_type_distribution": match_type_counts,
+            "exact_match_count": int(match_type_counts.get("精确匹配", 0) or 0),
+            "desensitized_match_count": int(match_type_counts.get("脱敏匹配", 0) or 0),
+            "fuzzy_match_count": int(match_type_counts.get("模糊匹配", 0) or 0),
+        },
+        "matched_customer_concentration": build_top_customers(rows),
+        "counterparty_concentration": build_top_counterparties(rows),
+        "night_transactions": build_night_info(rows),
+        "monthly_trend": build_monthly_series(rows),
+        "same_amount_repeat": build_same_amount_cases(rows),
+        "short_interval_cluster": build_short_interval_cases(rows),
+        "evidence_rows": build_evidence_rows(rows),
+        "historical_similarity": build_historical_similarity,
+    }
+
+    dimensions = []
+    for dimension in catalog.get("dimensions", []) or []:
+        if not include_disabled and not dimension.get("default_enabled", False):
+            continue
+        operator_name = normalize_text(dimension.get("operator_name", ""))
+        result = operator_results.get(operator_name, {})
+        if callable(result):
+            result = result()
+        dimensions.append({
+            "id": dimension.get("id", ""),
+            "name": dimension.get("name", ""),
+            "operator_script": dimension.get("operator_script", ""),
+            "operator_name": operator_name,
+            "output_key": dimension.get("output_key", operator_name),
+            "result": result,
+        })
+
+    return {
+        "dimension_catalog_file": "references/审查维度清单.json",
+        "dimensions": dimensions,
+    }
 
 
 def get_output_dir() -> Path:

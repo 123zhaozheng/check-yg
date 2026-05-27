@@ -64,10 +64,8 @@ class BoardSkillExporter:
 
             task_root = root / "审查任务目录"
             ref_root = root / "references"
-            expert_root = root / "expert_workflow"
             task_root.mkdir(parents=True, exist_ok=True)
             ref_root.mkdir(parents=True, exist_ok=True)
-            expert_root.mkdir(parents=True, exist_ok=True)
 
             task_index = []
             assets_manifest = {"tasks": {}}
@@ -89,14 +87,8 @@ class BoardSkillExporter:
             self._write_text(ref_root / "environment.md", self._build_environment_reference())
             self._write_text(ref_root / "reporting.md", self._build_reporting_reference())
             self._write_text(ref_root / "data_dictionary.md", self._build_data_dictionary())
-            self._write_text(ref_root / "capability_model.md", self._build_capability_model())
-
-            self._write_text(expert_root / "审查全流程.md", self._build_expert_workflow_markdown())
-            self._write_text(expert_root / "专家经验库.md", self._build_expert_experience_markdown(summary))
-            self._write_text(expert_root / "能力沉淀机制.md", self._build_capability_accumulation_markdown())
-            self._write_json(expert_root / "审查维度清单.json", {"dimensions": self._build_dimension_catalog()})
-            self._write_text(expert_root / "新维度沉淀问答模板.md", self._build_dimension_question_templates())
-            self._write_text(expert_root / "能力沉淀记录.md", self._build_capability_log_template())
+            self._write_json(ref_root / "审查维度清单.json", {"dimensions": self._build_dimension_catalog()})
+            self._write_text(ref_root / "审查全流程.md", self._build_expert_workflow_markdown())
 
             self._write_text(root / "SKILL.md", self._build_skill_markdown())
             self._write_text(root / "agents" / "openai.yaml", self._build_openai_yaml())
@@ -284,7 +276,7 @@ class BoardSkillExporter:
     def _build_skill_markdown() -> str:
         return """---
 name: audit-unified-skill
-description: 统一的员工客户流水审查 Skills。单任务时，审查任务目录下只有一个任务目录；多任务时，审查任务目录下包含多个任务目录。支持看板统计、任务级追问、证据核验、HTML 报告、完整审查链和能力沉淀。
+description: 统一的员工客户流水审查 Skills。单任务时，审查任务目录下只有一个任务目录；多任务时，审查任务目录下包含多个任务目录。支持看板统计、任务级追问、证据核验、HTML 报告，并按审查维度清单执行完整审查链。
 ---
 
 # 统一审查 Skills
@@ -297,8 +289,8 @@ description: 统一的员工客户流水审查 Skills。单任务时，审查任
 
 - **环境校验模式**：在做 Excel 分析、问答或报告生成前，先校验 Python 和必需依赖。
 - **看板/任务问答模式**：回答整体统计问题，或定位某个任务后做深度追问。
-- **完整审查链模式**：按专家工作流逐个步骤完成完整审查链。
-- **能力沉淀模式**：当用户提出新的重要审查维度时，在完成分析后追问是否要沉淀到标准工作流中。
+- **完整审查链模式**：用户指定任务后，按 `references/审查维度清单.json` 逐维度审查。
+- **能力沉淀模式**：当用户提出新的重要审查维度时，先判断是否补充已有维度；确属新维度再新增清单项和 Python 算子。
 
 规则：
 - 在做分析、问答或报告生成前，始终先执行 `python scripts/check_environment.py`
@@ -308,7 +300,8 @@ description: 统一的员工客户流水审查 Skills。单任务时，审查任
 - 单任务报告必须严格按三段式流程执行：数据构建 -> 文字分析生成 -> HTML 渲染
 - 如果没有可用的 OpenAI 兼容接口密钥，允许使用兜底文字，但必须说明这是脚本生成的兜底分析
 - 严禁编造指标；如果定位不到任务或数据缺失，要明确说明
-- 如果用户提出新的重要审查点，例如夜间交易、重复流水特征、集中交易模式，在完成分析后必须追问：**是否将这个能力沉淀到完整审查工作流中，供后续类似任务复用？**
+- 完整审查必须读取 `references/审查维度清单.json`，按 `default_enabled=true` 的维度逐个执行
+- 如果用户提出新的重要审查点，必须先对照维度清单判断：能补充已有维度就补充该维度；确属新维度才新增维度，并同步补充或新增对应 Python 算子
 
 ## 统一结构说明
 
@@ -336,9 +329,9 @@ description: 统一的员工客户流水审查 Skills。单任务时，审查任
   - 交易对手 Top 10 是谁
   - 命中客户 Top 10 是谁
 - 生成单任务精美 HTML 报告
-- 按 `expert_workflow/审查全流程.md` 执行完整审查链
+- 按 `references/审查全流程.md` 与 `references/审查维度清单.json` 执行完整审查链
 - 结合历史任务做经验迁移与模式复盘
-- 对新的重要审查维度输出能力沉淀提议
+- 对新的重要审查维度输出“补充已有维度/新增维度和算子”的沉淀提议
 
 ## 判断树
 
@@ -363,15 +356,17 @@ description: 统一的员工客户流水审查 Skills。单任务时，审查任
    - 执行 `python scripts/build_task_report_data.py --task-id <task_id>`
    - 读取 `output/task_reports/<task_id>/report_data.json`
 5. 如需完整审查链：
-   - 按 `expert_workflow/审查全流程.md` 的步骤逐步执行
+   - 读取 `references/审查维度清单.json`
+   - 执行 `python scripts/run_review_dimensions.py --task-id <task_id>`
+   - 按 `references/审查全流程.md` 的步骤逐步执行
 6. 单任务报告生成：
    - 执行 `python scripts/build_task_report_data.py --task-id <task_id>`
    - 执行 `python scripts/generate_task_report_narrative.py --task-id <task_id>`
    - 执行 `python scripts/render_task_html_report.py --task-id <task_id>`
 7. 新维度沉淀：
    - 如果用户提出新维度，先完成当前分析
-   - 再追问是否要沉淀到标准工作流中
-   - 参考 `expert_workflow/能力沉淀机制.md` 与 `expert_workflow/新维度沉淀问答模板.md`
+   - 再对照 `references/审查维度清单.json` 判断是补充已有维度还是新增维度
+   - 新增维度时必须同步说明需要新增或完善的 Python 算子
 
 ## 资源地图
 
@@ -379,18 +374,13 @@ description: 统一的员工客户流水审查 Skills。单任务时，审查任
 - `references/board_summary.json`：看板汇总指标
 - `references/assets_manifest.json`：每个任务的资产存在情况
 - `references/workflow.md`：简版执行流程
+- `references/审查全流程.md`：完整审查链
+- `references/审查维度清单.json`：默认审查维度、算子脚本、输出字段和沉淀规则
 - `references/environment.md`：依赖和环境说明
 - `references/reporting.md`：报告内容和图表建议
 - `references/question_examples.md`：示例问题
 - `references/task_report_prompt.md`：大模型文字分析提示词
 - `references/data_dictionary.md`：数据字典
-- `references/capability_model.md`：统一能力模型说明
-- `expert_workflow/审查全流程.md`：完整审查链
-- `expert_workflow/专家经验库.md`：专家经验总结
-- `expert_workflow/能力沉淀机制.md`：新能力沉淀规则
-- `expert_workflow/审查维度清单.json`：维度清单
-- `expert_workflow/新维度沉淀问答模板.md`：沉淀追问模板
-- `expert_workflow/能力沉淀记录.md`：记录后续专家交互沉淀的新增能力与修改痕迹
 - `审查任务目录/<task_id>/`：每个任务的真实资料目录
 
 ## 输出约束
@@ -411,8 +401,8 @@ description: 统一的员工客户流水审查 Skills。单任务时，审查任
 3. 资产判断：读取 `assets_manifest.json`
 4. 单任务分析：运行 `build_task_report_data.py`
 5. 单任务报告：运行 `generate_task_report_narrative.py` + `render_task_html_report.py`
-6. 完整审查链：参考 `expert_workflow/审查全流程.md`
-7. 能力沉淀：参考 `expert_workflow/能力沉淀机制.md`
+6. 完整审查链：读取 `审查维度清单.json` 并运行 `run_review_dimensions.py`
+7. 维度沉淀：先判断补充已有维度还是新增维度；新增维度必须补充算子
 """
 
     @staticmethod
@@ -425,9 +415,9 @@ description: 统一的员工客户流水审查 Skills。单任务时，审查任
 - 这个任务精确匹配和脱敏匹配分别多少条？
 - 这个任务夜间交易有多少条？
 - 这个任务有没有重复流水模式？
-- 请按完整审查链审一下这个任务
+- 请按审查维度清单完整审查这个任务
 - 帮我生成这个任务的精美 HTML 报告
-- 把夜间交易审查沉淀到标准工作流里
+- 把某个新审查点沉淀到审查维度清单里
 """
 
     @staticmethod
@@ -522,6 +512,10 @@ python -m pip install requests
 - `中间审查数据.json`：中间审查数据（有则导出）
 - `证据目录/`：证据类附件（有则导出）
 
+## 参考文件
+- `references/审查维度清单.json`：完整审查默认读取的维度清单
+- `references/审查全流程.md`：完整审查步骤
+
 ## 重点字段
 - 交易时间
 - 金额
@@ -532,147 +526,173 @@ python -m pip install requests
 """
 
     @staticmethod
-    def _build_capability_model() -> str:
-        return """# 统一能力模型
-
-这套 Skills 只有一种结构：
-- 单任务时，`审查任务目录/` 下只有一个任务目录
-- 多任务时，`审查任务目录/` 下有多个任务目录
-
-也就是说，单任务是多任务结构的特例，不再区分两套不同的 Skills 思想。
-
-每个任务目录按实际情况导出资料；没有的文件就不导出，后续回答时如实说明缺失。
-"""
-
-    @staticmethod
     def _build_expert_workflow_markdown() -> str:
         return """# 审查全流程
+
+前提：用户必须明确指定要审查的任务；未指定任务时，先要求用户给出任务编号、任务标题，或在单任务包中使用唯一任务。
 
 1. 先定位目标任务
 2. 读取 `assets_manifest.json`，确认该任务有哪些真实资产
 3. 读取任务画像，建立任务概览
 4. 读取审查结果，确认命中客户、命中条数和匹配类型
 5. 优先读取最终审查流水；如果没有，则回退到其他已导出资料
-6. 按默认维度完成完整审查：
-   - 基础规模与命中情况
-   - 匹配类型分布
-   - 交易对手集中度
-   - 夜间交易
-   - 同金额重复模式
-   - 短时集中交易模式
-   - 重点证据明细
-7. 如有需要，再进入历史复盘，对比相似任务和高频风险信号
-8. 输出结论时采用：结论 -> 证据 -> 建议 的顺序
-9. 如果用户提出新的重要审查维度，必须追问是否要沉淀进标准工作流
-10. 如果用户确认沉淀，则后续应修改 `expert_workflow/审查全流程.md`、`expert_workflow/审查维度清单.json`，并把本次变更追加记录到 `expert_workflow/能力沉淀记录.md`
-"""
-
-    @staticmethod
-    def _build_expert_experience_markdown(summary: Dict) -> str:
-        return f"""# 专家经验库
-
-## 核心经验
-- 先看规模，再看命中，再看证据
-- 任务级证据问题优先看最终审查流水
-- 异常问题优先从夜间交易、重复金额、集中交易、重点对手切入
-- 如果任务缺某个表格，不要假设存在，要如实说明缺失
-- 发现新维度后，不只当前分析，还要判断是否值得沉淀为标准能力
-
-## 当前导出规模
-- 已导出任务数：{summary.get('task_count', 0)}
-- 命中总条数：{summary.get('total_matches', 0)}
-- 命中客户总数：{summary.get('total_matched_customers', 0)}
-
-## 经验迁移原则
-- 可稳定复用的经验，优先写进标准工作流
-- 只适用于个别任务的判断，不要直接沉淀成全局能力
-- 新增维度时，要明确其数据依赖、判断逻辑和输出格式
-"""
-
-    @staticmethod
-    def _build_capability_accumulation_markdown() -> str:
-        return """# 能力沉淀机制
-
-当用户或审计专家在交互中提出新的重要审查点时，智能体必须执行以下流程：
-
-1. 先基于当前任务完成该维度分析
-2. 再判断这个维度是否具有复用价值
-3. 明确追问用户：是否将该能力沉淀到完整审查工作流中
-4. 如果用户同意，输出结构化沉淀建议
-5. 同时把沉淀结果追加记录到 `expert_workflow/能力沉淀记录.md`，作为后续专家经验扩展痕迹
-6. 如该维度确认纳入标准工作流，应同步更新 `expert_workflow/审查全流程.md` 和 `expert_workflow/审查维度清单.json` 的对应内容
-
-## 适合沉淀的维度示例
-- 夜间交易审查
-- 重复流水特征识别
-- 特定金额阈值识别
-- 交易对手集中度分析
-- 短时集中往来分析
-
-## 沉淀建议应包含
-- 维度名称
-- 业务价值
-- 插入工作流位置
-- 所需数据字段
-- 推荐判断逻辑
-- 输出字段
-- 是否建议纳入默认审查链
+6. 读取 `references/审查维度清单.json`
+7. 按清单中 `default_enabled=true` 的维度逐个审查；每个维度优先运行其 `operator_script`，并按照 `output_key` 读取结果
+8. 如有需要，再进入历史复盘，对比相似任务和高频风险信号；历史类维度应按清单配置决定是否启用
+9. 输出结论时采用：结论 -> 证据 -> 建议 的顺序
+10. 如果用户提出新的重要审查维度，先对照清单判断是否补充已有维度；确属新维度时，补充 `references/审查维度清单.json`，并新增或完善对应 Python 算子
 """
 
     @staticmethod
     def _build_dimension_catalog() -> List[Dict]:
         return [
-            {"name": "基础规模与命中情况", "description": "统计总流水、命中流水、命中客户、总金额等基础指标。"},
-            {"name": "匹配类型分布", "description": "统计精确匹配、脱敏匹配、模糊匹配的分布情况。"},
-            {"name": "交易对手集中度", "description": "识别高频交易对手及其金额集中情况。"},
-            {"name": "夜间交易", "description": "识别 22:00 到次日 06:00 的交易特征。"},
-            {"name": "同金额重复模式", "description": "识别同日、同对手、同金额的重复交易模式。"},
-            {"name": "短时集中交易模式", "description": "识别短时间内与同一交易对手的集中往来。"},
-            {"name": "重点证据明细", "description": "围绕命中记录输出交易时间、金额、交易对手、匹配用户和流水行号。"},
-            {"name": "历史相似模式提示", "description": "结合历史任务总结相似模式和常见风险信号。"},
+            {
+                "id": "basic_scope_hits",
+                "name": "基础规模与命中情况",
+                "description": "统计总流水、命中流水、命中客户、总金额等基础指标。",
+                "default_enabled": True,
+                "operator_script": "scripts/run_review_dimensions.py",
+                "operator_name": "basic_scope_hits",
+                "output_key": "basic_scope_hits",
+                "data_dependencies": ["任务画像.json", "审查结果.json", "最终审查流水.xlsx"],
+                "required_fields": ["金额", "匹配用户"],
+                "decision_logic": "汇总任务画像、审查结果与流水规模，输出整体命中率、命中金额和基础规模。",
+                "output_fields": ["flow_count", "matched_flow_count", "customer_count", "matched_customer_count", "total_amount", "matched_amount"],
+                "can_be_promoted": True,
+            },
+            {
+                "id": "match_type_distribution",
+                "name": "匹配类型分布",
+                "description": "统计精确匹配、脱敏匹配、模糊匹配的分布情况。",
+                "default_enabled": True,
+                "operator_script": "scripts/run_review_dimensions.py",
+                "operator_name": "match_type_distribution",
+                "output_key": "match_type_distribution",
+                "data_dependencies": ["审查结果.json"],
+                "required_fields": ["match_type"],
+                "decision_logic": "按审查结果中的 match_type 聚合，观察命中类型结构。",
+                "output_fields": ["match_type_distribution", "exact_match_count", "desensitized_match_count", "fuzzy_match_count"],
+                "can_be_promoted": True,
+            },
+            {
+                "id": "matched_customer_concentration",
+                "name": "命中客户集中度",
+                "description": "识别命中客户的命中笔数与金额集中情况。",
+                "default_enabled": True,
+                "operator_script": "scripts/run_review_dimensions.py",
+                "operator_name": "matched_customer_concentration",
+                "output_key": "top_customers",
+                "data_dependencies": ["最终审查流水.xlsx", "审查结果.json"],
+                "required_fields": ["匹配用户", "金额"],
+                "decision_logic": "按匹配用户聚合命中流水笔数和金额，输出排名靠前的命中客户。",
+                "output_fields": ["customer_name", "match_count", "match_amount"],
+                "can_be_promoted": True,
+            },
+            {
+                "id": "counterparty_concentration",
+                "name": "交易对手集中度",
+                "description": "识别高频交易对手及其金额集中情况。",
+                "default_enabled": True,
+                "operator_script": "scripts/run_review_dimensions.py",
+                "operator_name": "counterparty_concentration",
+                "output_key": "top_counterparties",
+                "data_dependencies": ["最终审查流水.xlsx"],
+                "required_fields": ["交易对手名", "金额", "交易时间"],
+                "decision_logic": "按交易对手聚合交易次数、金额和时间跨度，识别高频或高金额对手。",
+                "output_fields": ["counterparty_name", "transaction_count", "total_amount", "time_range"],
+                "can_be_promoted": True,
+            },
+            {
+                "id": "night_transactions",
+                "name": "夜间交易",
+                "description": "识别 22:00 到次日 06:00 的交易特征。",
+                "default_enabled": True,
+                "operator_script": "scripts/run_review_dimensions.py",
+                "operator_name": "night_transactions",
+                "output_key": "night_transactions",
+                "data_dependencies": ["最终审查流水.xlsx"],
+                "required_fields": ["交易时间", "交易对手名", "金额", "摘要"],
+                "decision_logic": "筛选交易时间在 22:00 至次日 06:00 的流水，汇总笔数、金额和代表性证据行。",
+                "output_fields": ["count", "amount", "rows"],
+                "can_be_promoted": True,
+            },
+            {
+                "id": "monthly_trend",
+                "name": "月度趋势",
+                "description": "按月统计交易金额变化，辅助观察交易节奏和异常月份。",
+                "default_enabled": True,
+                "operator_script": "scripts/run_review_dimensions.py",
+                "operator_name": "monthly_trend",
+                "output_key": "monthly_amount_series",
+                "data_dependencies": ["最终审查流水.xlsx"],
+                "required_fields": ["交易时间", "金额"],
+                "decision_logic": "按交易月份聚合金额，输出月度序列供趋势判断。",
+                "output_fields": ["labels", "amounts"],
+                "can_be_promoted": True,
+            },
+            {
+                "id": "same_amount_repeat",
+                "name": "同金额重复模式",
+                "description": "识别同日、同对手、同金额的重复交易模式。",
+                "default_enabled": True,
+                "operator_script": "scripts/run_review_dimensions.py",
+                "operator_name": "same_amount_repeat",
+                "output_key": "same_amount_cases",
+                "data_dependencies": ["最终审查流水.xlsx"],
+                "required_fields": ["交易时间", "交易对手名", "金额"],
+                "decision_logic": "按交易对手、日期、金额分组，筛选同组两笔及以上的重复交易。",
+                "output_fields": ["counterparty_name", "transaction_date", "same_amount", "transaction_count"],
+                "can_be_promoted": True,
+            },
+            {
+                "id": "short_interval_cluster",
+                "name": "短时集中交易模式",
+                "description": "识别短时间内与同一交易对手的集中往来。",
+                "default_enabled": True,
+                "operator_script": "scripts/run_review_dimensions.py",
+                "operator_name": "short_interval_cluster",
+                "output_key": "short_interval_cases",
+                "data_dependencies": ["最终审查流水.xlsx"],
+                "required_fields": ["交易时间", "交易对手名"],
+                "decision_logic": "按交易对手排序交易时间，筛选 30 分钟内连续两笔及以上的集中交易。",
+                "output_fields": ["counterparty_name", "transaction_count"],
+                "can_be_promoted": True,
+            },
+            {
+                "id": "evidence_rows",
+                "name": "重点证据明细",
+                "description": "围绕命中记录输出交易时间、金额、交易对手、匹配用户和流水行号。",
+                "default_enabled": True,
+                "operator_script": "scripts/run_review_dimensions.py",
+                "operator_name": "evidence_rows",
+                "output_key": "evidence_rows",
+                "data_dependencies": ["最终审查流水.xlsx", "审查结果.json"],
+                "required_fields": ["流水行号", "匹配用户", "交易时间", "交易对手名", "金额", "摘要"],
+                "decision_logic": "筛选已命中流水，输出可直接引用的证据字段。",
+                "output_fields": ["流水行号", "匹配用户", "交易时间", "交易对手名", "金额", "摘要"],
+                "can_be_promoted": True,
+            },
+            {
+                "id": "historical_similarity",
+                "name": "历史相似模式提示",
+                "description": "结合历史任务总结相似模式和常见风险信号。",
+                "default_enabled": False,
+                "operator_script": "scripts/run_review_dimensions.py",
+                "operator_name": "historical_similarity",
+                "output_key": "historical_similarity",
+                "data_dependencies": ["references/board_manifest.json"],
+                "required_fields": ["notable_dimensions"],
+                "decision_logic": "仅在用户要求跨任务复盘时启用，统计历史任务中的高频关注维度。",
+                "output_fields": ["task_count", "historical_focus_dimensions"],
+                "can_be_promoted": True,
+            },
         ]
-
-    @staticmethod
-    def _build_dimension_question_templates() -> str:
-        return """# 新维度沉淀问答模板
-
-- 这个审查点是否只适用于当前任务，还是值得沉淀为通用能力？
-- 是否要将“夜间交易审查”加入默认完整审查链？
-- 是否要将“重复流水特征识别”加入默认完整审查链？
-- 这个维度应该插入在基础统计之后，还是证据核验之后？
-- 这个维度依赖哪些数据字段？
-- 以后类似任务是否都要默认执行这个维度？
-- 如果本次确认沉淀，要不要同步更新审查全流程和维度清单？
-"""
-
-    @staticmethod
-    def _build_capability_log_template() -> str:
-        return """# 能力沉淀记录
-
-这个文件用于记录后续用户、审计专家与智能体交互过程中新增或修改的审查能力。
-
-## 使用规则
-- 当用户确认某个新维度需要沉淀时，在这里追加记录
-- 每条记录建议包含：日期、维度名称、业务价值、插入流程位置、依赖字段、变更说明
-- 如果该维度已经正式纳入标准工作流，还应同步修改：
-  - `审查全流程.md`
-  - `审查维度清单.json`
-
-## 记录模板
-- 日期：
-- 维度名称：
-- 业务价值：
-- 插入流程位置：
-- 依赖字段：
-- 变更说明：
-- 是否已同步更新流程/维度清单：
-"""
 
     @staticmethod
     def _build_openai_yaml() -> str:
         return """display_name: 统一审查技能
-short_description: 支持统一任务结构、看板统计、任务问答、完整审查链和能力沉淀
-default_prompt: 基于这个统一审查技能包，先定位用户问题对应的任务，再检查该任务有哪些真实资产，随后按完整审查链执行分析；如果用户提出新的重要审查维度，在完成分析后追问是否沉淀到标准工作流中。
+short_description: 支持统一任务结构、看板统计、任务问答、按审查维度清单执行完整审查
+default_prompt: 基于这个统一审查技能包，先定位用户问题对应的任务，再检查该任务有哪些真实资产，随后读取 references/审查维度清单.json 并按清单中的默认维度和算子执行分析；如果用户提出新的重要审查维度，先判断是否补充已有维度，确属新维度再建议新增清单项和对应 Python 算子。
 """
 
     @staticmethod

@@ -184,12 +184,14 @@ class PublicMinerUClient:
     def __init__(
         self,
         base_url: str = "https://mineru.net/api/v1/agent",
+        api_key: str = "",
         timeout: int = 300,
         max_retries: int = 3,
         retry_delay: int = 2,
         poll_interval: int = 3,
     ):
         self.base_url = base_url.rstrip("/")
+        self.api_key = str(api_key or "").strip()
         self.timeout = timeout
         self.max_retries = max_retries
         self.retry_delay = retry_delay
@@ -199,6 +201,8 @@ class PublicMinerUClient:
             "User-Agent": "MinerU-Public-Client/1.0",
             "Accept": "application/json",
         })
+        if self.api_key:
+            self.session.headers.update({"Authorization": f"Bearer {self.api_key}"})
 
     def _request(self, method: str, url: str, **kwargs) -> requests.Response:
         last_error: Optional[Exception] = None
@@ -305,11 +309,16 @@ class PDFParser(BaseParser):
         timeout: int = 300,
         mineru_mode: str = "local",
         mineru_public_url: str = "https://mineru.net/api/v1/agent",
+        mineru_public_api_key: str = "",
     ):
         super().__init__()
         self.mineru_mode = (mineru_mode or "local").strip().lower()
         if self.mineru_mode == "public":
-            self.client = PublicMinerUClient(base_url=mineru_public_url, timeout=timeout)
+            self.client = PublicMinerUClient(
+                base_url=mineru_public_url,
+                api_key=mineru_public_api_key,
+                timeout=timeout,
+            )
         else:
             self.client = MinerUClient(base_url=mineru_url, timeout=timeout)
         self.html_parser = HTMLTableParser()

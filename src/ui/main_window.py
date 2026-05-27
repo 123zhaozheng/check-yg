@@ -10,7 +10,7 @@ from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
     QPushButton, QLabel, QStackedWidget, QFrame,
     QDialog, QLineEdit, QSpinBox, QMessageBox,
-    QComboBox,
+    QComboBox, QGridLayout, QScrollArea,
     QTabWidget
 )
 from PyQt5.QtCore import Qt
@@ -31,7 +31,7 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.config = get_config()
         self.setWindowTitle("设置")
-        self.setMinimumSize(600, 650)
+        self.setMinimumSize(600, 560)
         self.setMaximumSize(700, 800)
         
         # 应用设置对话框样式
@@ -81,9 +81,9 @@ class SettingsDialog(QDialog):
     
     def _create_basic_tab(self) -> QWidget:
         """创建基础设置 Tab"""
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-        layout.setSpacing(16)
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        layout.setSpacing(12)
         layout.setContentsMargins(20, 20, 20, 20)
         
         # ========== MinerU 区域 ==========
@@ -121,6 +121,17 @@ class SettingsDialog(QDialog):
         self.mineru_public_url_input.setPlaceholderText("https://mineru.net/api/v1/agent")
         self.mineru_public_url_input.setFixedHeight(40)
         layout.addWidget(self.mineru_public_url_input)
+
+        mineru_public_key_label = QLabel("公网接口 Key")
+        mineru_public_key_label.setObjectName("settings_label")
+        layout.addWidget(mineru_public_key_label)
+
+        self.mineru_public_key_input = QLineEdit()
+        self.mineru_public_key_input.setObjectName("settings_input")
+        self.mineru_public_key_input.setPlaceholderText("公网接口鉴权 Key")
+        self.mineru_public_key_input.setEchoMode(QLineEdit.Password)
+        self.mineru_public_key_input.setFixedHeight(40)
+        layout.addWidget(self.mineru_public_key_input)
         
         # 分隔线
         layout.addWidget(self._create_separator())
@@ -165,63 +176,68 @@ class SettingsDialog(QDialog):
         layout.addWidget(self.llm_key_input)
         
         layout.addStretch()
-        return widget
+        return self._wrap_scroll_area(content)
     
     def _create_ai_tab(self) -> QWidget:
         """创建 AI 高级设置 Tab"""
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-        layout.setSpacing(12)
-        layout.setContentsMargins(20, 20, 20, 20)
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        layout.setSpacing(14)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setAlignment(Qt.AlignTop)
         
         # ========== 流水提取设置 ==========
         extract_title = QLabel("流水提取设置")
         extract_title.setObjectName("settings_title")
         layout.addWidget(extract_title)
-        
-        extract_row = QHBoxLayout()
-        extract_row.setSpacing(20)
-        
-        # 每次给AI行数
-        flow_batch_layout = QVBoxLayout()
+
+        settings_grid = QGridLayout()
+        settings_grid.setHorizontalSpacing(24)
+        settings_grid.setVerticalSpacing(8)
+
         flow_batch_label = QLabel("每次给AI行数")
         flow_batch_label.setObjectName("settings_label")
-        flow_batch_layout.addWidget(flow_batch_label)
-        
         flow_batch_desc = QLabel("标准化阶段每次发送的行数")
         flow_batch_desc.setObjectName("settings_desc")
-        flow_batch_layout.addWidget(flow_batch_desc)
-        
         self.flow_batch_spin = QSpinBox()
         self.flow_batch_spin.setObjectName("settings_input")
         self.flow_batch_spin.setRange(1, 100)
         self.flow_batch_spin.setValue(20)
         self.flow_batch_spin.setFixedHeight(40)
-        flow_batch_layout.addWidget(self.flow_batch_spin)
-        extract_row.addLayout(flow_batch_layout)
-        
-        # 表格置信度阈值
-        flow_threshold_layout = QVBoxLayout()
+
         flow_threshold_label = QLabel("表格置信度阈值")
         flow_threshold_label.setObjectName("settings_label")
-        flow_threshold_layout.addWidget(flow_threshold_label)
-        
         flow_threshold_desc = QLabel("高于此值才认定为流水表格")
         flow_threshold_desc.setObjectName("settings_desc")
-        flow_threshold_layout.addWidget(flow_threshold_desc)
-        
         self.flow_threshold_spin = QSpinBox()
         self.flow_threshold_spin.setObjectName("settings_input")
         self.flow_threshold_spin.setRange(0, 100)
         self.flow_threshold_spin.setValue(70)
         self.flow_threshold_spin.setSuffix(" 分")
         self.flow_threshold_spin.setFixedHeight(40)
-        flow_threshold_layout.addWidget(self.flow_threshold_spin)
-        extract_row.addLayout(flow_threshold_layout)
+
+        settings_grid.addWidget(flow_batch_label, 0, 0)
+        settings_grid.addWidget(flow_threshold_label, 0, 1)
+        settings_grid.addWidget(flow_batch_desc, 1, 0)
+        settings_grid.addWidget(flow_threshold_desc, 1, 1)
+        settings_grid.addWidget(self.flow_batch_spin, 2, 0)
+        settings_grid.addWidget(self.flow_threshold_spin, 2, 1)
+        settings_grid.setColumnStretch(0, 1)
+        settings_grid.setColumnStretch(1, 1)
+        layout.addLayout(settings_grid)
+        layout.addStretch()
         
-        layout.addLayout(extract_row)
-        
-        return widget
+        return self._wrap_scroll_area(content)
+
+    def _wrap_scroll_area(self, content: QWidget) -> QScrollArea:
+        """给设置页内容加滚动容器，避免窗口高度不足时控件互相挤压。"""
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll.setWidget(content)
+        return scroll
     
     def _create_separator(self) -> QFrame:
         """创建分隔线"""
@@ -237,6 +253,7 @@ class SettingsDialog(QDialog):
         self.mineru_mode_input.setCurrentIndex(mode_index if mode_index >= 0 else 0)
         self.mineru_url_input.setText(self.config.mineru_url)
         self.mineru_public_url_input.setText(self.config.mineru_public_url)
+        self.mineru_public_key_input.setText(self.config.mineru_public_api_key)
         self.llm_url_input.setText(self.config.llm_url)
         self.llm_model_input.setText(self.config.llm_model)
         self.llm_key_input.setText(self.config.llm_api_key)
@@ -250,6 +267,7 @@ class SettingsDialog(QDialog):
             'mineru.public_url',
             self.mineru_public_url_input.text().strip() or 'https://mineru.net/api/v1/agent'
         )
+        self.config.set('mineru.public_api_key', self.mineru_public_key_input.text().strip())
         self.config.set('llm.url', self.llm_url_input.text().strip() or 'https://api.openai.com/v1')
         self.config.set('llm.model', self.llm_model_input.text().strip() or 'gpt-4')
         self.config.set('llm.api_key', self.llm_key_input.text())

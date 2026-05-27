@@ -42,6 +42,7 @@ class FlowExtractorV2:
                 "mineru_public_url",
                 "https://mineru.net/api/v1/agent",
             ),
+            mineru_public_api_key=getattr(self.config, "mineru_public_api_key", ""),
         )
         self.excel_parser = ExcelParser()
         self.docx_parser = DocxParser()

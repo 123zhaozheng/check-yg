@@ -15,11 +15,11 @@ payload = {
     "task_id": profile.get("task_id", ""),
     "task_title": profile.get("task_title", ""),
     "history_review_count": history.get("history_review_count", 0),
-    "experience_summary": [
-        "专家通常先看任务规模，再看命中分布，再回到证据明细。",
+    "review_process_summary": [
+        "完整审查先确认资产，再读取任务画像和审查结果。",
         "证据型问题优先读取最终审查流水。",
-        "异常型问题优先关注夜间交易、重复金额、集中交易和重点对手。",
-        "如用户提出新重要维度，建议追问是否沉淀为标准能力。",
+        "默认审查维度以 references/审查维度清单.json 为准。",
+        "如用户提出新重要维度，先判断是否补充已有维度；确属新维度再新增清单项和算子。",
     ],
     "historical_focus_dimensions": [
         {"dimension": name, "count": count}

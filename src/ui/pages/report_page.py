@@ -250,10 +250,10 @@ class ReportPage(QWidget):
             QMessageBox.warning(self, "无数据", "当前没有可导出的 Skills 包")
             return
 
-        default_name = f"审查Skills包_{self.task_id or self.result.review_id}.zip"
+        default_name = f"看板Skills_1项任务_{self.task_id or self.result.review_id}.zip"
         file_path, _ = QFileDialog.getSaveFileName(
             self,
-            "导出 Skills 包",
+            "导出看板 Skills",
             str(self.config.reports_folder / default_name),
             "Zip Files (*.zip)",
         )
@@ -271,12 +271,12 @@ class ReportPage(QWidget):
             output_path, meta = exporter.export_board_skill(selected_tasks, output_path=file_path)
             skipped_count = int(meta.get("skipped_count", 0) or 0)
             message = [
-                f"Skills 包已导出到:\n{output_path}",
+                f"看板 Skills 已导出到:\n{output_path}",
                 "",
                 f"成功导出任务: {meta.get('exported_count', 0)} 个",
                 f"跳过任务: {skipped_count} 个",
                 "",
-                "导出内容包含：统一审查任务目录、HTML 模板、汇总脚本、索引资料、专家工作流与 SKILL.md。",
+                "导出内容包含：统一审查任务目录、HTML 模板、汇总脚本、索引资料、审查维度清单与 SKILL.md。",
             ]
             if skipped_count:
                 skipped_preview = "；".join(
@@ -287,7 +287,7 @@ class ReportPage(QWidget):
                     message.extend(["", f"已跳过: {skipped_preview}"])
             QMessageBox.information(self, "导出成功", "\n".join(message))
         except Exception as exc:
-            QMessageBox.warning(self, "导出失败", f"导出 Skills 包时出错:\n{exc}")
+            QMessageBox.warning(self, "导出失败", f"导出看板 Skills 时出错:\n{exc}")
 
     def clear(self) -> None:
         self._cleanup_worker()

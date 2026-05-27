@@ -400,6 +400,32 @@ QTabBar::tab:hover:!selected {
 background-color: %(border)s;
 }
 
+QScrollArea {
+background-color: %(card)s;
+border: none;
+}
+
+QScrollBar:vertical {
+background-color: %(card)s;
+width: 10px;
+margin: 2px;
+}
+
+QScrollBar::handle:vertical {
+background-color: %(border)s;
+border-radius: 4px;
+min-height: 32px;
+}
+
+QScrollBar::handle:vertical:hover {
+background-color: %(text_light)s;
+}
+
+QScrollBar::add-line:vertical,
+QScrollBar::sub-line:vertical {
+height: 0;
+}
+
 /* Settings button styles */
 QPushButton#settings_cancel_btn {
 background-color: %(card)s;
