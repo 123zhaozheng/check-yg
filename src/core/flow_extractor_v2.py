@@ -350,12 +350,15 @@ class FlowExtractorV2:
         portrait_future = None
         portrait_executor = None
         if non_table_context and self.portrait_extractor.is_available():
+            logger.info("开始提取文档画像: %s (非表格文本长度=%d)", doc_path.name, len(non_table_context))
             portrait_executor = ThreadPoolExecutor(max_workers=1)
             portrait_future = portrait_executor.submit(
                 self.portrait_extractor.extract_portrait,
                 doc_path.name,
                 non_table_context,
             )
+        elif not non_table_context:
+            logger.info("文档无非表格文本，跳过画像提取: %s", doc_path.name)
 
         doc_header_attributes: Optional[List[str]] = None
 
@@ -437,12 +440,15 @@ class FlowExtractorV2:
         if portrait_future is not None:
             try:
                 document_portrait = portrait_future.result(timeout=self.config.llm_timeout)
+                if document_portrait is not None:
+                    logger.info("文档画像提取完成: %s (account_type=%s)", doc_path.name, document_portrait.get("account_type", "unknown"))
             except Exception as exc:
                 logger.warning("画像提取超时或失败 %s: %s", doc_path.name, exc)
         if portrait_executor is not None:
             portrait_executor.shutdown(wait=False)
 
         if document_portrait is None:
+            logger.warning("文档画像提取失败，降级到文件名推断: %s", doc_path.name)
             document_portrait = FlowDataNormalizer._infer_document_context(doc_path.name)
         state["document_portrait"] = document_portrait
         state["non_table_context"] = non_table_context

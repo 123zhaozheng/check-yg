@@ -209,6 +209,8 @@ class DocumentPortraitExtractor:
         if not self.api_key:
             return None
 
+        logger.info("请求文档画像提取: document_name=%s, context_length=%d", document_name, len(non_table_context or ""))
+
         system_prompt = self._render_prompt(document_name, non_table_context)
 
         user_message = json.dumps(
@@ -219,7 +221,10 @@ class DocumentPortraitExtractor:
             ensure_ascii=False,
         )
 
-        return self._make_request(system_prompt, user_message)
+        result = self._make_request(system_prompt, user_message)
+        if result is not None:
+            logger.info("文档画像提取成功: document_name=%s, account_type=%s", document_name, result.get("account_type", "unknown"))
+        return result
 
     def is_available(self) -> bool:
         return bool(self.api_key)

@@ -21,7 +21,7 @@ SYSTEM_PROMPT_DATA_NORMALIZER = """你是一个银行/支付流水数据标准�
 1) transaction_time - 交易时间（日期或日期时间）
 2) counterparty_name - 交易对手/商户名称
 3) counterparty_account - 交易对手账号/卡号（无则为空）
-4) amount - 交易金额（带正负号的数值字符串）
+4) amount - 交易金额（正数，不含负号）
 5) summary - 摘要/备注/交易说明/商品信息
 6) transaction_type - 收支类型（只允许"收入"或"支出"）
 7) source_file - 来源文件名
@@ -35,20 +35,24 @@ summary: 摘要 > 备注 > 交易说明 > 商品说明 > 用途 > 交易描述
 transaction_type: 收支 > 收/支 > 借贷方向 > 借方/贷方
 
 ## 金额与收支一致性（铁规则，不可违反）
+- amount 字段不允许出现负号，始终输出为正数（去除"-"前缀）
+- 即使源文档金额带负号，标准化时也要去掉负号，收支方向由 transaction_type 表达
 - transaction_type 只允许"收入"或"支出"，不允许其他值
-- "支出"时 amount 必须为负数（含负号"-"前缀）
-- "收入"时 amount 必须为正数（正号可省略但不可为负）
-- 原始金额不带正负号时，必须根据 transaction_type 补上符号：支出加"-"，收入省略或加"+"
-- 严禁出现"支出+正金额"或"收入+负金额"的矛盾组合
+- 有正负号时（借记卡/银行卡常见）：严格按正负号判断 transaction_type
+  - 负数 → transaction_type="支出"
+  - 正数 → transaction_type="收入"
+- 无正负号时：严格按照摘要/交易描述/商户名称语义判断 transaction_type
+  - 消费/扣款/转出/付款/刷卡/分期/手续费/年费/取现 → "支出"
+  - 入账/转入/收款/还款/退款/返现/调账转入 → "收入"
 
-### 信用卡特殊规则（优先级高于正负号）
+### 信用卡特殊规则（优先级高于正负号与摘要）
 - 当文档画像中 account_type 为 credit_card 时，进入信用卡模式
-- 信用卡消费/刷卡/分期/手续费/年费/取现/违约金 → transaction_type="支出"，amount 必须输出为负数，即使原表金额显示为正数
-- 信用卡还款/退款/退货/冲正/返现/调账转入/利息返还 → transaction_type="收入"，amount 必须输出为正数
-- ❌ 错误：信用卡消费 amount="+500" transaction_type="支出"
-- ✅ 正确：信用卡消费 amount="-500" transaction_type="支出"
-- ❌ 错误：信用卡还款 amount="-1000" transaction_type="收入"
-- ✅ 正确：信用卡还款 amount="+1000" transaction_type="收入"
+- 信用卡消费/刷卡/分期/手续费/年费/取现/违约金 → transaction_type="支出"，amount 去掉负号输出为正数
+- 信用卡还款/退款/退货/冲正/返现/调账转入/利息返还 → transaction_type="收入"，amount 输出为正数
+- ❌ 错误：信用卡消费 amount="-500" transaction_type="支出"（amount不应有负号）
+- ✅ 正确：信用卡消费 amount="500" transaction_type="支出"
+- ❌ 错误：源文档金额为"-200"且为支出，输出 amount="-200"（未去掉负号）
+- ✅ 正确：源文档金额为"-200"且为支出，输出 amount="200" transaction_type="支出"
 
 ## 字段清洗规则
 1) 若存在明确"对方/商户/交易对手"列，则优先填入 counterparty_name
@@ -59,7 +63,7 @@ transaction_type: 收支 > 收/支 > 借贷方向 > 借方/贷方
 6) 日期时间统一输出为 "YYYY-MM-DD hh:mm:ss"：
    - 只有日期时补全时间为 "00:00:00"
    - 有时间但缺少秒时补全为 ":00"
-7) 金额清洗：去除金额前缀/符号（如 "RMB"、"￥"、"¥"、"," 逗号分隔符），只保留数值与正负号
+7) 金额清洗：去除金额前缀/符号（如 "RMB"、"￥"、"¥"、"," 逗号分隔符、"-"负号），只保留纯数值，amount 始终为正数
 8) 输出必须严格遵守 JSON 格式
 
 ## 文档画像
