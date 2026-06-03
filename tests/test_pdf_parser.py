@@ -61,7 +61,7 @@ if "docx" not in sys.modules:
     sys.modules["docx"] = docx_stub
     sys.modules["docx.table"] = docx_table_stub
 
-from src.parsers.pdf_parser import MinerUClient, PDFParser, PublicMinerUClient
+from src.parsers.pdf_parser import MinerUClient, PDFDecryptor, PDFParser, PublicMinerUClient
 
 
 class _FakeResponse:
@@ -76,6 +76,46 @@ class _FakeResponse:
 
     def json(self):
         return self._json_data
+
+
+class ExtractPasswordFromFilenameTests(unittest.TestCase):
+    """测试 PDFDecryptor.extract_password_from_filename 括号提取规则"""
+
+    def test_half_width_brackets(self) -> None:
+        """半角括号"""
+        self.assertEqual(PDFDecryptor.extract_password_from_filename("文件名(123456).pdf"), "123456")
+
+    def test_full_width_brackets(self) -> None:
+        """全角括号"""
+        self.assertEqual(PDFDecryptor.extract_password_from_filename("文件名（123456）.pdf"), "123456")
+
+    def test_multiple_brackets_take_last(self) -> None:
+        """多括号取最后一个"""
+        self.assertEqual(PDFDecryptor.extract_password_from_filename("文件(注释)(123456).pdf"), "123456")
+
+    def test_mixed_brackets_multiple(self) -> None:
+        """全角半角混合多括号"""
+        self.assertEqual(PDFDecryptor.extract_password_from_filename("文件(注释)（123456）.pdf"), "123456")
+
+    def test_mixed_bracket_pair(self) -> None:
+        """混配括号（左半角右全角）"""
+        self.assertEqual(PDFDecryptor.extract_password_from_filename("文件名(密码）.pdf"), "密码")
+
+    def test_no_brackets(self) -> None:
+        """无括号返回 None"""
+        self.assertIsNone(PDFDecryptor.extract_password_from_filename("文件名.pdf"))
+
+    def test_empty_brackets(self) -> None:
+        """空括号返回 None"""
+        self.assertIsNone(PDFDecryptor.extract_password_from_filename("文件().pdf"))
+
+    def test_whitespace_stripped(self) -> None:
+        """括号内空白被 strip"""
+        self.assertEqual(PDFDecryptor.extract_password_from_filename("文件(  123  ).pdf"), "123")
+
+    def test_old_format_no_brackets(self) -> None:
+        """旧格式（开头数字无括号）不兼容，返回 None"""
+        self.assertIsNone(PDFDecryptor.extract_password_from_filename("123456大丰xxx.pdf"))
 
 
 class PDFParserTests(unittest.TestCase):

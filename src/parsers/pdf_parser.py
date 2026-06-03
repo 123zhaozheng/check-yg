@@ -26,13 +26,16 @@ class PDFDecryptor:
     @staticmethod
     def extract_password_from_filename(filename: str) -> Optional[str]:
         """
-        从文件名中提取密码（文件名前面的数字）
-        例如: "123422大丰xxx.pdf" -> "123422"
+        从文件名最后一对括号中提取密码（全角半角均支持）
+        例如: "文件名(123456).pdf" -> "123456"
+              "文件(注释)(密码).pdf" -> "密码"
         """
-        match = re.match(r'^(\d+)', filename)
-        if match:
-            return match.group(1)
-        return None
+        stem = Path(filename).stem
+        matches = re.findall(r'[（(](.*?)[）)]', stem)
+        if not matches:
+            return None
+        password = matches[-1].strip()
+        return password if password else None
     
     @staticmethod
     def is_encrypted(file_path: Path) -> bool:
