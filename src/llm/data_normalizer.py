@@ -53,6 +53,8 @@ transaction_type: 收支 > 收/支 > 借贷方向 > 借方/贷方
 - ✅ 正确：信用卡消费 amount="500" transaction_type="支出"
 - ❌ 错误：源文档金额为"-200"且为支出，输出 amount="-200"（未去掉负号）
 - ✅ 正确：源文档金额为"-200"且为支出，输出 amount="200" transaction_type="支出"
+- ❌ 错误：信用卡还款源文档金额为"-862"，输出 amount="-862" transaction_type="收入"
+- ✅ 正确：信用卡还款源文档金额为"-862"，输出 amount="862" transaction_type="收入"
 
 ## 字段清洗规则
 1) 若存在明确"对方/商户/交易对手"列，则优先填入 counterparty_name
