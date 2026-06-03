@@ -671,3 +671,226 @@ class FlowExtractorV2:
                 json.dump(result.to_dict(), f, ensure_ascii=False, indent=2)
         except Exception as exc:
             logger.warning("Failed to write extraction report: %s", exc)
+
+    def _load_existing_report_records(self, task_id: str) -> List[FlowRecord]:
+        """从已有的提取报告文件中读取流水记录（用于追加合并）。"""
+        report_path = self.config.reports_folder / f"extract_{task_id}.json"
+        if not report_path.exists():
+            return []
+        try:
+            import json as _json
+            with open(report_path, "r", encoding="utf-8") as f:
+                data = _json.load(f)
+            records_data = data.get("flow_records", []) or []
+            return self._deserialize_records(records_data, "")
+        except Exception as exc:
+            logger.warning("读取已有报告失败: %s", exc)
+            return []
+
+    def extract_flows_append(
+        self,
+        task_id: str,
+        new_folder: str,
+        batch_size: int = 20,
+        confidence_threshold: Optional[int] = None,
+        parallelism: Optional[int] = None
+    ) -> ExtractionResult:
+        """追加提取：扫描新文件夹，仅处理新增文档，结果合并写入报告。"""
+        self._cancel_requested = False
+        self._pause_requested = False
+        threshold = confidence_threshold if confidence_threshold is not None else self.config.flow_confidence_threshold
+        workers = parallelism if parallelism is not None else self.config.flow_parallelism
+
+        if not self.table_classifier.is_available() or not self.data_normalizer.is_available():
+            message = "未配置LLM API Key，无法进行AI流水提取"
+            self.progress.report(message, status=ProgressStatus.FAILED)
+            return ExtractionResult(
+                task_id=task_id,
+                task_time=datetime.now().isoformat(),
+                document_folder=new_folder,
+                total_documents=0,
+                processed_documents=0,
+                total_tables=0,
+                flow_tables=0,
+                total_records=0,
+                failed_documents=[],
+                errors=[{"stage": "init", "error": message}]
+            )
+
+        # Scan new folder
+        logger.info("追加扫描文档目录: %s", new_folder)
+        self.progress.report(f"正在扫描文档目录: {new_folder}", status=ProgressStatus.RUNNING)
+        all_new_documents = self.scanner.scan_directory(new_folder)
+
+        # Get existing documents from task metadata for dedup
+        task_meta = self.checkpoints.load_task(task_id) or {}
+        existing_docs = set(str(p) for p in (task_meta.get("documents", []) or []))
+
+        # Filter: only truly new documents
+        new_documents = [p for p in all_new_documents if str(p) not in existing_docs]
+
+        if not new_documents:
+            logger.info("追加扫描完成，未发现新文档")
+            self.progress.report("该目录下未找到可处理的文档", status=ProgressStatus.COMPLETED)
+            return ExtractionResult(
+                task_id=task_id,
+                task_time=datetime.now().isoformat(),
+                document_folder=new_folder,
+                total_documents=0,
+                processed_documents=0,
+                total_tables=0,
+                flow_tables=0,
+                total_records=0,
+                failed_documents=[],
+                errors=[]
+            )
+
+        logger.info("追加扫描完成，发现 %d 个新文档", len(new_documents))
+        self._stage1_total_docs = len(new_documents)
+
+        # Read existing report records before processing (for final merge)
+        existing_report_records = self._load_existing_report_records(task_id)
+        self.progress.report(
+            f"阶段1/2 已发现 {len(new_documents)} 个新文档",
+            0,
+            max(1, len(new_documents))
+        )
+
+        # Append folder and documents to task metadata
+        self.checkpoints.append_documents(
+            task_id, new_folder, [str(p) for p in new_documents]
+        )
+
+        result = ExtractionResult(
+            task_id=task_id,
+            task_time=datetime.now().isoformat(),
+            document_folder=new_folder,
+            total_documents=len(new_documents),
+            processed_documents=0,
+            total_tables=0,
+            flow_tables=0,
+            total_records=0
+        )
+
+        stage2_doc_paths: List[str] = []
+        existing_states: Dict[str, Dict] = {}
+        for state in self.checkpoints.list_document_states(task_id):
+            document_path = str(state.get("document_path", "") or "").strip()
+            document_name = str(state.get("document_name", "") or "").strip()
+            if document_path:
+                existing_states[document_path] = state
+            elif document_name and document_name not in existing_states:
+                existing_states[document_name] = state
+
+        total_stage2_rows = 0
+
+        # Stage 1: serial classification (new documents only)
+        logger.info("追加阶段1开始：逐文档表格识别与流水判定")
+        processed_docs = 0
+        for idx, doc_path in enumerate(new_documents):
+            self._check_pause()
+            if self._cancel_requested:
+                self.progress.report("提取已取消", status=ProgressStatus.CANCELED)
+                break
+
+            total_units = self._stage1_total_docs + total_stage2_rows
+            self.progress.report(
+                f"阶段1/2 正在处理: {doc_path.name}",
+                processed_docs,
+                max(1, total_units)
+            )
+            logger.info("追加阶段1处理文档: %s (%d/%d)", doc_path.name, idx + 1, len(new_documents))
+            existing_state = existing_states.get(str(doc_path)) or existing_states.get(doc_path.name)
+            if existing_state and existing_state.get("status") in (
+                "stage1_done",
+                "stage2_running",
+                "normalizing",
+                "completed",
+            ):
+                stage2_doc_paths.append(str(doc_path))
+                result.total_tables += int(existing_state.get("total_tables", 0) or 0)
+                result.flow_tables += int(existing_state.get("flow_tables_count", 0) or 0)
+                result.processed_documents += 1
+                total_stage2_rows += int(existing_state.get("total_flow_rows", 0) or 0)
+                processed_docs += 1
+                total_units = self._stage1_total_docs + total_stage2_rows
+                self.progress.report(
+                    f"阶段1/2 已处理: {doc_path.name}",
+                    processed_docs,
+                    max(1, total_units)
+                )
+                continue
+            try:
+                doc_state, stats = self._process_document_stage1(
+                    doc_path, task_id, threshold
+                )
+                stage2_doc_paths.append(str(doc_path))
+                result.total_tables += stats["total_tables"]
+                result.flow_tables += stats["flow_tables"]
+                result.processed_documents += 1
+                total_stage2_rows += int(doc_state.get("total_flow_rows", 0) or 0)
+                processed_docs += 1
+                total_units = self._stage1_total_docs + total_stage2_rows
+                self.progress.report(
+                    f"阶段1/2 已处理: {doc_path.name}",
+                    processed_docs,
+                    max(1, total_units)
+                )
+                logger.info(
+                    "追加阶段1完成文档: %s (total_tables=%d, flow_tables=%d, flow_rows=%d)",
+                    doc_path.name,
+                    stats["total_tables"],
+                    stats["flow_tables"],
+                    int(doc_state.get("total_flow_rows", 0) or 0)
+                )
+                for err in doc_state.get("errors", []):
+                    result.errors.append({
+                        "document": doc_path.name,
+                        "stage": "stage1",
+                        "error": err
+                    })
+            except Exception as exc:
+                logger.error("追加Stage1 处理文档失败 %s: %s", doc_path.name, exc)
+                result.failed_documents.append(doc_path.name)
+                result.errors.append({
+                    "document": doc_path.name,
+                    "stage": "stage1",
+                    "error": str(exc)
+                })
+
+        # Stage 2: parallel normalization
+        if self._cancel_requested:
+            logger.info("追加提取已取消，跳过阶段2")
+            self.checkpoints.update_task_status(task_id, "canceled")
+            return result
+
+        self.checkpoints.update_task_status(task_id, "normalizing")
+        logger.info("追加阶段2开始：流水行标准化（并行度=%s）", workers)
+        flow_records = self._process_documents_stage2(
+            stage2_doc_paths, task_id, batch_size, workers, result, total_stage2_rows
+        )
+        result.flow_records.extend(flow_records)
+
+        if self._cancel_requested:
+            self.checkpoints.update_task_status(task_id, "canceled")
+        else:
+            # Combine existing report records (old) + new records from this append run
+            all_records = existing_report_records + result.flow_records
+            result.flow_records = all_records
+            result.total_records = len(all_records)
+
+            final_status = "failed" if result.failed_documents else "completed"
+            self.checkpoints.update_task_status(task_id, final_status)
+            progress_status = ProgressStatus.FAILED if final_status == "failed" else ProgressStatus.COMPLETED
+            self.progress.report(f"追加提取完成: {result.total_records} 条流水", status=progress_status)
+            logger.info("追加提取完成：%d 条流水，失败文档 %d 个", result.total_records, len(result.failed_documents))
+            self._write_report(task_id, result)
+            if final_status != "completed":
+                logger.info("任务含失败文档，保留断点以便排查: %s", task_id)
+            elif self.config.flow_keep_checkpoint_on_success:
+                logger.info("配置要求保留文档断点，任务 checkpoint 未清理: %s", task_id)
+            else:
+                self.checkpoints.clear_document_states(task_id)
+                logger.info("任务已完成，已清理文档断点但保留任务历史: %s", task_id)
+
+        return result

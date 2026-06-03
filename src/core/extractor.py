@@ -41,3 +41,19 @@ class FlowExtractor:
             confidence_threshold=confidence_threshold,
             parallelism=parallelism
         )
+
+    def extract_flows_append(
+        self,
+        task_id: str,
+        new_folder: str,
+        batch_size: int = 20,
+        confidence_threshold: Optional[int] = None,
+        parallelism: Optional[int] = None
+    ) -> ExtractionResult:
+        return self._v2.extract_flows_append(
+            task_id=task_id,
+            new_folder=new_folder,
+            batch_size=batch_size,
+            confidence_threshold=confidence_threshold,
+            parallelism=parallelism
+        )

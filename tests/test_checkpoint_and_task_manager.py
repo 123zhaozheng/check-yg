@@ -126,13 +126,13 @@ class CheckpointAndTaskManagerTests(unittest.TestCase):
         meta = self.checkpoints.load_task(task_id)
         self.assertIsNotNone(meta)
         self.assertEqual("2026年度审计", meta.get("title"))
-        self.assertEqual("C:/data/docs", meta.get("document_folder"))
+        self.assertEqual(["C:/data/docs"], meta.get("document_folder"))
         self.assertEqual("pending", meta.get("status"))
 
         summary = self.checkpoints.get_task_summary(task_id)
         self.assertIsNotNone(summary)
         self.assertEqual("2026年度审计", summary.get("title"))
-        self.assertEqual("C:/data/docs", summary.get("document_folder"))
+        self.assertEqual(["C:/data/docs"], summary.get("document_folder"))
 
     def test_update_task_status_and_list_with_titles(self) -> None:
         task_id = "task_status_update"
@@ -187,7 +187,7 @@ class CheckpointAndTaskManagerTests(unittest.TestCase):
         detail = manager.get_task_detail(task_id)
         self.assertIsNotNone(detail)
         self.assertEqual("唯一标题任务", detail.get("meta", {}).get("title"))
-        self.assertEqual("E:/audit/docs", detail.get("meta", {}).get("document_folder"))
+        self.assertEqual(["E:/audit/docs"], detail.get("meta", {}).get("document_folder"))
         self.assertEqual("pending", detail.get("summary", {}).get("status"))
 
         with self.assertRaises(ValueError):

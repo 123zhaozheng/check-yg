@@ -447,6 +447,7 @@ class MainWindow(QMainWindow):
         # HomePage signals
         self.home_page.new_task_requested.connect(self._on_new_task)
         self.home_page.resume_task_requested.connect(self._on_resume_task)
+        self.home_page.append_folder_requested.connect(self._on_append_folder)
         
         # ExtractPage -> PreviewPage (flow extraction complete)
         self.extract_page.extraction_completed.connect(self._on_extraction_complete)
@@ -558,6 +559,19 @@ class MainWindow(QMainWindow):
         self._switch_page(self.PAGE_EXTRACT)
         if hasattr(self.extract_page, "resume_task"):
             self.extract_page.resume_task(task_id)
+
+    def _on_append_folder(self, task_id: str, folder_path: str):
+        """处理追加流水目录请求"""
+        task_detail = self.home_page.checkpoint_manager.load_task(task_id) or {}
+        task_title = str(task_detail.get("title", "") or "")
+        self._activate_task_context(task_id, task_title)
+        if hasattr(self.extract_page, "set_task_info"):
+            self.extract_page.set_task_info(task_title, task_id)
+
+        # Switch to extract page and start append extraction
+        self._switch_page(self.PAGE_EXTRACT)
+        if hasattr(self.extract_page, "start_append_extraction"):
+            self.extract_page.start_append_extraction(task_id, folder_path)
     
     def _on_extraction_complete(self, result):
         """

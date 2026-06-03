@@ -22,14 +22,15 @@ class ExtractionWorker(QObject):
     finished = pyqtSignal(object)  # ExtractionResult
     canceled = pyqtSignal(object)  # ExtractionResult (partial)
     error = pyqtSignal(str)  # error message
-    
+
     def __init__(
         self,
         config,
         folder_path: str,
         task_id: str,
         batch_size: int,
-        confidence_threshold: int
+        confidence_threshold: int,
+        append_mode: bool = False
     ):
         super().__init__()
         self.config = config
@@ -37,6 +38,7 @@ class ExtractionWorker(QObject):
         self.task_id = task_id
         self.batch_size = batch_size
         self.confidence_threshold = confidence_threshold
+        self.append_mode = append_mode
         self._extractor = None
         self._cancelled = False
     
@@ -44,21 +46,29 @@ class ExtractionWorker(QObject):
         """执行提取任务"""
         try:
             from ...core.extractor import FlowExtractor
-            
+
             self._extractor = FlowExtractor(self.config)
             self._extractor.set_progress_callback(self._on_progress)
-            
-            result = self._extractor.extract_flows(
-                document_folder=self.folder_path,
-                task_id=self.task_id,
-                batch_size=self.batch_size,
-                confidence_threshold=self.confidence_threshold
-            )
+
+            if self.append_mode:
+                result = self._extractor.extract_flows_append(
+                    task_id=self.task_id,
+                    new_folder=self.folder_path,
+                    batch_size=self.batch_size,
+                    confidence_threshold=self.confidence_threshold
+                )
+            else:
+                result = self._extractor.extract_flows(
+                    document_folder=self.folder_path,
+                    task_id=self.task_id,
+                    batch_size=self.batch_size,
+                    confidence_threshold=self.confidence_threshold
+                )
             if self._cancelled:
                 self.canceled.emit(result)
             else:
                 self.finished.emit(result)
-                
+
         except Exception as e:
             if not self._cancelled:
                 self.error.emit(str(e))
@@ -101,6 +111,7 @@ class ExtractPage(QWidget):
         self._worker = None
         self._worker_thread = None
         self._is_paused = False
+        self._is_append = False
         self._setup_ui()
     
     def _setup_ui(self) -> None:
@@ -378,7 +389,21 @@ class ExtractPage(QWidget):
         """处理提取完成"""
         # 清理线程
         self._cleanup_worker()
-        
+
+        # Handle append mode with no new documents
+        if self._is_append and result.total_documents == 0:
+            self.progress_card.finish(success=False)
+            self.current_file_display.setText("无新文档")
+            self.progress_card.append_log("\n该目录下未找到可处理的文档")
+            self.start_btn.setEnabled(True)
+            self.pause_btn.setEnabled(False)
+            self._is_append = False
+            QMessageBox.information(
+                self, "无新文档",
+                "该目录下未找到可处理的文档"
+            )
+            return
+
         # Update final stats
         card0 = self.stats_row.get_card(0)
         card1 = self.stats_row.get_card(1)
@@ -386,7 +411,7 @@ class ExtractPage(QWidget):
         if card0: card0.set_value(str(result.total_documents))
         if card1: card1.set_value(str(result.processed_documents))
         if card2: card2.set_value(str(result.total_records))
-        
+
         # Finish progress
         self.progress_card.finish(success=True)
         self.current_file_display.setText("完成")
@@ -395,11 +420,12 @@ class ExtractPage(QWidget):
         self.progress_card.append_log(f"流水表格: {result.flow_tables}/{result.total_tables}")
         self.progress_card.append_log(f"流水记录: {result.total_records} 条")
         self.progress_card.append_log(f"总金额: ¥{result.total_amount:,.2f}")
-        
+
         # Re-enable buttons
         self.start_btn.setEnabled(True)
         self.pause_btn.setEnabled(False)
-        
+        self._is_append = False
+
         # 让 UI 有时间刷新，然后再发送信号
         QApplication.processEvents()
         QTimer.singleShot(100, lambda: self.extraction_completed.emit(result))
@@ -408,13 +434,14 @@ class ExtractPage(QWidget):
         """处理提取错误"""
         # 清理线程
         self._cleanup_worker()
-        
+
         self.progress_card.finish(success=False)
         self.current_file_display.setText("错误")
         self.progress_card.append_log(f"\n提取失败: {error_msg}")
         self.start_btn.setEnabled(True)
         self.pause_btn.setEnabled(False)
-        
+        self._is_append = False
+
         QMessageBox.critical(
             self, "提取失败",
             f"流水提取过程中发生错误:\n{error_msg}"
@@ -475,6 +502,62 @@ class ExtractPage(QWidget):
         self.progress_card.append_log("\n提取已取消")
         self.start_btn.setEnabled(True)
         self.pause_btn.setEnabled(False)
+        self._is_append = False
+
+    def start_append_extraction(self, task_id: str, folder_path: str) -> None:
+        """为已有任务追加提取新文件夹中的文档。"""
+        if self._worker and self._worker_thread and self._worker_thread.isRunning():
+            QMessageBox.warning(self, "正在处理", "当前有提取任务正在运行，请等待完成后再追加。")
+            return
+
+        self._task_id = task_id
+        self._is_append = True
+        rows = int(self.config.flow_batch_size)
+        threshold = int(self.config.flow_confidence_threshold)
+
+        self.task_id_display.setText(task_id)
+        self.task_title_label.setText(f"追加提取: {task_id}")
+        self.start_btn.setEnabled(False)
+        self.pause_btn.setEnabled(True)
+        self.pause_btn.setText("暂停")
+        self._is_paused = False
+
+        # Reset progress
+        self.progress_card.reset()
+        self.progress_card.start()
+        self.progress_card.set_status("正在初始化追加提取...")
+        self.progress_card.append_log(f"任务编号: {task_id}")
+        self.progress_card.append_log(f"追加目录: {folder_path}")
+        self.progress_card.append_log(f"配置: 行数={rows}, 阈值={threshold}")
+
+        # Reset stats
+        card0 = self.stats_row.get_card(0)
+        card1 = self.stats_row.get_card(1)
+        card2 = self.stats_row.get_card(2)
+        if card0: card0.set_value("0")
+        if card1: card1.set_value("0")
+        if card2: card2.set_value("0")
+        self.current_file_display.setText("准备中...")
+
+        # Create worker in append mode
+        self._worker_thread = QThread()
+        self._worker = ExtractionWorker(
+            config=self.config,
+            folder_path=folder_path,
+            task_id=task_id,
+            batch_size=rows,
+            confidence_threshold=threshold,
+            append_mode=True
+        )
+        self._worker.moveToThread(self._worker_thread)
+
+        self._worker_thread.started.connect(self._worker.run)
+        self._worker.progress.connect(self._on_progress)
+        self._worker.finished.connect(self._on_extraction_finished)
+        self._worker.canceled.connect(self._on_extraction_canceled)
+        self._worker.error.connect(self._on_extraction_error)
+
+        self._worker_thread.start()
 
     def _on_folder_changed(self, path: str) -> None:
         """Update document count after folder selection"""

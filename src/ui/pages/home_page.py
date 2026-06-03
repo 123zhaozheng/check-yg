@@ -134,6 +134,7 @@ class TaskCard(Card):
     resume_requested = pyqtSignal(str)  # task_id
     view_requested = pyqtSignal(str)    # task_id
     delete_requested = pyqtSignal(str)  # task_id
+    append_folder_requested = pyqtSignal(str, str)  # task_id, folder_path
     selection_changed = pyqtSignal(str, bool)  # task_id, checked
 
     def __init__(self, task_data: Dict, selected: bool = False, parent=None):
@@ -317,6 +318,11 @@ class TaskCard(Card):
             view_act.triggered.connect(lambda: self.view_requested.emit(self.task_id))
             menu.addAction(view_act)
 
+        if self.raw_status == "completed":
+            append_act = QAction("新增流水目录", self)
+            append_act.triggered.connect(self._on_append_folder)
+            menu.addAction(append_act)
+
         if menu.actions():
             menu.addSeparator()
 
@@ -326,12 +332,21 @@ class TaskCard(Card):
 
         menu.exec_(self.more_btn.mapToGlobal(self.more_btn.rect().bottomLeft()))
 
+    def _on_append_folder(self):
+        folder = QFileDialog.getExistingDirectory(
+            self, "选择流水文档目录", "",
+            QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks
+        )
+        if folder:
+            self.append_folder_requested.emit(self.task_id, folder)
+
 
 class HomePage(QWidget):
     """Home dashboard with task history and new task entry"""
     
     new_task_requested = pyqtSignal(str, str)  # task_id, title
     resume_task_requested = pyqtSignal(str)
+    append_folder_requested = pyqtSignal(str, str)  # task_id, folder_path
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -433,6 +448,7 @@ class HomePage(QWidget):
                 card.resume_requested.connect(self.resume_task_requested.emit)
                 card.view_requested.connect(self.resume_task_requested.emit)
                 card.delete_requested.connect(self._delete_task)
+                card.append_folder_requested.connect(self.append_folder_requested.emit)
                 card.selection_changed.connect(self._on_task_selection_changed)
                 
                 # Simple implementation: 2 cards per row

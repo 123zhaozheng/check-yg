@@ -57,6 +57,13 @@ class CheckpointManager:
     def _task_meta_path(self, task_id: str, create_task_dir: bool = True) -> Path:
         return self._task_dir(task_id, create=create_task_dir) / "task.json"
 
+    def _normalize_document_folder(self, folder) -> List[str]:
+        """将 document_folder 统一为 List[str]，兼容旧数据中字符串格式。"""
+        if isinstance(folder, list):
+            return [str(f) for f in folder if str(f).strip()]
+        folder_str = str(folder or "").strip()
+        return [folder_str] if folder_str else []
+
     def start_task(
         self,
         task_id: str,
@@ -68,6 +75,7 @@ class CheckpointManager:
         now = datetime.now().isoformat()
         normalized_title = str(title or "").strip() or task_id
         normalized_folder = str(document_folder or "").strip()
+        folder_list = [normalized_folder] if normalized_folder else []
         incoming_documents = [str(item) for item in documents or []]
         if meta_path.exists():
             data = self._read_json(meta_path) or {}
@@ -78,11 +86,19 @@ class CheckpointManager:
             if not str(data.get("title", "")).strip():
                 data["title"] = normalized_title
                 changed = True
+            existing_folders = self._normalize_document_folder(data.get("document_folder"))
             if "document_folder" not in data:
-                data["document_folder"] = ""
+                data["document_folder"] = []
                 changed = True
-            if normalized_folder and not str(data.get("document_folder", "")).strip():
-                data["document_folder"] = normalized_folder
+            elif not existing_folders and folder_list:
+                data["document_folder"] = folder_list
+                changed = True
+            elif existing_folders != self._normalize_document_folder(data.get("document_folder")):
+                data["document_folder"] = existing_folders
+                changed = True
+            if normalized_folder and normalized_folder not in existing_folders:
+                existing_folders.append(normalized_folder)
+                data["document_folder"] = existing_folders
                 changed = True
             if "status" not in data:
                 data["status"] = "pending"
@@ -101,7 +117,7 @@ class CheckpointManager:
             "status": "pending",
             "created_at": now,
             "updated_at": now,
-            "document_folder": normalized_folder,
+            "document_folder": folder_list,
             "documents": incoming_documents,
         }
         self._write_json(meta_path, data)
@@ -116,10 +132,11 @@ class CheckpointManager:
         data.setdefault("task_id", task_id)
         data.setdefault("title", task_id)
         data.setdefault("status", "pending")
-        data.setdefault("document_folder", "")
         data.setdefault("documents", [])
         data.setdefault("created_at", "")
         data.setdefault("updated_at", data.get("created_at", ""))
+        # Backward compat: string document_folder → list
+        data["document_folder"] = self._normalize_document_folder(data.get("document_folder"))
         return data
 
     def update_task_status(self, task_id: str, status: str) -> bool:
@@ -135,7 +152,7 @@ class CheckpointManager:
             "status": "pending",
             "created_at": datetime.now().isoformat(),
             "updated_at": "",
-            "document_folder": "",
+            "document_folder": [],
             "documents": [],
         }
         meta["status"] = normalized_status
@@ -300,7 +317,7 @@ class CheckpointManager:
             "task_id": task_id,
             "status": status,
             "title": str(task_meta.get("title", "") or task_id),
-            "document_folder": str(task_meta.get("document_folder", "") or ""),
+            "document_folder": self._normalize_document_folder(task_meta.get("document_folder")),
             "created_at": task_meta.get("created_at", ""),
             "updated_at": updated_at,
             "total_documents": total_documents,
@@ -321,6 +338,64 @@ class CheckpointManager:
                 tasks.append(summary)
         tasks.sort(key=lambda item: str(item.get("created_at", "")), reverse=True)
         return tasks
+
+    def append_documents(
+        self,
+        task_id: str,
+        new_folder: str,
+        new_documents: List[str]
+    ) -> None:
+        """追加新文件夹和新文档到已有任务，状态更新为 extracting。
+
+        - 将 new_folder 追加到 document_folder 列表（去重）
+        - 将 new_documents 追加到 documents 列表（按路径去重跳过已有文档）
+        - 为新文档创建断点文件（status=pending）
+        - 任务状态更新为 extracting
+        """
+        meta = self.load_task(task_id)
+        if not meta:
+            logger.warning("append_documents: 任务 %s 不存在", task_id)
+            return
+
+        existing_folders: List[str] = list(meta.get("document_folder", []) or [])
+        existing_docs: List[str] = [str(d) for d in (meta.get("documents", []) or [])]
+        existing_doc_set = set(existing_docs)
+
+        normalized_folder = str(new_folder or "").strip()
+        if normalized_folder and normalized_folder not in existing_folders:
+            existing_folders.append(normalized_folder)
+
+        truly_new_docs = [
+            str(d) for d in (new_documents or [])
+            if str(d) not in existing_doc_set
+        ]
+        all_docs = existing_docs + truly_new_docs
+
+        meta["document_folder"] = existing_folders
+        meta["documents"] = all_docs
+        meta["status"] = "extracting"
+        meta["updated_at"] = datetime.now().isoformat()
+        self._write_json(self._task_meta_path(task_id), meta)
+
+        # 为新文档创建断点文件
+        for doc_path_str in truly_new_docs:
+            doc_name = Path(doc_path_str).name
+            self.save_document_state(
+                task_id,
+                doc_name,
+                {
+                    "document_name": doc_name,
+                    "document_path": doc_path_str,
+                    "status": "pending",
+                    "header_attributes": [],
+                    "flow_tables": [],
+                    "total_tables": 0,
+                    "flow_tables_count": 0,
+                    "total_flow_rows": 0,
+                    "errors": []
+                },
+                document_path=doc_path_str
+            )
 
     def delete_task(self, task_id: str) -> bool:
         """删除任务目录及所有 checkpoint 文件。"""
