@@ -1,0 +1,5 @@
+{"path": ".trellis/tasks/06-03-ai-tab/prd.md", "reason": "完整PRD：需求、12项决策、验收标准、技术方案，实现agent必须理解的核心文档"}
+{"path": ".trellis/tasks/06-03-ai-tab/research/pyqt5-minimal-ui.md", "reason": "PyQt5极简UI研究：Tab布局模式、QPlainTextEdit+QSyntaxHighlighter、debounce自动保存、极简QSS样式参考"}
+{"path": ".trellis/spec/backend/error-handling.md", "reason": "错误处理规范：画像提取失败降级、LLM调用重试等需遵循项目错误处理标准"}
+{"path": ".trellis/spec/backend/quality-guidelines.md", "reason": "代码质量标准：lint/typecheck/配置管理等需遵循项目质量规范"}
+{"path": ".trellis/spec/backend/logging-guidelines.md", "reason": "日志规范：画像提取、降级、模板渲染等场景的日志输出需遵循项目日志标准"}
