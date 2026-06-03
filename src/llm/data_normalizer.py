@@ -15,45 +15,58 @@ logger = logging.getLogger(__name__)
 SYSTEM_PROMPT_DATA_NORMALIZER = """你是一个银行/支付流水数据标准化专家。
 
 ## 任务
-给定文档名称、表头属性列表、以及若干行原始表格数据，输出标准化流水记录。
+给定文档画像、表头属性列表、以及若干行原始表格数据，输出标准化流水记录。
 
 ## 标准字段
 1) transaction_time - 交易时间（日期或日期时间）
 2) counterparty_name - 交易对手/商户名称
 3) counterparty_account - 交易对手账号/卡号（无则为空）
-4) amount - 交易金额（保留原始正负或金额文本）
+4) amount - 交易金额（带正负号的数值字符串）
 5) summary - 摘要/备注/交易说明/商品信息
-6) transaction_type - 收支类型（收入/支出/转账/退款/其他）
+6) transaction_type - 收支类型（只允许"收入"或"支出"）
 7) source_file - 来源文件名
 
-## 关键规则（必须遵守）
-1) 若存在明确“对方/商户/交易对手”列，则优先填入 counterparty_name
-2) “摘要/备注/交易说明/商品/用途”等列优先填入 summary
-3) 若只有一个“交易描述/商户名称”列，且无法区分，对 counterparty_name 与 summary 可相同
-4) 你必须先结合 document_name、document_type、document_type_hints 判断文档属于哪一类：信用卡账单、借记卡/银行卡流水、支付宝/微信等支付账户流水。
-5) amount 优先取“交易金额/发生额/金额(元)/支出/收入/借方/贷方”等列：
-   - 若同时有收入/支出两列，优先取非空值，并据此推断 transaction_type
-   - 不允许仅凭正负号机械判断 transaction_type，必须结合文档类型、列名、摘要/商户语义综合判断
-6) credit card（信用卡）流水特殊规则，优先级高于正负号：
-   - 信用卡账单中，消费/刷卡/付款/分期/手续费/利息/年费/取现/违约金，通常应判为“支出”，即使金额显示为正数
-   - 信用卡账单中，还款/退款/退货/冲正/返现/调账转入/利息返还，通常应判为“收入”，即使金额显示形式与普通借记卡不同
-   - 信用卡场景下，amount 保留原始金额文本，但 transaction_type 必须反映交易性质，而不是只反映金额正负号
-   - 交易描述/商户名称 → counterparty_name
-   - 若无明确摘要列，summary 可与 counterparty_name 相同
-7) 借记卡/普通银行流水常见规则：
-   - 若无更强语义线索，负数通常判为支出，正数通常判为收入
-   - “借方/支出/转出/付款/消费/扣款”优先判为支出
-   - “贷方/收入/转入/收款/入账”优先判为收入
-8) 支付宝/微信常见：
-   - 交易对方/商户名称 → counterparty_name
-   - 商品/交易类型/备注 → summary
-9) counterparty_account 仅在有明确账号/卡号列时填入，否则为空
-10) 过滤噪音行：合计/小计/总计/余额/页脚/页眉/空行等，is_valid=false
-11) 日期时间统一输出为 "YYYY-MM-DD hh:mm:ss"：
+## 标准字段映射参考（从左到右优先级递减）
+transaction_time: 交易时间 > 交易日期 > 记账日期 > 入账日期 > 日期
+counterparty_name: 对方户名 > 商户名称 > 交易对方 > 对方名称 > 交易描述
+counterparty_account: 对方账号 > 对方卡号 > 交易对手账号（无则为空）
+amount: 交易金额 > 发生额 > 金额(元) > 金额 > 借方金额/贷方金额 > 收入/支出
+summary: 摘要 > 备注 > 交易说明 > 商品说明 > 用途 > 交易描述
+transaction_type: 收支 > 收/支 > 借贷方向 > 借方/贷方
+
+## 金额与收支一致性（铁规则，不可违反）
+- transaction_type 只允许"收入"或"支出"，不允许其他值
+- "支出"时 amount 必须为负数（含负号"-"前缀）
+- "收入"时 amount 必须为正数（正号可省略但不可为负）
+- 原始金额不带正负号时，必须根据 transaction_type 补上符号：支出加"-"，收入省略或加"+"
+- 严禁出现"支出+正金额"或"收入+负金额"的矛盾组合
+
+### 信用卡特殊规则（优先级高于正负号）
+- 当文档画像中 account_type 为 credit_card 时，进入信用卡模式
+- 信用卡消费/刷卡/分期/手续费/年费/取现/违约金 → transaction_type="支出"，amount 必须输出为负数，即使原表金额显示为正数
+- 信用卡还款/退款/退货/冲正/返现/调账转入/利息返还 → transaction_type="收入"，amount 必须输出为正数
+- ❌ 错误：信用卡消费 amount="+500" transaction_type="支出"
+- ✅ 正确：信用卡消费 amount="-500" transaction_type="支出"
+- ❌ 错误：信用卡还款 amount="-1000" transaction_type="收入"
+- ✅ 正确：信用卡还款 amount="+1000" transaction_type="收入"
+
+## 字段清洗规则
+1) 若存在明确"对方/商户/交易对手"列，则优先填入 counterparty_name
+2) "摘要/备注/交易说明/商品/用途"等列优先填入 summary
+3) 若只有一个"交易描述/商户名称"列，且无法区分，对 counterparty_name 与 summary 可相同
+4) counterparty_account 仅在有明确账号/卡号列时填入，否则为空
+5) 过滤噪音行：合计/小计/总计/余额/页脚/页眉/空行等，is_valid=false
+6) 日期时间统一输出为 "YYYY-MM-DD hh:mm:ss"：
    - 只有日期时补全时间为 "00:00:00"
    - 有时间但缺少秒时补全为 ":00"
-12) 金额清洗：去除金额前缀/符号（如 "RMB"、"￥"、"¥"、"," 逗号分隔符），只保留数值与正负号
-13) 输出必须严格遵守 JSON 格式
+7) 金额清洗：去除金额前缀/符号（如 "RMB"、"￥"、"¥"、"," 逗号分隔符），只保留数值与正负号
+8) 输出必须严格遵守 JSON 格式
+
+## 文档画像
+{{ document_portrait }}
+
+## 表头属性
+{{ header_attributes }}
 
 ## 返回JSON格式
 {
@@ -186,29 +199,58 @@ class FlowDataNormalizer:
         object_format = {"type": "json_object"}
         return self._post(system_prompt, user_message, object_format)
 
+    def _render_prompt(
+        self,
+        document_portrait: Optional[Dict[str, Any]] = None,
+        header_attributes: Optional[List[str]] = None,
+    ) -> str:
+        """Render the normalizer system prompt using Jinja2, loading from config if available."""
+        from ..config import get_config
+        from jinja2 import Environment, Undefined
+
+        config = get_config()
+        prompt_template = config.prompt_normalizer or SYSTEM_PROMPT_DATA_NORMALIZER
+
+        portrait_text = ""
+        if document_portrait:
+            portrait_text = json.dumps(document_portrait, ensure_ascii=False, indent=2)
+
+        header_text = ""
+        if header_attributes:
+            header_text = json.dumps(header_attributes, ensure_ascii=False)
+
+        env = Environment(undefined=Undefined)
+        template = env.from_string(prompt_template)
+        return template.render(
+            document_portrait=portrait_text,
+            header_attributes=header_text,
+        )
+
     def normalize_rows(
         self,
         document_name: str,
         header_attributes: List[str],
         rows: List[Dict[str, Any]],
-        source_file: str
+        source_file: str,
+        document_portrait: Optional[Dict[str, Any]] = None,
     ) -> Optional[List[Dict[str, Any]]]:
         """
         Normalize rows into standardized records.
 
         rows: list of {"row_index": int, "cells": [str,...]}
+        document_portrait: structured portrait dict from DocumentPortraitExtractor.
+            If None, fallback context is inferred from document_name.
         """
-        document_context = self._infer_document_context(document_name)
+        system_prompt = self._render_prompt(document_portrait, header_attributes)
+
         payload = {
             "document_name": document_name,
-            "document_type": document_context["document_type"],
-            "document_type_hints": document_context["document_type_hints"],
             "header_attributes": header_attributes,
             "rows": rows,
             "source_file": source_file
         }
         user_message = json.dumps(payload, ensure_ascii=False)
-        result = self._make_request(SYSTEM_PROMPT_DATA_NORMALIZER, user_message)
+        result = self._make_request(system_prompt, user_message)
         if not result:
             return None
 
@@ -219,9 +261,15 @@ class FlowDataNormalizer:
 
     @staticmethod
     def _infer_document_context(document_name: str) -> Dict[str, Any]:
+        """
+        Infer document context from file name (fallback when portrait extraction fails).
+
+        Preserved as fallback for graceful degradation.
+        """
         name = str(document_name or "").lower()
         if any(keyword in name for keyword in ["信用卡", "credit", "贷记卡"]):
             return {
+                "account_type": "credit_card",
                 "document_type": "credit_card_statement",
                 "document_type_hints": [
                     "这是信用卡账单或信用卡交易明细",
@@ -231,6 +279,7 @@ class FlowDataNormalizer:
             }
         if any(keyword in name for keyword in ["支付宝", "alipay"]):
             return {
+                "account_type": "alipay",
                 "document_type": "alipay_statement",
                 "document_type_hints": [
                     "这是支付宝流水",
@@ -239,6 +288,7 @@ class FlowDataNormalizer:
             }
         if any(keyword in name for keyword in ["微信", "wechat", "weixin"]):
             return {
+                "account_type": "wechat",
                 "document_type": "wechat_statement",
                 "document_type_hints": [
                     "这是微信流水",
@@ -246,6 +296,7 @@ class FlowDataNormalizer:
                 ],
             }
         return {
+            "account_type": "bank_general",
             "document_type": "bank_or_general_statement",
             "document_type_hints": [
                 "这是普通银行流水或通用交易流水",

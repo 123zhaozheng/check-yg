@@ -61,6 +61,7 @@ class _DummyConfig:
         self.flow_parallelism = 1
         self.flow_checkpoint_interval = 1
         self.flow_keep_checkpoint_on_success = keep_checkpoint
+        self.flow_portrait_max_chars = 2000
         self.fuzzy_threshold = 60
         self.enable_exact_match = True
         self.enable_desensitized_match = True
@@ -84,7 +85,7 @@ class _ResumeNormalizer:
     def is_available(self) -> bool:
         return True
 
-    def normalize_rows(self, document_name, header_attributes, rows, source_file):
+    def normalize_rows(self, document_name, header_attributes, rows, source_file, document_portrait=None):
         self.called_row_indexes.extend([int(row["row_index"]) for row in rows])
         normalized = []
         for row in rows:
@@ -110,7 +111,7 @@ class _CancelAfterFirstNormalizer:
     def is_available(self) -> bool:
         return True
 
-    def normalize_rows(self, document_name, header_attributes, rows, source_file):
+    def normalize_rows(self, document_name, header_attributes, rows, source_file, document_portrait=None):
         self.called += 1
         if self.called == 1:
             self.extractor.request_cancel()

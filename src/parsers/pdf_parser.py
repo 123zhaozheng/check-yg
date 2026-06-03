@@ -442,3 +442,43 @@ class PDFParser(BaseParser):
             self.logger.error("Failed to extract raw tables from PDF %s: %s", file_path.name, exc)
             return []
         return self.html_parser.extract_raw_tables_from_html(markdown)
+
+    def extract_non_table_context(self, file_path: Path, max_chars: int = 2000) -> str:
+        """
+        Extract non-table text content from a PDF for document portrait extraction.
+
+        Removes all HTML table blocks (<table>...</table>) from the MinerU markdown
+        output, then truncates the remaining text to max_chars characters.
+
+        Args:
+            file_path: Path to the PDF file.
+            max_chars: Maximum number of characters to return (default 2000).
+
+        Returns:
+            Non-table text content, truncated to max_chars. Empty string on failure.
+        """
+        try:
+            markdown = self._get_markdown(file_path)
+        except Exception as exc:
+            self.logger.error(
+                "Failed to extract non_table_context from PDF %s: %s",
+                file_path.name, exc,
+            )
+            return ""
+
+        # Remove all HTML table blocks from the markdown
+        non_table_text = re.sub(
+            r'<table[^>]*>.*?</table>',
+            '',
+            markdown,
+            flags=re.DOTALL | re.IGNORECASE,
+        )
+
+        # Strip excess whitespace
+        non_table_text = re.sub(r'\n{3,}', '\n\n', non_table_text).strip()
+
+        # Truncate to max_chars
+        if len(non_table_text) > max_chars:
+            non_table_text = non_table_text[:max_chars]
+
+        return non_table_text

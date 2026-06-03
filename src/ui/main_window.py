@@ -11,16 +11,20 @@ from PyQt5.QtWidgets import (
     QPushButton, QLabel, QStackedWidget, QFrame,
     QDialog, QLineEdit, QSpinBox, QMessageBox,
     QComboBox, QGridLayout, QScrollArea,
-    QTabWidget
+    QTabWidget, QPlainTextEdit
 )
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QTimer
 
 from .styles import MAIN_STYLE, COLORS, SETTINGS_DIALOG_STYLE
 from .pages import ResultPage, ExtractPage, ReviewPage, HomePage, ReportPage
+from .widgets.jinja_highlighter import JinjaHighlighter
 from ..config import get_config
 from ..core.extraction_result import ExtractionResult
 from ..core.reviewer import ReviewMatch, ReviewResult
 from ..core.review_history import ReviewHistoryManager
+from ..llm.flow_table_classifier import SYSTEM_PROMPT_FLOW_TABLE_CLASSIFIER
+from ..llm.data_normalizer import SYSTEM_PROMPT_DATA_NORMALIZER
+from ..llm.document_portrait import SYSTEM_PROMPT_DOCUMENT_PORTRAIT
 from ..parsers.base import FlowRecord
 
 
@@ -31,8 +35,8 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.config = get_config()
         self.setWindowTitle("设置")
-        self.setMinimumSize(600, 560)
-        self.setMaximumSize(700, 800)
+        self.setMinimumSize(800, 700)
+        self.setMaximumSize(1000, 900)
         
         # 应用设置对话框样式
         self.setStyleSheet(SETTINGS_DIALOG_STYLE)
@@ -55,6 +59,10 @@ class SettingsDialog(QDialog):
         # AI 高级设置 Tab
         ai_tab = self._create_ai_tab()
         self.tab_widget.addTab(ai_tab, "AI 高级设置")
+
+        # AI 提示词 Tab
+        prompt_tab = self._create_prompt_tab()
+        self.tab_widget.addTab(prompt_tab, "AI 提示词")
         
         main_layout.addWidget(self.tab_widget, 1)
         
@@ -222,12 +230,187 @@ class SettingsDialog(QDialog):
         settings_grid.addWidget(flow_threshold_desc, 1, 1)
         settings_grid.addWidget(self.flow_batch_spin, 2, 0)
         settings_grid.addWidget(self.flow_threshold_spin, 2, 1)
+
+        portrait_lines_label = QLabel("文档画像行数")
+        portrait_lines_label.setObjectName("settings_label")
+        portrait_lines_desc = QLabel("画像预览截取的行数")
+        portrait_lines_desc.setObjectName("settings_desc")
+        self.portrait_lines_spin = QSpinBox()
+        self.portrait_lines_spin.setObjectName("settings_input")
+        self.portrait_lines_spin.setRange(10, 500)
+        self.portrait_lines_spin.setValue(100)
+        self.portrait_lines_spin.setFixedHeight(40)
+
+        portrait_max_chars_label = QLabel("非表格文本最大字符数")
+        portrait_max_chars_label.setObjectName("settings_label")
+        portrait_max_chars_desc = QLabel("non_table_context 上限")
+        portrait_max_chars_desc.setObjectName("settings_desc")
+        self.portrait_max_chars_spin = QSpinBox()
+        self.portrait_max_chars_spin.setObjectName("settings_input")
+        self.portrait_max_chars_spin.setRange(500, 10000)
+        self.portrait_max_chars_spin.setSingleStep(100)
+        self.portrait_max_chars_spin.setValue(2000)
+        self.portrait_max_chars_spin.setFixedHeight(40)
+
+        portrait_parallelism_label = QLabel("画像提取并发度")
+        portrait_parallelism_label.setObjectName("settings_label")
+        portrait_parallelism_desc = QLabel("画像提取并发请求数")
+        portrait_parallelism_desc.setObjectName("settings_desc")
+        self.portrait_parallelism_spin = QSpinBox()
+        self.portrait_parallelism_spin.setObjectName("settings_input")
+        self.portrait_parallelism_spin.setRange(1, 8)
+        self.portrait_parallelism_spin.setValue(2)
+        self.portrait_parallelism_spin.setFixedHeight(40)
+
+        settings_grid.addWidget(portrait_lines_label, 3, 0)
+        settings_grid.addWidget(portrait_max_chars_label, 3, 1)
+        settings_grid.addWidget(portrait_lines_desc, 4, 0)
+        settings_grid.addWidget(portrait_max_chars_desc, 4, 1)
+        settings_grid.addWidget(self.portrait_lines_spin, 5, 0)
+        settings_grid.addWidget(self.portrait_max_chars_spin, 5, 1)
+        settings_grid.addWidget(portrait_parallelism_label, 6, 0)
+        settings_grid.addWidget(portrait_parallelism_desc, 7, 0)
+        settings_grid.addWidget(self.portrait_parallelism_spin, 8, 0)
+
         settings_grid.setColumnStretch(0, 1)
         settings_grid.setColumnStretch(1, 1)
         layout.addLayout(settings_grid)
         layout.addStretch()
         
         return self._wrap_scroll_area(content)
+
+    # ---------- Prompt tab helpers ----------
+
+    # Prompt definition: (config_key, default_constant, sub_tab_label)
+    _PROMPT_DEFS = [
+        ('prompts.document_portrait', SYSTEM_PROMPT_DOCUMENT_PORTRAIT, '画像提取'),
+        ('prompts.flow_table_classifier', SYSTEM_PROMPT_FLOW_TABLE_CLASSIFIER, '流水表格识别'),
+        ('prompts.data_normalizer', SYSTEM_PROMPT_DATA_NORMALIZER, '数据标准化'),
+    ]
+
+    def _create_prompt_tab(self) -> QWidget:
+        """创建 AI 提示词 Tab（内嵌子 Tab）"""
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        layout.setSpacing(12)
+        layout.setContentsMargins(20, 20, 20, 20)
+
+        self.prompt_sub_tab = QTabWidget()
+        self.prompt_sub_tab.setObjectName("prompt_sub_tab")
+
+        # Per-prompt state
+        self._prompt_editors = []      # list of QPlainTextEdit
+        self._prompt_timers = []       # list of QTimer
+        self._prompt_originals = []    # list of str (text at load / last save)
+        self._prompt_dirty = []        # list of bool
+
+        for idx, (config_key, default_const, label) in enumerate(self._PROMPT_DEFS):
+            editor = QPlainTextEdit()
+            editor.setObjectName("prompt_editor")
+            editor.setLineWrapMode(QPlainTextEdit.WidgetWidth)
+
+            # Attach Jinja highlighter
+            JinjaHighlighter(editor)
+
+            # Debounce timer
+            timer = QTimer()
+            timer.setSingleShot(True)
+            timer.setInterval(500)
+
+            # Capture idx for closures
+            def _make_text_changed(editor_ref, timer_ref, idx_ref):
+                def _on_text_changed():
+                    # Mark dirty
+                    if idx_ref < len(self._prompt_dirty):
+                        self._prompt_dirty[idx_ref] = True
+                    # Add dirty marker to sub-tab text
+                    current_text = self.prompt_sub_tab.tabText(idx_ref)
+                    if not current_text.startswith('● '):
+                        self.prompt_sub_tab.setTabText(idx_ref, '● ' + current_text)
+                    # Restart debounce timer
+                    timer_ref.start()
+                return _on_text_changed
+
+            def _make_timeout(editor_ref, idx_ref, config_key_ref, default_const_ref):
+                def _on_timeout():
+                    text = editor_ref.toPlainText()
+                    # Save to config: empty string if matches default
+                    if text == default_const_ref:
+                        self.config.set(config_key_ref, '')
+                    else:
+                        self.config.set(config_key_ref, text)
+                    self.config.save()
+                    # Remove dirty marker
+                    if idx_ref < len(self._prompt_dirty):
+                        self._prompt_dirty[idx_ref] = False
+                    tab_text = self.prompt_sub_tab.tabText(idx_ref)
+                    if tab_text.startswith('● '):
+                        self.prompt_sub_tab.setTabText(idx_ref, tab_text[2:])
+                    # Update original
+                    if idx_ref < len(self._prompt_originals):
+                        self._prompt_originals[idx_ref] = text
+                return _on_timeout
+
+            editor.textChanged.connect(_make_text_changed(editor, timer, idx))
+            timer.timeout.connect(_make_timeout(editor, idx, config_key, default_const))
+
+            self._prompt_editors.append(editor)
+            self._prompt_timers.append(timer)
+            self._prompt_dirty.append(False)
+            self._prompt_originals.append('')
+
+            # Build sub-tab page layout
+            page = QWidget()
+            page_layout = QVBoxLayout(page)
+            page_layout.setSpacing(8)
+            page_layout.setContentsMargins(0, 8, 0, 0)
+            page_layout.addWidget(editor, 1)
+
+            # Bottom bar
+            bottom = QHBoxLayout()
+            bottom.addStretch()
+            status_label = QLabel("已保存")
+            status_label.setObjectName("prompt_status_label")
+            bottom.addWidget(status_label)
+            restore_btn = QPushButton("恢复默认")
+            restore_btn.setObjectName("prompt_restore_btn")
+            restore_btn.setCursor(Qt.PointingHandCursor)
+
+            def _make_restore(editor_ref, timer_ref, idx_ref, default_const_ref, config_key_ref):
+                def _on_restore():
+                    reply = QMessageBox.warning(
+                        self, "确认恢复",
+                        "确定恢复为默认提示词？自定义内容将丢失。",
+                        QMessageBox.Yes | QMessageBox.No,
+                        QMessageBox.No,
+                    )
+                    if reply == QMessageBox.Yes:
+                        editor_ref.blockSignals(True)
+                        editor_ref.setPlainText(default_const_ref)
+                        editor_ref.blockSignals(False)
+                        # Save empty string to config (= use default)
+                        self.config.set(config_key_ref, '')
+                        self.config.save()
+                        # Remove dirty marker
+                        if idx_ref < len(self._prompt_dirty):
+                            self._prompt_dirty[idx_ref] = False
+                        tab_text = self.prompt_sub_tab.tabText(idx_ref)
+                        if tab_text.startswith('● '):
+                            self.prompt_sub_tab.setTabText(idx_ref, tab_text[2:])
+                        if idx_ref < len(self._prompt_originals):
+                            self._prompt_originals[idx_ref] = default_const_ref
+                return _on_restore
+
+            restore_btn.clicked.connect(
+                _make_restore(editor, timer, idx, default_const, config_key)
+            )
+            bottom.addWidget(restore_btn)
+            page_layout.addLayout(bottom)
+
+            self.prompt_sub_tab.addTab(page, label)
+
+        layout.addWidget(self.prompt_sub_tab, 1)
+        return content
 
     def _wrap_scroll_area(self, content: QWidget) -> QScrollArea:
         """给设置页内容加滚动容器，避免窗口高度不足时控件互相挤压。"""
@@ -259,6 +442,20 @@ class SettingsDialog(QDialog):
         self.llm_key_input.setText(self.config.llm_api_key)
         self.flow_batch_spin.setValue(self.config.flow_batch_size)
         self.flow_threshold_spin.setValue(self.config.flow_confidence_threshold)
+        self.portrait_lines_spin.setValue(self.config.flow_portrait_lines)
+        self.portrait_max_chars_spin.setValue(self.config.flow_portrait_max_chars)
+        self.portrait_parallelism_spin.setValue(self.config.flow_portrait_parallelism)
+
+        # Load prompt editors
+        for idx, (config_key, default_const, label) in enumerate(self._PROMPT_DEFS):
+            saved = self.config.get(config_key, '')
+            text = saved if saved else default_const
+            editor = self._prompt_editors[idx]
+            editor.blockSignals(True)
+            editor.setPlainText(text)
+            editor.blockSignals(False)
+            self._prompt_originals[idx] = text
+            self._prompt_dirty[idx] = False
     
     def _save_and_close(self):
         self.config.set('mineru.mode', self.mineru_mode_input.currentData() or 'local')
@@ -273,6 +470,20 @@ class SettingsDialog(QDialog):
         self.config.set('llm.api_key', self.llm_key_input.text())
         self.config.set('flow_extraction.batch_size', self.flow_batch_spin.value())
         self.config.set('flow_extraction.confidence_threshold', self.flow_threshold_spin.value())
+        self.config.set('flow_extraction.portrait_lines', self.portrait_lines_spin.value())
+        self.config.set('flow_extraction.portrait_max_chars', self.portrait_max_chars_spin.value())
+        self.config.set('flow_extraction.portrait_parallelism', self.portrait_parallelism_spin.value())
+
+        # Save prompt texts
+        for idx, (config_key, default_const, label) in enumerate(self._PROMPT_DEFS):
+            # Stop pending debounce timer
+            self._prompt_timers[idx].stop()
+            text = self._prompt_editors[idx].toPlainText()
+            if text == default_const:
+                self.config.set(config_key, '')
+            else:
+                self.config.set(config_key, text)
+
         self.config.save()
         self.accept()
 

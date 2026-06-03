@@ -91,4 +91,8 @@ class DocxParser(BaseParser):
             html_content=html_content,
             rows=rows
         )
+
+    def extract_non_table_context(self, file_path: Path, max_chars: int = 2000) -> str:
+        """DOCX files are primarily tabular; return empty string."""
+        return ""
     

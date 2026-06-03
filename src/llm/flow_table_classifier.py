@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 SYSTEM_PROMPT_FLOW_TABLE_CLASSIFIER = """你是一个银行/支付流水表格识别专家，熟悉中国各大银行、信用卡、支付宝、微信等流水格式。
 
 ## 任务
-根据文档名称与表格预览内容，判断是否为流水表格，并输出表头属性顺序列表。
+根据文档画像与表格预览内容，判断是否为流水表格，并输出表头属性顺序列表。
 
 ## 关键判断要点
 - 每行代表一笔交易，通常包含日期/时间、金额、对手方/商户、摘要/备注等
@@ -31,10 +31,16 @@ SYSTEM_PROMPT_FLOW_TABLE_CLASSIFIER = """你是一个银行/支付流水表格�
 支付宝：交易时间、交易对方、对方账号、商品说明/备注、收/支、金额
 微信：交易时间、交易对方/商户名称、交易类型/商品、收/支、金额(元)
 
+## 文档画像参考
+{{ document_portrait }}
+
+## 内容预览
+{{ content_preview }}
+
 ## 表头输出规则
 - 返回表头属性列表，顺序与原表格列顺序一致
 - 如果明确存在表头行：表头属性为表头单元格原文（可简化去空格）
-- 如果没有明确表头：根据列内容推断属性名称（如“交易时间”“交易对方”“金额”“摘要”“收支”），无法判断的列用空字符串
+- 如果没有明确表头：根据列内容推断属性名称（如"交易时间""交易对方""金额""摘要""收支"），无法判断的列用空字符串
 - 表头长度必须等于列数
 
 ## 返回JSON格式
@@ -122,7 +128,14 @@ class FlowTableClassifier:
                 response = requests.post(url, headers=headers, json=payload, timeout=self.timeout)
                 response.raise_for_status()
                 data = response.json()
-                content = data["choices"][0]["message"]["content"]
+                message = data["choices"][0]["message"]
+                content = (
+                    message.get("content")
+                    or message.get("reasoning_content")
+                    or message.get("reasoning")
+                )
+                if not content:
+                    raise ValueError(f"Empty message content: {json.dumps(message, ensure_ascii=False)[:500]}")
                 return json.loads(content)
             except json.JSONDecodeError as exc:
                 text = ""
@@ -140,16 +153,47 @@ class FlowTableClassifier:
         object_format = {"type": "json_object"}
         return self._post(system_prompt, user_message, object_format)
 
-    def analyze_table(self, table: RawTable, document_name: str) -> Optional[Dict[str, Any]]:
+    def _render_prompt(
+        self,
+        document_portrait: Optional[Dict[str, Any]] = None,
+        content_preview: str = "",
+    ) -> str:
+        """Render the classifier system prompt using Jinja2, loading from config if available."""
+        from ..config import get_config
+        from jinja2 import Environment, Undefined
+
+        config = get_config()
+        prompt_template = config.prompt_classifier or SYSTEM_PROMPT_FLOW_TABLE_CLASSIFIER
+
+        portrait_text = ""
+        if document_portrait:
+            portrait_text = json.dumps(document_portrait, ensure_ascii=False, indent=2)
+
+        env = Environment(undefined=Undefined)
+        template = env.from_string(prompt_template)
+        return template.render(
+            document_portrait=portrait_text,
+            content_preview=content_preview,
+        )
+
+    def analyze_table(
+        self,
+        table: RawTable,
+        document_name: str,
+        document_portrait: Optional[Dict[str, Any]] = None,
+        content_preview: str = "",
+    ) -> Optional[Dict[str, Any]]:
         if not table.rows:
             return None
+
+        system_prompt = self._render_prompt(document_portrait, content_preview)
 
         preview_html = table.get_preview(self.preview_rows)
         user_message = (
             f"文档名称：{document_name}\n\n"
             f"请分析以下表格：\n\n{preview_html}"
         )
-        result = self._make_request(SYSTEM_PROMPT_FLOW_TABLE_CLASSIFIER, user_message)
+        result = self._make_request(system_prompt, user_message)
         if not result:
             return None
 

@@ -5,6 +5,7 @@ V2 Flow extractor with AI-only table classification and normalization.
 
 import logging
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -14,6 +15,7 @@ from ..parsers import PDFParser, ExcelParser, DocxParser
 from ..parsers.base import FlowRecord, RawTable
 from ..llm.flow_table_classifier import FlowTableClassifier
 from ..llm.data_normalizer import FlowDataNormalizer
+from ..llm.document_portrait import DocumentPortraitExtractor
 from .scanner import DocumentScanner
 from .progress_manager import ProgressManager, ProgressStatus
 from .checkpoint_manager import CheckpointManager
@@ -59,6 +61,12 @@ class FlowExtractorV2:
             model=self.config.llm_model,
             api_key=self.config.llm_api_key,
             timeout=self.config.llm_timeout
+        )
+        self.portrait_extractor = DocumentPortraitExtractor(
+            api_url=self.config.llm_url,
+            model=self.config.llm_model,
+            api_key=self.config.llm_api_key,
+            timeout=self.config.llm_timeout,
         )
 
         self.progress = ProgressManager()
@@ -328,6 +336,27 @@ class FlowExtractorV2:
             )
             return state, stats
 
+        # 提取非表格文本，用于文档画像
+        non_table_context = ""
+        if hasattr(parser, 'extract_non_table_context'):
+            try:
+                non_table_context = parser.extract_non_table_context(
+                    doc_path, max_chars=self.config.flow_portrait_max_chars
+                )
+            except Exception as exc:
+                logger.warning("提取non_table_context失败 %s: %s", doc_path.name, exc)
+
+        # 画像提取与分类并行：先提交画像任务，分类循环完成后取结果
+        portrait_future = None
+        portrait_executor = None
+        if non_table_context and self.portrait_extractor.is_available():
+            portrait_executor = ThreadPoolExecutor(max_workers=1)
+            portrait_future = portrait_executor.submit(
+                self.portrait_extractor.extract_portrait,
+                doc_path.name,
+                non_table_context,
+            )
+
         doc_header_attributes: Optional[List[str]] = None
 
         for table in raw_tables:
@@ -339,7 +368,9 @@ class FlowExtractorV2:
                 logger.debug("表格为空，跳过: %s table#%s", doc_path.name, table.table_index)
                 continue
 
-            decision = self.table_classifier.analyze_table(table, doc_path.name)
+            decision = self.table_classifier.analyze_table(
+                table, doc_path.name, content_preview=non_table_context
+            )
             if not decision:
                 state["errors"].append(
                     f"AI表格判断失败: table#{table.table_index}"
@@ -401,6 +432,21 @@ class FlowExtractorV2:
                 task_id, doc_path.name, state, document_path=str(doc_path)
             )
 
+        # 等待画像提取结果
+        document_portrait = None
+        if portrait_future is not None:
+            try:
+                document_portrait = portrait_future.result(timeout=self.config.llm_timeout)
+            except Exception as exc:
+                logger.warning("画像提取超时或失败 %s: %s", doc_path.name, exc)
+        if portrait_executor is not None:
+            portrait_executor.shutdown(wait=False)
+
+        if document_portrait is None:
+            document_portrait = FlowDataNormalizer._infer_document_context(doc_path.name)
+        state["document_portrait"] = document_portrait
+        state["non_table_context"] = non_table_context
+
         if doc_header_attributes is None:
             state["status"] = "completed"
         else:
@@ -447,6 +493,10 @@ class FlowExtractorV2:
                 return []
             header_attributes = state.get("header_attributes", []) or []
             rows_tables = state.get("flow_tables", [])
+
+            document_portrait = state.get("document_portrait")
+            if document_portrait is None:
+                document_portrait = FlowDataNormalizer._infer_document_context(doc_name)
             if not header_attributes and rows_tables:
                 first_rows = rows_tables[0].get("rows", [])
                 if first_rows:
@@ -500,7 +550,8 @@ class FlowExtractorV2:
                         document_name=doc_name,
                         header_attributes=header_attributes,
                         rows=payload_rows,
-                        source_file=doc_name
+                        source_file=doc_name,
+                        document_portrait=document_portrait,
                     )
                     if normalized is None:
                         state.setdefault("errors", []).append(
@@ -578,7 +629,6 @@ class FlowExtractorV2:
                 flow_records.extend(process_doc(document_path))
             return flow_records
 
-        from concurrent.futures import ThreadPoolExecutor, as_completed
         with ThreadPoolExecutor(max_workers=workers) as executor:
             futures = {executor.submit(process_doc, path): path for path in doc_paths}
             for future in as_completed(futures):

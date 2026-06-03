@@ -46,6 +46,14 @@ class Config:
             'parallelism': 4,   # 文档并行处理数
             'checkpoint_interval': 50,  # 断点保存间隔（行数）
             'keep_checkpoint_on_success': False,  # 成功后保留文档断点
+            'portrait_lines': 100,           # 画像预览行数
+            'portrait_max_chars': 2000,      # non_table_context 最大字符数
+            'portrait_parallelism': 2,        # 画像提取并发度
+        },
+        'prompts': {
+            'flow_table_classifier': '',  # empty = use built-in default
+            'data_normalizer': '',        # empty = use built-in default
+            'document_portrait': '',      # empty = use built-in default
         },
         'matching': {
             'enable_exact': True,
@@ -222,6 +230,36 @@ class Config:
     def flow_keep_checkpoint_on_success(self) -> bool:
         """流水提取：成功后是否保留文档断点（默认 False）。"""
         return bool(self.get('flow_extraction.keep_checkpoint_on_success', False))
+
+    @property
+    def flow_portrait_lines(self) -> int:
+        """流水提取：画像预览行数（默认 100）"""
+        return self.get('flow_extraction.portrait_lines', 100)
+
+    @property
+    def flow_portrait_max_chars(self) -> int:
+        """流水提取：non_table_context 最大字符数（默认 2000）"""
+        return self.get('flow_extraction.portrait_max_chars', 2000)
+
+    @property
+    def flow_portrait_parallelism(self) -> int:
+        """流水提取：画像提取并发度（默认 2）"""
+        return self.get('flow_extraction.portrait_parallelism', 2)
+
+    @property
+    def prompt_classifier(self) -> str:
+        """提示词：流水表格识别（空则使用内置默认）"""
+        return self.get('prompts.flow_table_classifier', '')
+
+    @property
+    def prompt_normalizer(self) -> str:
+        """提示词：数据标准化（空则使用内置默认）"""
+        return self.get('prompts.data_normalizer', '')
+
+    @property
+    def prompt_portrait(self) -> str:
+        """提示词：画像提取（空则使用内置默认）"""
+        return self.get('prompts.document_portrait', '')
     
     @property
     def enable_exact_match(self) -> bool:

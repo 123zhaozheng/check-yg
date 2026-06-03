@@ -48,33 +48,37 @@ class ExcelParser(BaseParser):
     def extract_raw_tables(self, file_path: Path) -> List[RawTable]:
         """
         从Excel文件中提取原始表格数据（用于AI分析）
-        
+
         Args:
             file_path: Excel文件路径
-            
+
         Returns:
             List[RawTable]: 原始表格列表
         """
         if not self.can_parse(file_path):
             return []
-        
+
         try:
             wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
             tables = []
-            
+
             for sheet_idx, sheet_name in enumerate(wb.sheetnames):
                 ws = wb[sheet_name]
                 raw_table = self._parse_sheet_to_raw(ws, sheet_idx, sheet_name)
                 if raw_table and raw_table.rows:
                     tables.append(raw_table)
-            
+
             wb.close()
             return tables
-            
+
         except Exception as e:
-            self.logger.error("Failed to extract raw tables from Excel %s: %s", 
+            self.logger.error("Failed to extract raw tables from Excel %s: %s",
                             file_path.name, e)
             return []
+
+    def extract_non_table_context(self, file_path: Path, max_chars: int = 2000) -> str:
+        """Excel files are primarily tabular; return empty string."""
+        return ""
     
     def _parse_sheet_to_raw(self, ws, table_index: int, sheet_name: str) -> Optional[RawTable]:
         """

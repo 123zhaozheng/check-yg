@@ -483,6 +483,66 @@ QLabel#settings_desc {
 font-size: 11px;
 color: %(text_light)s;
 }
+
+/* Prompt editor */
+QPlainTextEdit#prompt_editor {
+    font-family: "Consolas", "Monaco", monospace;
+    font-size: 13px;
+    background-color: #FFFFFF;
+    border: 1px solid #E5E7EB;
+    border-radius: 4px;
+    padding: 8px;
+    color: #1F2937;
+}
+QPlainTextEdit#prompt_editor:focus {
+    border-color: #3B82F6;
+}
+
+/* Prompt restore button */
+QPushButton#prompt_restore_btn {
+    background-color: transparent;
+    border: 1px solid #D1D5DB;
+    border-radius: 4px;
+    padding: 4px 12px;
+    color: #6B7280;
+    font-size: 12px;
+}
+QPushButton#prompt_restore_btn:hover {
+    border-color: #3B82F6;
+    color: #3B82F6;
+}
+
+/* Prompt status label */
+QLabel#prompt_status_label {
+    color: #9CA3AF;
+    font-size: 11px;
+}
+
+/* Sub-tab for prompts */
+QTabWidget#prompt_sub_tab::pane {
+    border: 1px solid #E5E7EB;
+    border-radius: 4px;
+    background: #FFFFFF;
+}
+QTabWidget#prompt_sub_tab::tab-bar {
+    alignment: left;
+}
+QTabWidget#prompt_sub_tab QTabBar::tab {
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    padding: 6px 16px;
+    color: #6B7280;
+    font-size: 13px;
+    margin-right: 4px;
+}
+QTabWidget#prompt_sub_tab QTabBar::tab:selected {
+    color: #1F2937;
+    border-bottom-color: #3B82F6;
+}
+QTabWidget#prompt_sub_tab QTabBar::tab:hover:!selected {
+    color: #374151;
+}
 """ % COLORS
 
 def get_risk_style(risk_level: str) -> str:

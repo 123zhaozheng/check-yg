@@ -18,3 +18,6 @@ lxml>=4.6.0
 
 # Fuzzy Matching
 python-Levenshtein>=0.12.0
+
+# Template Engine
+Jinja2>=3.0.0

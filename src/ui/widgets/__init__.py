@@ -6,8 +6,9 @@ from .stat_card import StatCard, StatCardRow
 from .progress_card import ProgressCard
 from .file_selector import FileSelector
 from .result_table import ResultTable
+from .jinja_highlighter import JinjaHighlighter
 
 __all__ = [
-    'Card', 'StatCard', 'StatCardRow', 'ProgressCard', 
-    'FileSelector', 'ResultTable'
+    'Card', 'StatCard', 'StatCardRow', 'ProgressCard',
+    'FileSelector', 'ResultTable', 'JinjaHighlighter'
 ]
