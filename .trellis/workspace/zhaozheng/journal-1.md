@@ -71,3 +71,37 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 3: 设置页新增AI提示词Tab与文档画像注入
+
+**Date**: 2026-06-03
+**Task**: 设置页新增AI提示词Tab与文档画像注入
+**Branch**: `master`
+
+### Summary
+
+在设置页新增第3个Tab「AI提示词」，内嵌3个子Tab管理提示词；新增DocumentPortraitExtractor从非表格文本提取结构化画像；画像与分类Stage1并行执行；提示词Jinja2模板渲染+变量高亮；金额规则改为始终正数+收支类型严格判断；自动保存+脏标记+恢复默认
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a630e18` | (see git log) |
+| `e42fe17` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
