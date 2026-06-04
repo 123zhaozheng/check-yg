@@ -22,9 +22,10 @@ SYSTEM_PROMPT_DATA_NORMALIZER = """你是一个银行/支付流水数据标准�
 2) counterparty_name - 交易对手/商户名称
 3) counterparty_account - 交易对手账号/卡号（无则为空）
 4) amount - 交易金额（正数，不含负号）
-5) summary - 摘要/备注/交易说明/商品信息
-6) transaction_type - 收支类型（只允许"收入"或"支出"）
-7) source_file - 来源文件名
+5) raw_amount - 原始金额（保留源文档原始正负号，如"-795.42"、"1200.00"，无符号则为原值）
+6) summary - 摘要/备注/交易说明/商品信息
+7) transaction_type - 收支类型（只允许"收入"或"支出"）
+8) source_file - 来源文件名
 
 ## 标准字段映射参考（从左到右优先级递减）
 transaction_time: 交易时间 > 交易日期 > 记账日期 > 入账日期 > 日期
@@ -36,33 +37,31 @@ transaction_type: 收支 > 收/支 > 借贷方向 > 借方/贷方
 
 ## 金额与收支一致性（铁规则，不可违反）
 - amount 字段不允许出现负号，始终输出为正数（去除"-"前缀）
-- 即使源文档金额带负号，标准化时也要去掉负号，收支方向由 transaction_type 表达
+- raw_amount 保留源文档原始金额文本，包括正负号（如"-795.42"、"1200.00"）
+- 即使源文档金额带负号，amount 也要去掉负号，收支方向由 transaction_type 表达
 - transaction_type 只允许"收入"或"支出"，不允许其他值
 
-### 根据文档画像 amount_sign_rule 判断 transaction_type（优先级从高到低）
-1. **信用卡模式**（当文档画像 account_type=credit_card 时激活，最高优先级）：按交易语义判断
-2. **amount_sign_rule 规则**（画像识别出的符号规则，第二优先级）：
-   - 正数表示收入：金额正数→"收入"，负数→"支出"（不可用摘要推翻正负号）
-   - 正数表示支出：金额正数→"支出"，负数→"收入"（不可用摘要推翻正负号）
-   - 无正负号按摘要判断：金额无正负号，严格按摘要/收支列语义判断
-   - 收入支出分列：收入列→"收入"，支出列→"支出"
-   - 未知：综合正负号+摘要判断，正负号优先
-3. **摘要/交易描述语义**（最低优先级，仅在正负号规则不适用时使用）
+### 根据 amount_sign_rule 判断 transaction_type
+- pos_income：金额正数→"收入"，负数→"支出"（不可用摘要推翻正负号）
+- pos_expense：金额正数→"支出"，负数→"收入"（不可用摘要推翻正负号）
+- no_sign：金额无正负号，严格按摘要/收支列语义判断
+- split_cols：收入列→"收入"，支出列→"支出"
+- unknown：综合正负号+摘要判断，正负号优先
 
 ### 信用卡特殊规则（优先级最高，覆盖一切）
 - 当文档画像中 account_type 为 credit_card 时，进入信用卡模式
 - 信用卡消费/刷卡/分期/手续费/年费/取现/违约金 → transaction_type="支出"，amount 去掉负号输出为正数
 - 信用卡还款/退款/退货/冲正/返现/调账转入/利息返还 → transaction_type="收入"，amount 输出为正数
 - ❌ 错误：信用卡消费 amount="-500" transaction_type="支出"（amount不应有负号）
-- ✅ 正确：信用卡消费 amount="500" transaction_type="支出"
+- ✅ 正确：信用卡消费 amount="500" raw_amount="-500" transaction_type="支出"
 - ❌ 错误：信用卡还款源文档金额为"-862"，输出 amount="-862" transaction_type="收入"
-- ✅ 正确：信用卡还款源文档金额为"-862"，输出 amount="862" transaction_type="收入"
+- ✅ 正确：信用卡还款 amount="862" raw_amount="-862" transaction_type="收入"
 
 ### 借记卡/普通银行流水：摘要与正负号冲突的反例
-- ❌ 错误：amount_sign_rule=正数表示收入，源文档金额为正数"1200.00"，摘要为"跨行转出"，输出 transaction_type="支出"（正号被摘要推翻）
-- ✅ 正确：amount_sign_rule=正数表示收入，源文档金额为正数"1200.00"，摘要为"跨行转出"，输出 amount="1200" transaction_type="收入"（正号为首要依据）
-- ❌ 错误：amount_sign_rule=正数表示收入，源文档金额为负数"-795.42"，摘要为"贷款还款"，输出 transaction_type="收入"（负号被摘要推翻）
-- ✅ 正确：amount_sign_rule=正数表示收入，源文档金额为负数"-795.42"，摘要为"贷款还款"，输出 amount="795.42" transaction_type="支出"（负号为首要依据）
+- ❌ 错误：amount_sign_rule=pos_income，源文档金额为正数"1200.00"，摘要为"跨行转出"，输出 transaction_type="支出"
+- ✅ 正确：amount_sign_rule=pos_income，源文档金额为正数"1200.00"，摘要为"跨行转出"，输出 amount="1200" raw_amount="1200.00" transaction_type="收入"
+- ❌ 错误：amount_sign_rule=pos_income，源文档金额为负数"-795.42"，摘要为"贷款还款"，输出 transaction_type="收入"
+- ✅ 正确：amount_sign_rule=pos_income，源文档金额为负数"-795.42"，摘要为"贷款还款"，输出 amount="795.42" raw_amount="-795.42" transaction_type="支出"
 
 ## 字段清洗规则
 1) 若存在明确"对方/商户/交易对手"列，则优先填入 counterparty_name
@@ -73,7 +72,7 @@ transaction_type: 收支 > 收/支 > 借贷方向 > 借方/贷方
 6) 日期时间统一输出为 "YYYY-MM-DD hh:mm:ss"：
    - 只有日期时补全时间为 "00:00:00"
    - 有时间但缺少秒时补全为 ":00"
-7) 金额清洗：去除金额前缀/符号（如 "RMB"、"￥"、"¥"、"," 逗号分隔符、"-"负号），只保留纯数值，amount 始终为正数
+7) 金额清洗：raw_amount 保留源文档原始金额文本（含正负号）；amount 去除前缀/符号（"RMB"、"￥"、"¥"、","、"-"），只保留纯数值，始终为正数
 8) 输出必须严格遵守 JSON 格式
 
 ## 文档画像
@@ -92,6 +91,7 @@ transaction_type: 收支 > 收/支 > 借贷方向 > 借方/贷方
       "counterparty_name": "...",
       "counterparty_account": "...",
       "amount": "...",
+      "raw_amount": "...",
       "summary": "...",
       "transaction_type": "...",
       "source_file": "..."
@@ -115,6 +115,7 @@ NORMALIZER_SCHEMA = {
                     "counterparty_name": {"type": "string"},
                     "counterparty_account": {"type": "string"},
                     "amount": {"type": "string"},
+                    "raw_amount": {"type": "string"},
                     "summary": {"type": "string"},
                     "transaction_type": {"type": "string"},
                     "source_file": {"type": "string"}
@@ -126,6 +127,7 @@ NORMALIZER_SCHEMA = {
                     "counterparty_name",
                     "counterparty_account",
                     "amount",
+                    "raw_amount",
                     "summary",
                     "transaction_type",
                     "source_file"

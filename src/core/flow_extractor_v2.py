@@ -8,7 +8,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from ..config import get_config
 from ..parsers import PDFParser, ExcelParser, DocxParser
@@ -579,6 +579,21 @@ class FlowExtractorV2:
                         )
                     else:
                         normalized_rows += len(normalized)
+                        # Post-processing: code-based transaction_type inference
+                        amount_sign_rule = (document_portrait or {}).get("amount_sign_rule", "unknown")
+                        for item in normalized:
+                            if item.get("is_valid", True):
+                                raw_amount = str(item.get("raw_amount", "") or "")
+                                inferred_type = FlowExtractorV2._infer_transaction_type(
+                                    raw_amount, amount_sign_rule, document_portrait
+                                )
+                                if inferred_type:
+                                    if item.get("transaction_type") != inferred_type:
+                                        logger.info(
+                                            "代码修正收支类型: %s raw_amount=%s LLM=%s → 代码=%s (rule=%s)",
+                                            doc_name, raw_amount, item.get("transaction_type"), inferred_type, amount_sign_rule
+                                        )
+                                        item["transaction_type"] = inferred_type
                         for item in normalized:
                             if not item.get("is_valid", True):
                                 invalid_rows += 1
@@ -682,6 +697,46 @@ class FlowExtractorV2:
                 transaction_type=item.get("transaction_type", "") or ""
             ))
         return records
+
+    @staticmethod
+    def _infer_transaction_type(
+        raw_amount: str,
+        amount_sign_rule: str,
+        portrait: Optional[Dict[str, Any]] = None,
+    ) -> Optional[str]:
+        """
+        Infer transaction_type from raw_amount sign and amount_sign_rule.
+        Returns "收入" or "支出", or None if cannot determine.
+        """
+        if not raw_amount:
+            return None
+
+        # Credit card mode takes highest priority
+        if portrait and portrait.get("account_type") == "credit_card":
+            # For credit cards, we still rely on LLM judgment (semantic-based)
+            # because credit card sign conventions vary and are counter-intuitive
+            return None
+
+        raw = str(raw_amount).strip()
+        has_negative = raw.startswith("-")
+
+        if amount_sign_rule == "pos_income":
+            return "支出" if has_negative else "收入"
+        elif amount_sign_rule == "pos_expense":
+            return "收入" if has_negative else "支出"
+        elif amount_sign_rule == "split_cols":
+            return None  # LLM should handle this correctly
+        elif amount_sign_rule == "no_sign":
+            return None  # Must rely on LLM/summary
+        elif amount_sign_rule == "unknown":
+            # Fallback: if has sign, use it (assume pos_income as default for bank statements)
+            if has_negative:
+                return "支出"
+            elif raw.startswith("+") or not has_negative:
+                # Has explicit positive or no sign - uncertain
+                return None
+            return None
+        return None
 
     def _get_stage2_done_rows(self, task_id: str, doc_paths: List[str]) -> int:
         done_rows = 0
