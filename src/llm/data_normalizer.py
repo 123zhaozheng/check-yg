@@ -42,11 +42,11 @@ transaction_type: 收支 > 收/支 > 借贷方向 > 借方/贷方
 ### 根据文档画像 amount_sign_rule 判断 transaction_type（优先级从高到低）
 1. **信用卡模式**（当文档画像 account_type=credit_card 时激活，最高优先级）：按交易语义判断
 2. **amount_sign_rule 规则**（画像识别出的符号规则，第二优先级）：
-   - positive_means_income：金额正数→"收入"，负数→"支出"（不可用摘要推翻正负号）
-   - positive_means_expense：金额正数→"支出"，负数→"收入"（不可用摘要推翻正负号）
-   - no_sign_use_summary：金额无正负号，严格按摘要/收支列语义判断
-   - separate_income_expense：收入列→"收入"，支出列→"支出"
-   - unknown：综合正负号+摘要判断，正负号优先
+   - 正数表示收入：金额正数→"收入"，负数→"支出"（不可用摘要推翻正负号）
+   - 正数表示支出：金额正数→"支出"，负数→"收入"（不可用摘要推翻正负号）
+   - 无正负号按摘要判断：金额无正负号，严格按摘要/收支列语义判断
+   - 收入支出分列：收入列→"收入"，支出列→"支出"
+   - 未知：综合正负号+摘要判断，正负号优先
 3. **摘要/交易描述语义**（最低优先级，仅在正负号规则不适用时使用）
 
 ### 信用卡特殊规则（优先级最高，覆盖一切）
@@ -59,10 +59,10 @@ transaction_type: 收支 > 收/支 > 借贷方向 > 借方/贷方
 - ✅ 正确：信用卡还款源文档金额为"-862"，输出 amount="862" transaction_type="收入"
 
 ### 借记卡/普通银行流水：摘要与正负号冲突的反例
-- ❌ 错误：amount_sign_rule=positive_means_income，源文档金额为正数"1200.00"，摘要为"跨行转出"，输出 transaction_type="支出"（正号被摘要推翻）
-- ✅ 正确：amount_sign_rule=positive_means_income，源文档金额为正数"1200.00"，摘要为"跨行转出"，输出 amount="1200" transaction_type="收入"（正号为首要依据）
-- ❌ 错误：amount_sign_rule=positive_means_income，源文档金额为负数"-795.42"，摘要为"贷款还款"，输出 transaction_type="收入"（负号被摘要推翻）
-- ✅ 正确：amount_sign_rule=positive_means_income，源文档金额为负数"-795.42"，摘要为"贷款还款"，输出 amount="795.42" transaction_type="支出"（负号为首要依据）
+- ❌ 错误：amount_sign_rule=正数表示收入，源文档金额为正数"1200.00"，摘要为"跨行转出"，输出 transaction_type="支出"（正号被摘要推翻）
+- ✅ 正确：amount_sign_rule=正数表示收入，源文档金额为正数"1200.00"，摘要为"跨行转出"，输出 amount="1200" transaction_type="收入"（正号为首要依据）
+- ❌ 错误：amount_sign_rule=正数表示收入，源文档金额为负数"-795.42"，摘要为"贷款还款"，输出 transaction_type="收入"（负号被摘要推翻）
+- ✅ 正确：amount_sign_rule=正数表示收入，源文档金额为负数"-795.42"，摘要为"贷款还款"，输出 amount="795.42" transaction_type="支出"（负号为首要依据）
 
 ## 字段清洗规则
 1) 若存在明确"对方/商户/交易对手"列，则优先填入 counterparty_name
