@@ -452,7 +452,7 @@ class FlowExtractorV2:
             try:
                 document_portrait = portrait_future.result(timeout=self.config.llm_timeout)
                 if document_portrait is not None:
-                    logger.info("文档画像提取完成: %s (account_type=%s)", doc_path.name, document_portrait.get("account_type", "unknown"))
+                    logger.info("文档画像提取完成: %s 画像=%s", doc_path.name, json.dumps(document_portrait, ensure_ascii=False))
             except Exception as exc:
                 logger.warning("画像提取超时或失败 %s: %s", doc_path.name, exc)
         if portrait_executor is not None:

@@ -250,7 +250,7 @@ class DocumentPortraitExtractor:
 
         result = self._make_request(system_prompt, user_message)
         if result is not None:
-            logger.info("文档画像提取成功: document_name=%s, account_type=%s", document_name, result.get("account_type", "unknown"))
+            logger.info("文档画像提取成功: document_name=%s, 画像结果=%s", document_name, json.dumps(result, ensure_ascii=False))
         return result
 
     def is_available(self) -> bool:
