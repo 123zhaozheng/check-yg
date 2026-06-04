@@ -346,6 +346,16 @@ class FlowExtractorV2:
             except Exception as exc:
                 logger.warning("提取non_table_context失败 %s: %s", doc_path.name, exc)
 
+        # Build content preview from raw tables for portrait extraction
+        content_preview = ""
+        if raw_tables:
+            preview_lines = []
+            for table in raw_tables[:3]:
+                preview = table.get_preview(self.config.flow_portrait_lines)
+                if preview:
+                    preview_lines.append(preview)
+            content_preview = "\n\n".join(preview_lines)
+
         # 画像提取与分类并行：先提交画像任务，分类循环完成后取结果
         portrait_future = None
         portrait_executor = None
@@ -356,6 +366,7 @@ class FlowExtractorV2:
                 self.portrait_extractor.extract_portrait,
                 doc_path.name,
                 non_table_context,
+                content_preview,
             )
         elif not non_table_context:
             logger.info("文档无非表格文本，跳过画像提取: %s", doc_path.name)

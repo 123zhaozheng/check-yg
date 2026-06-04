@@ -24,6 +24,12 @@ SYSTEM_PROMPT_DOCUMENT_PORTRAIT = """你是一个银行/支付文档画像提取
 - institution: 银行/支付机构名称，无法确定则为空
 - statement_period: 账单周期/流水时间范围，无法确定则为空
 - key_observations: 关键观察列表，包含文档中的特殊标识、关键特征词等
+- amount_sign_rule: 金额符号规则，必须为以下之一：
+  - positive_means_income: 正数=收入，负数=支出（如"收入/支出金额"列，正数对应存入/转入）
+  - positive_means_expense: 正数=支出，负数=收入（如信用卡账单，正数对应消费/刷卡）
+  - no_sign_use_summary: 金额无正负号，靠摘要/收支列判断
+  - separate_income_expense: 收入/支出分两列（或借方/贷方双列）
+  - unknown: 无法判断
 
 ## 判断要点
 - 文件名中的"信用卡/贷记卡/Credit"→ account_type=credit_card
@@ -32,11 +38,19 @@ SYSTEM_PROMPT_DOCUMENT_PORTRAIT = """你是一个银行/支付文档画像提取
 - 文件名中的"微信/WeChat"→ account_type=wechat
 - 非表格文本中的账户信息、账单周期、机构名称等也应提取
 - 无法确定的字段留空，不要猜测
+- 观察金额列数值是否包含负号：如有负号，判断正数和负数分别对应什么交易类型
+- 若金额列全部为正数或绝对值，无负号 → no_sign_use_summary
+- 若存在"收入金额"+"支出金额"或"借方金额"+"贷方金额"两列 → separate_income_expense
+- 若正数行对应存入/转入/贷款发放等，负数行对应扣款/转出/还款等 → positive_means_income
+- 若正数行对应消费/刷卡/分期等，负数行对应还款/退款等（信用卡常见） → positive_means_expense
 
 ## 输入
 文档名称：{{ document_name }}
 非表格内容：
 {{ non_table_context }}
+
+表格数据预览：
+{{ content_preview }}
 
 ## 返回JSON格式
 {
@@ -45,7 +59,8 @@ SYSTEM_PROMPT_DOCUMENT_PORTRAIT = """你是一个银行/支付文档画像提取
   "account_number_masked": "",
   "institution": "",
   "statement_period": "",
-  "key_observations": []
+  "key_observations": [],
+  "amount_sign_rule": "positive_means_income | positive_means_expense | no_sign_use_summary | separate_income_expense | unknown"
 }
 """
 
@@ -67,6 +82,13 @@ PORTRAIT_SCHEMA = {
         "key_observations": {
             "type": "array",
             "items": {"type": "string"}
+        },
+        "amount_sign_rule": {
+            "type": "string",
+            "enum": [
+                "positive_means_income", "positive_means_expense",
+                "no_sign_use_summary", "separate_income_expense", "unknown"
+            ]
         }
     },
     "required": [
@@ -75,7 +97,8 @@ PORTRAIT_SCHEMA = {
         "account_number_masked",
         "institution",
         "statement_period",
-        "key_observations"
+        "key_observations",
+        "amount_sign_rule"
     ],
     "additionalProperties": False
 }
@@ -176,6 +199,7 @@ class DocumentPortraitExtractor:
         self,
         document_name: str,
         non_table_context: str,
+        content_preview: str = "",
     ) -> str:
         """Render the portrait system prompt using Jinja2, loading from config if available."""
         from ..config import get_config
@@ -189,12 +213,14 @@ class DocumentPortraitExtractor:
         return template.render(
             document_name=document_name,
             non_table_context=non_table_context or "",
+            content_preview=content_preview or "",
         )
 
     def extract_portrait(
         self,
         document_name: str,
         non_table_context: str,
+        content_preview: str = "",
     ) -> Optional[Dict[str, Any]]:
         """
         Extract structured portrait from document name and non-table text.
@@ -202,6 +228,7 @@ class DocumentPortraitExtractor:
         Args:
             document_name: Document file name.
             non_table_context: Non-table text content extracted from the document.
+            content_preview: Table data preview for amount sign rule detection.
 
         Returns:
             Portrait dict on success, None on failure.
@@ -211,7 +238,7 @@ class DocumentPortraitExtractor:
 
         logger.info("请求文档画像提取: document_name=%s, context_length=%d", document_name, len(non_table_context or ""))
 
-        system_prompt = self._render_prompt(document_name, non_table_context)
+        system_prompt = self._render_prompt(document_name, non_table_context, content_preview)
 
         user_message = json.dumps(
             {
