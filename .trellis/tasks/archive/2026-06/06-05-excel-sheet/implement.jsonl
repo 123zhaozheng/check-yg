@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/06-05-excel-sheet/prd.md", "reason": "PRD with all requirements, acceptance criteria, and technical approach for both features"}
+{"file": ".trellis/tasks/06-05-excel-sheet/research/chinese-holiday-calendar.md", "reason": "Research on chinesecalendar library API, coverage, and Python 3.8 compatibility"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "Backend directory conventions to follow when adding/modifying files"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Quality bar for code changes"}

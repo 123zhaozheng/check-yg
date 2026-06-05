@@ -1,0 +1,3 @@
+{"file": ".trellis/tasks/06-05-excel-sheet/prd.md", "reason": "Verify all acceptance criteria are met against the PRD"}
+{"file": ".trellis/tasks/06-05-excel-sheet/research/chinese-holiday-calendar.md", "reason": "Verify chinesecalendar library usage matches researched API and constraints"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Quality check baseline"}
