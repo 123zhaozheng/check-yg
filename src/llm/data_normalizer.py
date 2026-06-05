@@ -20,7 +20,7 @@ SYSTEM_PROMPT_DATA_NORMALIZER = """你是一个银行/支付流水数据标准�
 ## 标准字段
 1) transaction_time - 交易时间（日期或日期时间）
 2) counterparty_name - 交易对手/商户名称
-3) counterparty_account - 交易对手账号/卡号（无则为空）
+3) counterparty_account - 交易对手账号/卡号（仅纯数字/卡号，无则为空）
 4) amount - 交易金额（正数，不含负号）
 5) raw_amount - 原始金额（保留源文档原始正负号，如"-795.42"、"1200.00"，无符号则为原值）
 6) summary - 摘要/备注/交易说明/商品信息
@@ -30,56 +30,31 @@ SYSTEM_PROMPT_DATA_NORMALIZER = """你是一个银行/支付流水数据标准�
 ## 标准字段映射参考（从左到右优先级递减）
 transaction_time: 交易时间 > 交易日期 > 记账日期 > 入账日期 > 日期
 counterparty_name: 对方户名 > 商户名称 > 交易对方 > 对方名称 > 交易描述
-counterparty_account: 对方账号 > 对方卡号 > 交易对手账号（无则为空）
+counterparty_account: 对方账号 > 对方卡号（仅数字/卡号，不含开户行名称）
 amount: 交易金额 > 发生额 > 金额(元) > 金额 > 借方金额/贷方金额 > 收入/支出
 summary: 摘要 > 备注 > 交易说明 > 商品说明 > 用途 > 交易描述
 transaction_type: 收支 > 收/支 > 借贷方向 > 借方/贷方
 
-## 金额与收支一致性（铁规则，不可违反）
-- amount 字段不允许出现负号，始终输出为正数（去除"-"前缀）
-- raw_amount 保留源文档原始金额文本，包括正负号（如"-795.42"、"1200.00"）
-- 即使源文档金额带负号，amount 也要去掉负号，收支方向由 transaction_type 表达
-- transaction_type 只允许"收入"或"支出"，不允许其他值
+## 铁规则
+1. amount 始终为正数，禁止出现负号；raw_amount 保留原始正负号
+2. transaction_type 只允许"收入"或"支出"
+3. counterparty_account 仅填纯数字账号/卡号，禁止填入开户行、银行名称等非数字内容，无账号列为空
+4. 过滤噪音行（合计/小计/总计/余额/页脚/页眉/空行），is_valid=false
 
-### 根据 amount_sign_rule 判断 transaction_type
-- pos_income：金额正数→"收入"，负数→"支出"（不可用摘要推翻正负号）
-- pos_expense：金额正数→"支出"，负数→"收入"（不可用摘要推翻正负号）
-- no_sign：金额无正负号，严格按摘要/收支列语义判断
-- split_cols：收入列→"收入"，支出列→"支出"
-- unknown：综合正负号+摘要判断，正负号优先
+## 收支方向判断（仅代码无法确定时由你判断）
+代码已根据 amount_sign_rule + raw_amount 正负号确定收支方向的场景，你无需再判断。以下场景需你判断：
+- amount_sign_rule=no_sign：无正负号，按摘要/收支列语义判断
+- amount_sign_rule=split_cols：收入列→"收入"，支出列→"支出"
+- amount_sign_rule=unknown：综合判断，正负号优先于摘要
+- account_type=credit_card：按交易语义判断（消费→支出，还款/退款→收入）
 
-### 信用卡特殊规则（优先级最高，覆盖一切）
-- 当文档画像中 account_type 为 credit_card 时，进入信用卡模式
-- 信用卡消费/刷卡/分期/手续费/年费/取现/违约金 → transaction_type="支出"，amount 去掉负号输出为正数
-- 信用卡还款/退款/退货/冲正/返现/调账转入/利息返还 → transaction_type="收入"，amount 输出为正数
-- ❌ 错误：信用卡消费 amount="-500" transaction_type="支出"（amount不应有负号）
-- ✅ 正确：信用卡消费 amount="500" raw_amount="-500" transaction_type="支出"
-- ❌ 错误：信用卡还款源文档金额为"-862"，输出 amount="-862" transaction_type="收入"
-- ✅ 正确：信用卡还款 amount="862" raw_amount="-862" transaction_type="收入"
-
-### 借记卡/普通银行流水：摘要与正负号冲突的反例
-- ❌ 错误：amount_sign_rule=pos_income，源文档金额为正数"1200.00"，摘要为"跨行转出"，输出 transaction_type="支出"
-- ✅ 正确：amount_sign_rule=pos_income，源文档金额为正数"1200.00"，摘要为"跨行转出"，输出 amount="1200" raw_amount="1200.00" transaction_type="收入"
-- ❌ 错误：amount_sign_rule=pos_income，源文档金额为负数"-795.42"，摘要为"贷款还款"，输出 transaction_type="收入"
-- ✅ 正确：amount_sign_rule=pos_income，源文档金额为负数"-795.42"，摘要为"贷款还款"，输出 amount="795.42" raw_amount="-795.42" transaction_type="支出"
-
-## 字段清洗规则
-1) 若存在明确"对方/商户/交易对手"列，则优先填入 counterparty_name
-2) "摘要/备注/交易说明/商品/用途"等列优先填入 summary
-3) 若只有一个"交易描述/商户名称"列，且无法区分，对 counterparty_name 与 summary 可相同
-4) counterparty_account 仅在有明确账号/卡号列时填入，否则为空
-5) 过滤噪音行：合计/小计/总计/余额/页脚/页眉/空行等，is_valid=false
-6) 日期时间统一输出为 "YYYY-MM-DD hh:mm:ss"：
-   - 只有日期时补全时间为 "00:00:00"
-   - 有时间但缺少秒时补全为 ":00"
-7) 金额清洗：raw_amount 保留源文档原始金额文本（含正负号）；amount 去除前缀/符号（"RMB"、"￥"、"¥"、","、"-"），只保留纯数值，始终为正数
-8) 输出必须严格遵守 JSON 格式
+## 字段清洗
+1. 日期统一 "YYYY-MM-DD hh:mm:ss"，仅日期补 "00:00:00"，缺秒补 ":00"
+2. 金额去除前缀（"RMB""￥""¥"", ""），amount 去负号，raw_amount 保留原值
+3. 若只有一个"交易描述/商户名称"列，counterparty_name 与 summary 可相同
 
 ## 文档画像
-{{ document_portrait }}
-
-## 表头属性
-{{ header_attributes }}
+画像数据在下方用户消息中提供，请参考画像信息进行标准化。
 
 ## 返回JSON格式
 {
@@ -215,32 +190,12 @@ class FlowDataNormalizer:
         object_format = {"type": "json_object"}
         return self._post(system_prompt, user_message, object_format)
 
-    def _render_prompt(
-        self,
-        document_portrait: Optional[Dict[str, Any]] = None,
-        header_attributes: Optional[List[str]] = None,
-    ) -> str:
-        """Render the normalizer system prompt using Jinja2, loading from config if available."""
+    def _render_prompt(self) -> str:
+        """Return the normalizer system prompt, loading from config if available."""
         from ..config import get_config
-        from jinja2 import Environment, Undefined
 
         config = get_config()
-        prompt_template = config.prompt_normalizer or SYSTEM_PROMPT_DATA_NORMALIZER
-
-        portrait_text = ""
-        if document_portrait:
-            portrait_text = json.dumps(document_portrait, ensure_ascii=False, indent=2)
-
-        header_text = ""
-        if header_attributes:
-            header_text = json.dumps(header_attributes, ensure_ascii=False)
-
-        env = Environment(undefined=Undefined)
-        template = env.from_string(prompt_template)
-        return template.render(
-            document_portrait=portrait_text,
-            header_attributes=header_text,
-        )
+        return config.prompt_normalizer or SYSTEM_PROMPT_DATA_NORMALIZER
 
     def normalize_rows(
         self,
@@ -257,13 +212,13 @@ class FlowDataNormalizer:
         document_portrait: structured portrait dict from DocumentPortraitExtractor.
             If None, fallback context is inferred from document_name.
         """
-        system_prompt = self._render_prompt(document_portrait, header_attributes)
+        system_prompt = self._render_prompt()
 
         payload = {
-            "document_name": document_name,
+            "document_portrait": document_portrait,
             "header_attributes": header_attributes,
             "rows": rows,
-            "source_file": source_file
+            "source_file": source_file,
         }
         user_message = json.dumps(payload, ensure_ascii=False)
         result = self._make_request(system_prompt, user_message)

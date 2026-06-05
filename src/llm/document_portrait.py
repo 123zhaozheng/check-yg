@@ -45,12 +45,7 @@ SYSTEM_PROMPT_DOCUMENT_PORTRAIT = """你是一个银行/支付文档画像提取
 - 若正数行对应消费/刷卡/分期等，负数行对应还款/退款等（信用卡常见） → pos_expense
 
 ## 输入
-文档名称：{{ document_name }}
-非表格内容：
-{{ non_table_context }}
-
-表格数据预览：
-{{ content_preview }}
+输入数据（文档名称、非表格内容、表格数据预览）在下方用户消息中以JSON格式提供。
 
 ## 返回JSON格式
 {
@@ -195,26 +190,12 @@ class DocumentPortraitExtractor:
         object_format = {"type": "json_object"}
         return self._post(system_prompt, user_message, object_format)
 
-    def _render_prompt(
-        self,
-        document_name: str,
-        non_table_context: str,
-        content_preview: str = "",
-    ) -> str:
-        """Render the portrait system prompt using Jinja2, loading from config if available."""
+    def _render_prompt(self) -> str:
+        """Return the portrait system prompt, loading from config if available."""
         from ..config import get_config
-        from jinja2 import Environment, Undefined
 
         config = get_config()
-        prompt_template = config.prompt_portrait or SYSTEM_PROMPT_DOCUMENT_PORTRAIT
-
-        env = Environment(undefined=Undefined)
-        template = env.from_string(prompt_template)
-        return template.render(
-            document_name=document_name,
-            non_table_context=non_table_context or "",
-            content_preview=content_preview or "",
-        )
+        return config.prompt_portrait or SYSTEM_PROMPT_DOCUMENT_PORTRAIT
 
     def extract_portrait(
         self,
@@ -238,12 +219,13 @@ class DocumentPortraitExtractor:
 
         logger.info("请求文档画像提取: document_name=%s, context_length=%d", document_name, len(non_table_context or ""))
 
-        system_prompt = self._render_prompt(document_name, non_table_context, content_preview)
+        system_prompt = self._render_prompt()
 
         user_message = json.dumps(
             {
                 "document_name": document_name,
                 "non_table_context": non_table_context or "",
+                "content_preview": content_preview or "",
             },
             ensure_ascii=False,
         )

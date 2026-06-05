@@ -32,10 +32,10 @@ SYSTEM_PROMPT_FLOW_TABLE_CLASSIFIER = """你是一个银行/支付流水表格�
 微信：交易时间、交易对方/商户名称、交易类型/商品、收/支、金额(元)
 
 ## 文档画像参考
-{{ document_portrait }}
+画像数据在下方用户消息中提供，请参考画像信息进行判断。
 
 ## 内容预览
-{{ content_preview }}
+预览数据在下方用户消息中提供，请参考预览内容进行判断。
 
 ## 表头输出规则
 - 返回表头属性列表，顺序与原表格列顺序一致
@@ -153,28 +153,12 @@ class FlowTableClassifier:
         object_format = {"type": "json_object"}
         return self._post(system_prompt, user_message, object_format)
 
-    def _render_prompt(
-        self,
-        document_portrait: Optional[Dict[str, Any]] = None,
-        content_preview: str = "",
-    ) -> str:
-        """Render the classifier system prompt using Jinja2, loading from config if available."""
+    def _render_prompt(self) -> str:
+        """Return the classifier system prompt, loading from config if available."""
         from ..config import get_config
-        from jinja2 import Environment, Undefined
 
         config = get_config()
-        prompt_template = config.prompt_classifier or SYSTEM_PROMPT_FLOW_TABLE_CLASSIFIER
-
-        portrait_text = ""
-        if document_portrait:
-            portrait_text = json.dumps(document_portrait, ensure_ascii=False, indent=2)
-
-        env = Environment(undefined=Undefined)
-        template = env.from_string(prompt_template)
-        return template.render(
-            document_portrait=portrait_text,
-            content_preview=content_preview,
-        )
+        return config.prompt_classifier or SYSTEM_PROMPT_FLOW_TABLE_CLASSIFIER
 
     def analyze_table(
         self,
@@ -186,11 +170,13 @@ class FlowTableClassifier:
         if not table.rows:
             return None
 
-        system_prompt = self._render_prompt(document_portrait, content_preview)
+        system_prompt = self._render_prompt()
 
         preview_html = table.get_preview(self.preview_rows)
         user_message = (
             f"文档名称：{document_name}\n\n"
+            f"文档画像：{json.dumps(document_portrait, ensure_ascii=False) if document_portrait else '无'}\n\n"
+            f"内容预览：{content_preview or '无'}\n\n"
             f"请分析以下表格：\n\n{preview_html}"
         )
         result = self._make_request(system_prompt, user_message)

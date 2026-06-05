@@ -3,6 +3,7 @@
 V2 Flow extractor with AI-only table classification and normalization.
 """
 
+import json
 import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
