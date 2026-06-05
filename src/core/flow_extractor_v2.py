@@ -226,6 +226,10 @@ class FlowExtractorV2:
                         "stage": "resume",
                         "error": err
                     })
+                # 记录文档统计（缓存续跑）
+                result.per_document_stats[doc_path.name] = {
+                    "record_count": int(existing_state.get("normalized_records", 0) or 0),
+                }
                 continue
             try:
                 doc_state, stats = self._process_document_stage1(
@@ -256,6 +260,8 @@ class FlowExtractorV2:
                         "stage": "stage1",
                         "error": err
                     })
+                # Stage1成功但此时流水数未知，初始化为0，Stage2会更新
+                result.per_document_stats[doc_path.name] = {"record_count": 0}
             except Exception as exc:
                 logger.error("Stage1 处理文档失败 %s: %s", doc_path.name, exc)
                 result.failed_documents.append(doc_path.name)
@@ -652,6 +658,11 @@ class FlowExtractorV2:
                             "stage": "stage2",
                             "error": err
                         })
+            # 更新文档标准化统计
+            with self._lock:
+                result.per_document_stats[doc_name] = {
+                    "record_count": len(doc_records),
+                }
             return doc_records
 
         if workers <= 1:

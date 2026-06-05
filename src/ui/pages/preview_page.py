@@ -520,7 +520,8 @@ class PreviewPage(QWidget):
             exporter = FlowExporter(output_folder=temp_dir)
             output_path = exporter.export(
                 records=self.result.flow_records,
-                task_id=self.result.task_id
+                task_id=self.result.task_id,
+                extraction_result=self.result
             )
             return str(output_path)
         except Exception as e:
@@ -572,7 +573,8 @@ class PreviewPage(QWidget):
             exporter = FlowExporter(output_folder=Path(output_dir))
             output_path = exporter.export(
                 records=self.result.flow_records,
-                task_id=self.result.task_id
+                task_id=self.result.task_id,
+                extraction_result=self.result
             )
             
             # 显示成功提示

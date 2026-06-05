@@ -27,6 +27,8 @@ class ExtractionResult:
     flow_records: List[FlowRecord] = field(default_factory=list)
     failed_documents: List[str] = field(default_factory=list)
     errors: List[Dict[str, str]] = field(default_factory=list)
+    # 每个文档的标准化统计：{文档名: {"record_count": int}}
+    per_document_stats: Dict[str, Dict[str, int]] = field(default_factory=dict)
 
     @property
     def total_amount(self) -> float:
@@ -55,6 +57,7 @@ class ExtractionResult:
             "total_records": int(self.total_records),
             "failed_documents": [str(doc) for doc in self.failed_documents],
             "errors": [self._to_json_safe_dict(err) for err in self.errors],
+            "per_document_stats": {str(k): dict(v) for k, v in self.per_document_stats.items()},
         }
         result['total_amount'] = self.total_amount
         result['flow_records'] = [r.to_dict() for r in self.flow_records]
