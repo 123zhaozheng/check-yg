@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 4
+- **Total Sessions**: 5
 - **Last Active**: 2026-06-05
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~140 | Active |
+| `journal-1.md` | ~173 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 5 | 2026-06-05 | 优化画像输入+标准化缺年推断 | `7e8e471` | `master` |
 | 4 | 2026-06-05 | 标准化Excel导出增加星期几/休息日列+处理汇总Sheet页 | `b766c44` | `master` |
 | 3 | 2026-06-03 | 设置页新增AI提示词Tab与文档画像注入 | `a630e18`, `e42fe17` | `master` |
 | 2 | 2026-06-03 | 已完成任务新增流水目录功能 | `3bd54f1` | `master` |

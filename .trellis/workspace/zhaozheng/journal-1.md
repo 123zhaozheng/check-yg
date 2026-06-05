@@ -138,3 +138,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 5: 优化画像输入+标准化缺年推断
+
+**Date**: 2026-06-05
+**Task**: 优化画像输入+标准化缺年推断
+**Branch**: `master`
+
+### Summary
+
+画像输入优化:非表格5000字(可配置)+全量表4行预览(硬编码)+触发条件放宽(有表格即可);画像提示词强调年份提取;标准化提示词增加缺年推断规则(信用卡跨年场景)
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7e8e471` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
