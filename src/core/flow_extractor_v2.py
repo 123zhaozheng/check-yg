@@ -24,6 +24,8 @@ from .extraction_result import ExtractionResult
 
 logger = logging.getLogger(__name__)
 
+PORTRAIT_PREVIEW_ROWS = 4
+
 
 class FlowExtractorV2:
     """
@@ -356,8 +358,8 @@ class FlowExtractorV2:
         content_preview = ""
         if raw_tables:
             preview_lines = []
-            for table in raw_tables[:3]:
-                preview = table.get_preview(self.config.flow_portrait_lines)
+            for table in raw_tables:
+                preview = table.get_preview(PORTRAIT_PREVIEW_ROWS)
                 if preview:
                     preview_lines.append(preview)
             content_preview = "\n\n".join(preview_lines)
@@ -365,8 +367,8 @@ class FlowExtractorV2:
         # 画像提取与分类并行：先提交画像任务，分类循环完成后取结果
         portrait_future = None
         portrait_executor = None
-        if non_table_context and self.portrait_extractor.is_available():
-            logger.info("开始提取文档画像: %s (非表格文本长度=%d)", doc_path.name, len(non_table_context))
+        if raw_tables and self.portrait_extractor.is_available():
+            logger.info("开始提取文档画像: %s (表格数=%d, 非表格文本长度=%d)", doc_path.name, len(raw_tables), len(non_table_context))
             portrait_executor = ThreadPoolExecutor(max_workers=1)
             portrait_future = portrait_executor.submit(
                 self.portrait_extractor.extract_portrait,
@@ -374,8 +376,8 @@ class FlowExtractorV2:
                 non_table_context,
                 content_preview,
             )
-        elif not non_table_context:
-            logger.info("文档无非表格文本，跳过画像提取: %s", doc_path.name)
+        else:
+            logger.info("文档无表格数据，跳过画像提取: %s", doc_path.name)
 
         for table in raw_tables:
             self._check_pause()

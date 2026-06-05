@@ -52,8 +52,13 @@ SYSTEM_PROMPT_DATA_NORMALIZER = """你是一个银行/支付流水数据标准�
 
 ## 字段清洗
 1. 日期统一 "YYYY-MM-DD hh:mm:ss"，仅日期补 "00:00:00"，缺秒补 ":00"
-2. 金额去除前缀（"RMB""￥""¥"", ""），amount 去负号，raw_amount 保留原值
-3. 若只有一个"交易描述/商户名称"列，counterparty_name 与 summary 可相同
+2. 日期缺年推断：若表格日期仅含月日无年份（如"12/15"、"1月3日"），必须结合画像信息推断年份：
+   - 优先使用 statement_period 中的年份或日期范围
+   - 若 account_type=credit_card 且画像含出账单日/账单周期：注意账单跨年场景（如1月出账单覆盖上年12月消费，则12月日期应为上一年）
+   - 参考 key_observations 中的年份提示
+   - 无法推断年份时保持原样，禁止猜测
+3. 金额去除前缀（"RMB""￥""¥"", ""），amount 去负号，raw_amount 保留原值
+4. 若只有一个"交易描述/商户名称"列，counterparty_name 与 summary 可相同
 
 ## 文档画像
 画像数据在下方用户消息中提供，请参考画像信息进行标准化。

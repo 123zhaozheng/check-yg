@@ -47,7 +47,7 @@ class Config:
             'checkpoint_interval': 50,  # 断点保存间隔（行数）
             'keep_checkpoint_on_success': False,  # 成功后保留文档断点
             'portrait_lines': 100,           # 画像预览行数
-            'portrait_max_chars': 2000,      # non_table_context 最大字符数
+            'portrait_max_chars': 5000,      # non_table_context 最大字符数
             'portrait_parallelism': 2,        # 画像提取并发度
         },
         'prompts': {
@@ -238,8 +238,8 @@ class Config:
 
     @property
     def flow_portrait_max_chars(self) -> int:
-        """流水提取：non_table_context 最大字符数（默认 2000）"""
-        return self.get('flow_extraction.portrait_max_chars', 2000)
+        """流水提取：non_table_context 最大字符数（默认 5000）"""
+        return self.get('flow_extraction.portrait_max_chars', 5000)
 
     @property
     def flow_portrait_parallelism(self) -> int:

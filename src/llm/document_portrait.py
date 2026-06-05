@@ -39,6 +39,7 @@ SYSTEM_PROMPT_DOCUMENT_PORTRAIT = """你是一个银行/支付文档画像提取
 - 文件名中的"支付宝/Alipay"→ account_type=alipay
 - 文件名中的"微信/WeChat"→ account_type=wechat
 - 非表格文本中的账户信息、账单周期、机构名称等也应提取
+- 特别注意提取年份信息：非表格文本中出现的年份（如"2025年"、"2026年"）、账单出账日、结算周期等，这些信息对后续流水日期标准化至关重要，务必记录到 statement_period 或 key_observations 中
 - 无法确定的字段留空，不要猜测
 - 观察金额列数值是否包含负号：如有负号，判断正数和负数分别对应什么交易类型
 - 若金额列全部为正数或绝对值，无负号 → no_sign
