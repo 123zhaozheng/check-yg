@@ -105,3 +105,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 4: 标准化Excel导出增加星期几/休息日列+处理汇总Sheet页
+
+**Date**: 2026-06-05
+**Task**: 标准化Excel导出增加星期几/休息日列+处理汇总Sheet页
+**Branch**: `master`
+
+### Summary
+
+流水明细Sheet追加星期几(周一~周日)和是否休息日(是/否/未知)两列，纯程序化计算基于transaction_time，使用chinesecalendar库判断法定节假日调休；新增处理汇总Sheet页(文档名称/标准化流水数/状态/失败原因)；ExtractionResult增加per_document_stats跟踪每文档统计
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b766c44` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
