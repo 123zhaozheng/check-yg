@@ -28,8 +28,8 @@ logger = logging.getLogger(__name__)
 class FlowExtractorV2:
     """
     V2 Flow extractor:
-    Stage 1 (serial): extract tables and classify flow tables; capture header attributes.
-    Stage 2 (parallel): normalize flow rows into standardized records.
+    Stage 1 (serial): extract tables, classify flow tables, and extract document portrait (with header mapping).
+    Stage 2 (parallel): normalize flow rows into standardized records using portrait column mapping.
     """
 
     def __init__(self, config=None):
@@ -308,7 +308,6 @@ class FlowExtractorV2:
             "document_name": doc_path.name,
             "document_path": str(doc_path),
             "status": "extracting",
-            "header_attributes": [],
             "flow_tables": [],
             "total_tables": 0,
             "flow_tables_count": 0,
@@ -372,8 +371,6 @@ class FlowExtractorV2:
         elif not non_table_context:
             logger.info("文档无非表格文本，跳过画像提取: %s", doc_path.name)
 
-        doc_header_attributes: Optional[List[str]] = None
-
         for table in raw_tables:
             self._check_pause()
             if self._cancel_requested:
@@ -409,24 +406,8 @@ class FlowExtractorV2:
             stats["flow_tables"] += 1
             state["flow_tables_count"] += 1
 
-            header_attributes = decision.get("header_attributes", [])
             header_row_index = int(decision.get("header_row_index", -1))
             data_start_row = int(decision.get("data_start_row", 0))
-
-            if not header_attributes:
-                col_count = len(table.rows[0]) if table.rows else 0
-                header_attributes = [""] * col_count
-            else:
-                col_count = len(table.rows[0]) if table.rows else len(header_attributes)
-                if len(header_attributes) < col_count:
-                    header_attributes = header_attributes + [""] * (col_count - len(header_attributes))
-                elif len(header_attributes) > col_count:
-                    header_attributes = header_attributes[:col_count]
-
-            if doc_header_attributes is None or not doc_header_attributes:
-                if header_attributes:
-                    doc_header_attributes = header_attributes
-                    state["header_attributes"] = doc_header_attributes
 
             if header_row_index < 0:
                 data_start_row = max(0, data_start_row)
@@ -465,10 +446,10 @@ class FlowExtractorV2:
         state["document_portrait"] = document_portrait
         state["non_table_context"] = non_table_context
 
-        if doc_header_attributes is None:
-            state["status"] = "completed"
-        else:
+        if state["flow_tables"]:
             state["status"] = "normalizing"
+        else:
+            state["status"] = "completed"
         self.checkpoints.save_document_state(
             task_id, doc_path.name, state, document_path=str(doc_path)
         )
@@ -515,10 +496,27 @@ class FlowExtractorV2:
             document_portrait = state.get("document_portrait")
             if document_portrait is None:
                 document_portrait = FlowDataNormalizer._infer_document_context(doc_name)
-            if not header_attributes and rows_tables:
+
+            # 优先从画像取 header_attributes（画像同时提供 column_mapping）
+            portrait_header = (document_portrait or {}).get("header_attributes")
+            if portrait_header:
+                header_attributes = portrait_header
+            elif not header_attributes and rows_tables:
+                # 降级：画像无 header_attributes 且 state 也无，从行数据推断列数
                 first_rows = rows_tables[0].get("rows", [])
                 if first_rows:
                     header_attributes = [""] * len(first_rows[0])
+                    logger.info("画像无header_attributes，降级填充空表头: %s 列数=%d", doc_name, len(header_attributes))
+
+            # 向后兼容：旧画像不含 header_attributes，从 state/降级逻辑注入
+            if header_attributes and document_portrait is not None and "header_attributes" not in document_portrait:
+                document_portrait = dict(document_portrait)
+                document_portrait["header_attributes"] = header_attributes
+
+            # 记录 column_mapping 是否可用
+            column_mapping = (document_portrait or {}).get("column_mapping")
+            if not column_mapping:
+                logger.info("画像无column_mapping，标准化器将尽力自行映射: %s", doc_name)
 
             total_doc_rows = sum(len(t.get("rows", [])) for t in rows_tables)
             resume_offset = int(state.get("processed_rows", 0) or 0)
@@ -566,7 +564,6 @@ class FlowExtractorV2:
                         break
                     normalized = self.data_normalizer.normalize_rows(
                         document_name=doc_name,
-                        header_attributes=header_attributes,
                         rows=payload_rows,
                         source_file=doc_name,
                         document_portrait=document_portrait,

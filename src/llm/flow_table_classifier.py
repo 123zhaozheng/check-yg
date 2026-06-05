@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 SYSTEM_PROMPT_FLOW_TABLE_CLASSIFIER = """你是一个银行/支付流水表格识别专家，熟悉中国各大银行、信用卡、支付宝、微信等流水格式。
 
 ## 任务
-根据文档画像与表格预览内容，判断是否为流水表格，并输出表头属性顺序列表。
+根据文档画像与表格预览内容，判断是否为流水表格。
 
 ## 关键判断要点
 - 每行代表一笔交易，通常包含日期/时间、金额、对手方/商户、摘要/备注等
@@ -25,23 +25,11 @@ SYSTEM_PROMPT_FLOW_TABLE_CLASSIFIER = """你是一个银行/支付流水表格�
 - 只有1-2行数据通常不是流水表格
 - 账户信息/汇总统计/账单首页不是流水表格
 
-## 各平台常见列名提示（供识别与归一）
-银行储蓄卡：交易日期/交易时间/记账日期、对方户名/对方名称、对方账号、摘要/备注、收支/借贷、交易金额/发生额
-信用卡账单：交易日期/记账日期/入账日期、交易描述/商户名称、交易金额/记账金额、币种
-支付宝：交易时间、交易对方、对方账号、商品说明/备注、收/支、金额
-微信：交易时间、交易对方/商户名称、交易类型/商品、收/支、金额(元)
-
 ## 文档画像参考
 画像数据在下方用户消息中提供，请参考画像信息进行判断。
 
 ## 内容预览
 预览数据在下方用户消息中提供，请参考预览内容进行判断。
-
-## 表头输出规则
-- 返回表头属性列表，顺序与原表格列顺序一致
-- 如果明确存在表头行：表头属性为表头单元格原文（可简化去空格）
-- 如果没有明确表头：根据列内容推断属性名称（如"交易时间""交易对方""金额""摘要""收支"），无法判断的列用空字符串
-- 表头长度必须等于列数
 
 ## 返回JSON格式
 {
@@ -49,8 +37,7 @@ SYSTEM_PROMPT_FLOW_TABLE_CLASSIFIER = """你是一个银行/支付流水表格�
   "confidence": 0-100整数,
   "reason": "判断理由",
   "header_row_index": 表头行索引（无表头则为-1）,
-  "data_start_row": 数据开始行索引（无表头一般为0）,
-  "header_attributes": ["列1表头","列2表头",...]
+  "data_start_row": 数据开始行索引（无表头一般为0）
 }
 """
 
@@ -62,19 +49,14 @@ CLASSIFIER_SCHEMA = {
         "confidence": {"type": "integer"},
         "reason": {"type": "string"},
         "header_row_index": {"type": "integer"},
-        "data_start_row": {"type": "integer"},
-        "header_attributes": {
-            "type": "array",
-            "items": {"type": "string"}
-        }
+        "data_start_row": {"type": "integer"}
     },
     "required": [
         "is_flow_table",
         "confidence",
         "reason",
         "header_row_index",
-        "data_start_row",
-        "header_attributes"
+        "data_start_row"
     ],
     "additionalProperties": False
 }
@@ -82,7 +64,7 @@ CLASSIFIER_SCHEMA = {
 
 class FlowTableClassifier:
     """
-    AI classifier for deciding whether a table is a flow table and extracting header attributes.
+    AI classifier for deciding whether a table is a flow table.
     """
 
     def __init__(

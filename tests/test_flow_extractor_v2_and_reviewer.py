@@ -85,7 +85,7 @@ class _ResumeNormalizer:
     def is_available(self) -> bool:
         return True
 
-    def normalize_rows(self, document_name, header_attributes, rows, source_file, document_portrait=None):
+    def normalize_rows(self, document_name, rows, source_file, document_portrait=None):
         self.called_row_indexes.extend([int(row["row_index"]) for row in rows])
         normalized = []
         for row in rows:
@@ -111,7 +111,7 @@ class _CancelAfterFirstNormalizer:
     def is_available(self) -> bool:
         return True
 
-    def normalize_rows(self, document_name, header_attributes, rows, source_file, document_portrait=None):
+    def normalize_rows(self, document_name, rows, source_file, document_portrait=None):
         self.called += 1
         if self.called == 1:
             self.extractor.request_cancel()

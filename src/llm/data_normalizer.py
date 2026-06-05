@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 SYSTEM_PROMPT_DATA_NORMALIZER = """你是一个银行/支付流水数据标准化专家。
 
 ## 任务
-给定文档画像、表头属性列表、以及若干行原始表格数据，输出标准化流水记录。
+给定文档画像（含列映射）以及若干行原始表格数据，输出标准化流水记录。
 
 ## 标准字段
 1) transaction_time - 交易时间（日期或日期时间）
@@ -27,13 +27,15 @@ SYSTEM_PROMPT_DATA_NORMALIZER = """你是一个银行/支付流水数据标准�
 7) transaction_type - 收支类型（只允许"收入"或"支出"）
 8) source_file - 来源文件名
 
-## 标准字段映射参考（从左到右优先级递减）
-transaction_time: 交易时间 > 交易日期 > 记账日期 > 入账日期 > 日期
-counterparty_name: 对方户名 > 商户名称 > 交易对方 > 对方名称 > 交易描述
-counterparty_account: 对方账号 > 对方卡号（仅数字/卡号，不含开户行名称）
-amount: 交易金额 > 发生额 > 金额(元) > 金额 > 借方金额/贷方金额 > 收入/支出
-summary: 摘要 > 备注 > 交易说明 > 商品说明 > 用途 > 交易描述
-transaction_type: 收支 > 收/支 > 借贷方向 > 借方/贷方
+## 列映射规则
+用户消息中 document_portrait 包含 header_attributes 和 column_mapping 两个有序数组，一一对应。
+- 严格按 column_mapping 填充，映射到的列内容原封不动还原（不做改写/缩写/翻译）
+- 映射值为 null 的列忽略
+- 映射值为数组的列，该列内容填入数组中所有目标字段
+- transaction_type：允许语义归纳（如"借"→"支出"，"贷"→"收入"，"收"→"收入"）
+- summary：允许从多列拼接或提炼关键词
+- 其余字段（transaction_time, counterparty_name, counterparty_account, amount）必须原封不动还原原文档内容
+- 若 column_mapping 缺失，尽力根据行内容自行判断映射
 
 ## 铁规则
 1. amount 始终为正数，禁止出现负号；raw_amount 保留原始正负号
@@ -200,7 +202,6 @@ class FlowDataNormalizer:
     def normalize_rows(
         self,
         document_name: str,
-        header_attributes: List[str],
         rows: List[Dict[str, Any]],
         source_file: str,
         document_portrait: Optional[Dict[str, Any]] = None,
@@ -210,13 +211,13 @@ class FlowDataNormalizer:
 
         rows: list of {"row_index": int, "cells": [str,...]}
         document_portrait: structured portrait dict from DocumentPortraitExtractor.
+            Contains header_attributes and column_mapping for column mapping.
             If None, fallback context is inferred from document_name.
         """
         system_prompt = self._render_prompt()
 
         payload = {
             "document_portrait": document_portrait,
-            "header_attributes": header_attributes,
             "rows": rows,
             "source_file": source_file,
         }

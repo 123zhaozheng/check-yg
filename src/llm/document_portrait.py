@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 SYSTEM_PROMPT_DOCUMENT_PORTRAIT = """你是一个银行/支付文档画像提取专家。
 
 ## 任务
-根据文档名称与非表格文本内容，提取文档的结构化画像信息。
+根据文档名称、非表格文本内容与表格数据预览，提取文档的结构化画像信息，以及流水表格的表头属性列表及其与标准字段的映射关系。
 
 ## 画像字段说明
 - account_type: 账户类型，必须为 credit_card/debit_card/alipay/wechat/bank_general/unknown 之一
@@ -30,6 +30,8 @@ SYSTEM_PROMPT_DOCUMENT_PORTRAIT = """你是一个银行/支付文档画像提取
   - no_sign: 金额无正负号，靠摘要/收支列判断
   - split_cols: 收入/支出分两列（或借方/贷方双列）
   - unknown: 无法判断
+- header_attributes: 有序数组，按列顺序列出流水表格的表头名
+- column_mapping: 有序数组，与 header_attributes 一一对应，值为标准字段名/数组/null
 
 ## 判断要点
 - 文件名中的"信用卡/贷记卡/Credit"→ account_type=credit_card
@@ -44,6 +46,15 @@ SYSTEM_PROMPT_DOCUMENT_PORTRAIT = """你是一个银行/支付文档画像提取
 - 若正数行对应存入/转入/贷款发放等，负数行对应扣款/转出/还款等 → pos_income
 - 若正数行对应消费/刷卡/分期等，负数行对应还款/退款等（信用卡常见） → pos_expense
 
+## 映射指导
+8个标准字段：transaction_time, counterparty_name, counterparty_account, amount, raw_amount, summary, transaction_type, source_file
+映射规则：
+- 原表头名与标准字段语义匹配时映射为对应标准字段名字符串
+- 一对多时用数组，如"交易描述"同时映射到 ["counterparty_name","summary"]
+- 无法映射时为 null
+- split_cols 场景：借方金额/贷方金额两列都映射到 "amount"
+- raw_amount 和 source_file 不需要映射（raw_amount 由标准化器从 amount 列推导，source_file 由代码填充）
+
 ## 输入
 输入数据（文档名称、非表格内容、表格数据预览）在下方用户消息中以JSON格式提供。
 
@@ -55,7 +66,9 @@ SYSTEM_PROMPT_DOCUMENT_PORTRAIT = """你是一个银行/支付文档画像提取
   "institution": "",
   "statement_period": "",
   "key_observations": [],
-  "amount_sign_rule": "pos_income | pos_expense | no_sign | split_cols | unknown"
+  "amount_sign_rule": "pos_income | pos_expense | no_sign | split_cols | unknown",
+  "header_attributes": ["交易日期", "对方户名", "对方账号", "摘要", "借贷", "交易金额", "币种"],
+  "column_mapping": ["transaction_time", "counterparty_name", "counterparty_account", "summary", "transaction_type", "amount", null]
 }
 """
 
@@ -84,6 +97,20 @@ PORTRAIT_SCHEMA = {
                 "pos_income", "pos_expense",
                 "no_sign", "split_cols", "unknown"
             ]
+        },
+        "header_attributes": {
+            "type": "array",
+            "items": {"type": "string"}
+        },
+        "column_mapping": {
+            "type": "array",
+            "items": {
+                "oneOf": [
+                    {"type": "string"},
+                    {"type": "array", "items": {"type": "string"}},
+                    {"type": "null"}
+                ]
+            }
         }
     },
     "required": [
@@ -93,7 +120,9 @@ PORTRAIT_SCHEMA = {
         "institution",
         "statement_period",
         "key_observations",
-        "amount_sign_rule"
+        "amount_sign_rule",
+        "header_attributes",
+        "column_mapping"
     ],
     "additionalProperties": False
 }

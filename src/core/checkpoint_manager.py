@@ -387,7 +387,6 @@ class CheckpointManager:
                     "document_name": doc_name,
                     "document_path": doc_path_str,
                     "status": "pending",
-                    "header_attributes": [],
                     "flow_tables": [],
                     "total_tables": 0,
                     "flow_tables_count": 0,
