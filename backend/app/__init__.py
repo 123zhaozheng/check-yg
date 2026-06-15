@@ -1,0 +1,1 @@
+"""Check-YG Backend Application."""
