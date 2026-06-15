@@ -204,3 +204,37 @@ Completed joiner onboarding task 00-join-zhaozheng; learned Trellis workflow, ru
 ### Next Steps
 
 - None - task complete
+
+
+## Session 7: Web-Split Phase 1: 基础设施完成
+
+**Date**: 2026-06-15
+**Task**: Web-Split Phase 1: 基础设施完成
+**Branch**: `feat/web-split`
+
+### Summary
+
+完成 Phase 1 基础设施搭建：1) web-infra: 修复 9 个 shadcn 组件导入问题，添加前端基础设施（API/WebSocket/Auth hooks）；2) backend-infra: FastAPI 入口、配置管理、12 张数据库模型、Pydantic schemas。所有验收标准通过。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `bf6c1d6` | (see git log) |
+| `6e63285` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
