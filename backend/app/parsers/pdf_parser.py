@@ -4,7 +4,7 @@
 import logging
 import re
 from pathlib import Path
-from typing import List
+from typing import List, Optional, Optional
 
 import pdfplumber
 
@@ -43,7 +43,7 @@ class PDFParser(BaseParser):
             self.logger.error("Failed to extract raw tables from PDF %s: %s", file_path.name, e)
             return []
 
-    def _convert_table(self, table_data: List[List], table_index: int) -> RawTable:
+    def _convert_table(self, table_data: List[List], table_index: int) -> Optional[RawTable]:
         """Convert pdfplumber table data to RawTable."""
         if not table_data:
             return None

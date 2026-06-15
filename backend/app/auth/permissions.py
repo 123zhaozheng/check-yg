@@ -59,11 +59,13 @@ async def check_task_permission(
     return True
 
 
-def check_admin_permission(user: User) -> bool:
+async def check_admin_permission(user: User) -> bool:
     """Check if user has admin role."""
-    return user.role == "admin"
+    role = await user.awaitable_attrs.role
+    return role.name == "admin"
 
 
-def check_auditor_permission(user: User) -> bool:
+async def check_auditor_permission(user: User) -> bool:
     """Check if user has auditor or admin role."""
-    return user.role in ("auditor", "admin")
+    role = await user.awaitable_attrs.role
+    return role.name in ("auditor", "admin")

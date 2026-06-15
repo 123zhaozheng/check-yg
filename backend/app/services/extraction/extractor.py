@@ -119,7 +119,6 @@ class FlowExtractor:
         task_id: Optional[str] = None,
         batch_size: int = 20,
         confidence_threshold: int = 70,
-        parallelism: int = 4,
     ) -> ExtractionResult:
         """Extract flow records from documents."""
         self._cancel_requested = False

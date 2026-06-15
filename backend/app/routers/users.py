@@ -52,7 +52,7 @@ async def create_user(
 ):
     """Create a new user (admin only)."""
     # Check admin permission
-    if not check_admin_permission(current_user):
+    if not await check_admin_permission(current_user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only administrators can create users",
@@ -116,7 +116,7 @@ async def list_users(
     current_user: User = Depends(get_current_user),
 ):
     """List all users (admin only)."""
-    if not check_admin_permission(current_user):
+    if not await check_admin_permission(current_user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only administrators can list users",
@@ -149,7 +149,7 @@ async def get_user(
 ):
     """Get user details (admin only or self)."""
     # Allow users to view their own profile
-    if current_user.id != user_id and not check_admin_permission(current_user):
+    if current_user.id != user_id and not await check_admin_permission(current_user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to view this user",
@@ -182,7 +182,7 @@ async def update_user(
     current_user: User = Depends(get_current_user),
 ):
     """Update user (admin only)."""
-    if not check_admin_permission(current_user):
+    if not await check_admin_permission(current_user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only administrators can update users",
@@ -245,7 +245,7 @@ async def delete_user(
     current_user: User = Depends(get_current_user),
 ):
     """Delete user (admin only)."""
-    if not check_admin_permission(current_user):
+    if not await check_admin_permission(current_user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only administrators can delete users",

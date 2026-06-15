@@ -1,7 +1,6 @@
 {
   "__version": 2,
   "hashes": {
-    "AGENTS.md": "6cacfe99748b435d0660c2463c697bc323d53798aecf3492283ca8eac1b29682",
     ".trellis/config.yaml": "5c9207418cecc390e9d86d589b4183b831f76697d92fb42fefd5221cd8772e51",
     ".trellis/scripts/add_session.py": "f26b66a539d160c739d4b88fd926b3d7f6745be326cd57131e5ef17a7b011fbe",
     ".trellis/scripts/common/active_task.py": "6c88ed40ef7289bca0f6d2ecba0f8b8aef46cd58788080fbeeea88de138a431f",
@@ -25,6 +24,10 @@
     ".trellis/scripts/common/types.py": "9962081cc2608fb9d1deb32c6880e336f62cdca6b338e7ae813304701e155ee9",
     ".trellis/scripts/common/workflow_phase.py": "2b260f4a7770e9c3223129836716bd8e2c0f0568acd682224a57415bc1dc726b",
     ".trellis/scripts/common/__init__.py": "3d5e9347141f0296319a5beb29d69ae714c5a474b9078caeb3edd7c5f6562e22",
+    ".trellis/scripts/common/__pycache__/active_task.cpython-313.pyc": "2141832405239e78b2e81ee5ce48de8015d68dd0480ca4e5f4a2ded7939bdece",
+    ".trellis/scripts/common/__pycache__/developer.cpython-313.pyc": "b1ba5d606054c2a4b35e42af4e85180a148c4829cbce7fde57dec98cd5358ce2",
+    ".trellis/scripts/common/__pycache__/paths.cpython-313.pyc": "7ffdd7405f5c0fafc49004846b5930cd2e2f527d4384d79b266c33536e0ebe51",
+    ".trellis/scripts/common/__pycache__/__init__.cpython-313.pyc": "002d136d99aa751656863854fb6c229b42e419f459dd74e2af90e1c1f1f7e8d4",
     ".trellis/scripts/get_context.py": "af3ea7cd563a453227cf2cb4ab04d667390046b7febfac2217348d0892781f4b",
     ".trellis/scripts/get_developer.py": "84c27076323c3e0f2c9c8ed16e8aa865e225d902a187c37e20ee1a46e7142d8f",
     ".trellis/scripts/hooks/linear_sync.py": "cfc270b7ff775caa5b2434823c45414a3b37f9ba2aa1e293a26daef9fd2e577a",
@@ -41,7 +44,6 @@
     ".claude/hooks/inject-workflow-state.py": "0f5f983be0fbf6241f55f5d4a1838064322178a2b3efb227027c20d26f2354d2",
     ".claude/hooks/session-start.py": "c43314d810937c4fafb65af7128fd01f01c367c4378aef6756a5237bed78d585",
     ".claude/settings.json": "27ad116000465c63b2c572e05bbdcf3a3c340614cc9cb62fb5c112b29f0f96bc",
-    ".claude/settings.local.json": "1a86522579abf981b17f08a5daf2dd89dd9a5a50f755423c85a30f17776dc731",
     ".claude/skills/trellis-before-dev/SKILL.md": "310e0121d5915a8aa46596fc172b53a7bdbaae4fd11699500e3166783a15a180",
     ".claude/skills/trellis-brainstorm/SKILL.md": "603d023a10dbee625d540df98020f2dde4b6e5c2bf981226253b88d8eff7c388",
     ".claude/skills/trellis-break-loop/SKILL.md": "35afb53fef42cd494e566f1ef170dbf442ec2be7e19931f28a14079b4dda753f",

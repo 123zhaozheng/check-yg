@@ -38,6 +38,7 @@ class ExcelParser(BaseParser):
         if not self.can_parse(file_path):
             return []
 
+        wb = None
         try:
             wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
             tables = []
@@ -48,13 +49,15 @@ class ExcelParser(BaseParser):
                 if raw_table and raw_table.rows:
                     tables.append(raw_table)
 
-            wb.close()
             return tables
 
         except Exception as e:
             self.logger.error("Failed to extract raw tables from Excel %s: %s",
                             file_path.name, e)
             return []
+        finally:
+            if wb is not None:
+                wb.close()
 
     def extract_non_table_context(self, file_path: Path, max_chars: int = 2000) -> str:
         """Excel files are primarily tabular; return empty string."""

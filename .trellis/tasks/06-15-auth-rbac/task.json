@@ -3,7 +3,7 @@
   "name": "auth-rbac",
   "title": "认证与 RBAC 权限系统",
   "description": "",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
