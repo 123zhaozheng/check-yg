@@ -1,16 +1,20 @@
-import { Button } from "~/components/ui/button"
+import { Navigate } from "react-router"
+import { useAuth } from "~/hooks/use-auth"
 
 export default function Home() {
-  return (
-    <div className="flex min-h-svh p-6">
-      <div className="flex max-w-md min-w-0 flex-col gap-4 text-sm leading-loose">
-        <div>
-          <h1 className="font-medium">Project ready!</h1>
-          <p>You may now add components and start building.</p>
-          <p>We&apos;ve already added the button component for you.</p>
-          <Button className="mt-2">Button</Button>
-        </div>
+  const { isAuthenticated, isLoading } = useAuth()
+
+  if (isLoading) {
+    return (
+      <div className="flex min-h-svh items-center justify-center">
+        <div className="text-sm text-muted-foreground">加载中...</div>
       </div>
-    </div>
-  )
+    )
+  }
+
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace />
+  }
+
+  return <Navigate to="/dashboard" replace />
 }
