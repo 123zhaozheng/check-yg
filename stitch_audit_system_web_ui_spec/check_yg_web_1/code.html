@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="zh-CN"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>登录 - check-yg Web</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&amp;family=JetBrains+Mono:wght@400&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+          darkMode: "class",
+          theme: {
+            extend: {
+              "colors": {
+                      "border-light": "#E2E8F0",
+                      "on-primary-fixed": "#191c1e",
+                      "on-secondary-container": "#adb4ce",
+                      "surface-bright": "#3a3939",
+                      "primary-fixed": "#e0e3e5",
+                      "on-tertiary-fixed": "#1d1b16",
+                      "error-container": "#93000a",
+                      "on-surface": "#e5e2e1",
+                      "primary-fixed-dim": "#c4c7c9",
+                      "accent-positive": "#10B981",
+                      "on-secondary": "#283044",
+                      "tertiary": "#ffffff",
+                      "error": "#ffb4ab",
+                      "inverse-primary": "#5c5f61",
+                      "on-secondary-fixed": "#131b2e",
+                      "surface-variant": "#353535",
+                      "surface-container-lowest": "#0e0e0e",
+                      "surface-tint": "#c4c7c9",
+                      "foreground-light": "#020817",
+                      "muted-dark": "#1E293B",
+                      "on-error": "#690005",
+                      "on-tertiary-container": "#67645d",
+                      "surface-dim": "#131313",
+                      "background-light": "#FFFFFF",
+                      "secondary-container": "#3f465c",
+                      "on-primary-fixed-variant": "#444749",
+                      "on-primary": "#2d3133",
+                      "on-secondary-fixed-variant": "#3f465c",
+                      "foreground-dark": "#F8FAFC",
+                      "outline": "#8e9193",
+                      "secondary-fixed": "#dae2fd",
+                      "surface-container-low": "#1c1b1b",
+                      "on-tertiary": "#32302a",
+                      "border-dark": "#334155",
+                      "on-error-container": "#ffdad6",
+                      "on-surface-variant": "#c4c7c9",
+                      "tertiary-fixed-dim": "#cbc6bd",
+                      "surface-container-highest": "#353535",
+                      "muted-light": "#F1F5F9",
+                      "tertiary-fixed": "#e7e2d9",
+                      "surface-container-high": "#2a2a2a",
+                      "background-dark": "#0A0A0A",
+                      "primary": "#ffffff",
+                      "background": "#131313",
+                      "on-background": "#e5e2e1",
+                      "secondary": "#bec6e0",
+                      "primary-container": "#e0e3e5",
+                      "accent-warning": "#F59E0B",
+                      "surface": "#131313",
+                      "surface-container": "#201f1f",
+                      "tertiary-container": "#e7e2d9",
+                      "on-tertiary-fixed-variant": "#494640",
+                      "inverse-surface": "#e5e2e1",
+                      "outline-variant": "#444749",
+                      "accent-negative": "#EF4444",
+                      "on-primary-container": "#626567",
+                      "secondary-fixed-dim": "#bec6e0",
+                      "inverse-on-surface": "#313030"
+              },
+              "borderRadius": {
+                      "DEFAULT": "0.125rem",
+                      "lg": "0.25rem",
+                      "xl": "0.5rem",
+                      "full": "0.75rem"
+              },
+              "fontFamily": {
+                      "headline-md": ["Inter"],
+                      "headline-xl": ["Inter"],
+                      "headline-lg": ["Inter"],
+                      "label-sm": ["Inter"],
+                      "mono-sm": ["JetBrains Mono"],
+                      "body-sm": ["Inter"],
+                      "headline-sm": ["Inter"],
+                      "label-md": ["Inter"],
+                      "body-lg": ["Inter"],
+                      "body-md": ["Inter"]
+              },
+              "fontSize": {
+                      "headline-md": ["24px", {"lineHeight": "32px", "fontWeight": "600"}],
+                      "headline-xl": ["36px", {"lineHeight": "40px", "letterSpacing": "-0.02em", "fontWeight": "600"}],
+                      "headline-lg": ["30px", {"lineHeight": "36px", "letterSpacing": "-0.02em", "fontWeight": "600"}],
+                      "label-sm": ["12px", {"lineHeight": "16px", "fontWeight": "500"}],
+                      "mono-sm": ["13px", {"lineHeight": "20px", "fontWeight": "400"}],
+                      "body-sm": ["14px", {"lineHeight": "20px", "fontWeight": "400"}],
+                      "headline-sm": ["20px", {"lineHeight": "28px", "fontWeight": "600"}],
+                      "label-md": ["14px", {"lineHeight": "20px", "fontWeight": "500"}],
+                      "body-lg": ["18px", {"lineHeight": "28px", "fontWeight": "400"}],
+                      "body-md": ["16px", {"lineHeight": "24px", "fontWeight": "400"}]
+              }
+            },
+          },
+        }
+    </script>
+<style>
+        body {
+            background-color: #0A0A0A;
+            background-image: 
+                radial-gradient(circle at 50% 50%, #1e1e1e 0%, #0a0a0a 100%);
+        }
+        .glass-card {
+            background: rgba(20, 20, 20, 0.8);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .input-focus-ring:focus {
+            outline: none;
+            box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.1);
+        }
+    </style>
+</head>
+<body class="flex flex-col items-center justify-center min-h-screen p-4 overflow-hidden">
+<main class="w-full max-w-[400px] flex flex-col gap-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
+<!-- Header Branding -->
+<header class="flex flex-col items-center text-center gap-4">
+<div class="size-12 bg-primary rounded-xl flex items-center justify-center shadow-lg shadow-primary/10">
+<span class="material-symbols-outlined text-on-primary text-3xl" data-icon="account_balance">account_balance</span>
+</div>
+<div class="space-y-1">
+<h1 class="font-headline-sm text-headline-sm text-on-surface tracking-tight">Check-YG Web</h1>
+<p class="font-body-sm text-body-sm text-on-surface-variant">员工-客户金额往来审计系统</p>
+</div>
+</header>
+<!-- Login Card -->
+<section class="glass-card rounded-xl p-8 shadow-2xl">
+<form class="flex flex-col gap-5" id="loginForm">
+<!-- Username -->
+<div class="flex flex-col gap-2">
+<label class="font-label-sm text-label-sm text-on-surface-variant" for="username">用户名</label>
+<div class="relative">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant text-lg" data-icon="person">person</span>
+<input class="w-full bg-surface-container-low border border-border-dark rounded-lg py-2.5 pl-10 pr-4 text-on-surface font-body-sm placeholder:text-on-surface-variant/50 transition-all focus:border-primary/50 focus:ring-0" id="username" name="username" placeholder="请输入您的账号" required="" type="text"/>
+</div>
+</div>
+<!-- Password -->
+<div class="flex flex-col gap-2">
+<label class="font-label-sm text-label-sm text-on-surface-variant" for="password">密码</label>
+<div class="relative">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant text-lg" data-icon="lock">lock</span>
+<input class="w-full bg-surface-container-low border border-border-dark rounded-lg py-2.5 pl-10 pr-10 text-on-surface font-body-sm placeholder:text-on-surface-variant/50 transition-all focus:border-primary/50 focus:ring-0" id="password" name="password" placeholder="********" required="" type="password"/>
+<button class="absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-on-surface transition-colors focus:outline-none" onclick="togglePassword()" type="button">
+<span class="material-symbols-outlined text-lg" data-icon="visibility" id="eyeIcon">visibility</span>
+</button>
+</div>
+</div>
+<!-- Action Links -->
+<div class="flex items-center justify-between">
+<a class="font-label-sm text-label-sm text-on-surface-variant hover:text-primary transition-colors" href="#">忘记密码？</a>
+<div class="group relative flex items-center gap-1">
+<span class="font-label-sm text-label-sm text-on-surface-variant/40 cursor-not-allowed">通过邀请码注册</span>
+<span class="material-symbols-outlined text-on-surface-variant/40 text-sm" data-icon="info">info</span>
+<!-- Tooltip -->
+<div class="absolute bottom-full right-0 mb-2 hidden group-hover:block bg-surface-container-highest text-on-surface text-[10px] py-1 px-2 rounded whitespace-nowrap shadow-xl border border-border-dark">
+                        联系管理员获取邀请码
+                    </div>
+</div>
+</div>
+<!-- Submit Button -->
+<button class="w-full bg-primary text-on-primary font-label-md text-label-md py-3 rounded-lg hover:opacity-90 active:scale-[0.98] transition-all flex items-center justify-center gap-2 mt-2" type="submit">
+                登录系统
+                <span class="material-symbols-outlined text-lg" data-icon="login">login</span>
+</button>
+</form>
+</section>
+<!-- Footer -->
+<footer class="flex flex-col items-center gap-6">
+<div class="w-full h-px bg-gradient-to-r from-transparent via-border-dark to-transparent"></div>
+<div class="flex flex-col items-center gap-2">
+<div class="flex items-center gap-4">
+<img alt="CN Flag" class="h-3 rounded-sm opacity-60" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCyfIIHqPTDJ3pUJthYdZR_e5HHSekhb4p3HIDY7Ihr-4i7ZD_ZNjgxmjuU2VDhHDUpk3SrD48o4HKubyyVR_kMenxltK2EMyq0KQB_Ru7q2iZJJYAmYc_bu2oZNpEcW8MQhiI7khZ2IIsUP-Tuq260RWDXXALY5u5eaOv605KSvfw5IZqcwMVz-ln2iWkUzwNxPkxrl5R4l-ji5hBBwZ7OBHRvdVJUIgF7_ASX-Q1KMHaq6aBf_7nv-GVulJlSe1-GVkkowXMPHzw"/>
+<span class="font-mono-sm text-[11px] text-on-surface-variant/40 uppercase tracking-widest">版本 V1.1.0</span>
+</div>
+<p class="font-label-sm text-[10px] text-on-surface-variant/30 text-center leading-relaxed">
+                © 2024 Check-YG Web Audit Enterprise.<br/>
+                所有审计日志均已加密并受监控。
+            </p>
+</div>
+</footer>
+</main>
+<script>
+    function togglePassword() {
+        const passwordInput = document.getElementById('password');
+        const eyeIcon = document.getElementById('eyeIcon');
+        
+        if (passwordInput.type === 'password') {
+            passwordInput.type = 'text';
+            eyeIcon.innerText = 'visibility_off';
+        } else {
+            passwordInput.type = 'password';
+            eyeIcon.innerText = 'visibility';
+        }
+    }
+
+    // Form submission micro-interaction
+    document.getElementById('loginForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+        const btn = this.querySelector('button[type="submit"]');
+        const originalContent = btn.innerHTML;
+        
+        btn.disabled = true;
+        btn.innerHTML = '<span class="material-symbols-outlined animate-spin text-lg" data-icon="progress_activity">progress_activity</span> 验证中...';
+        
+        // Artificial delay for feedback
+        setTimeout(() => {
+            btn.classList.add('bg-accent-positive');
+            btn.innerHTML = '<span class="material-symbols-outlined text-lg" data-icon="check_circle">check_circle</span> 成功';
+            setTimeout(() => {
+                alert('欢迎回来。正在进入审计中心...');
+                btn.disabled = false;
+                btn.classList.remove('bg-accent-positive');
+                btn.innerHTML = originalContent;
+            }, 1000);
+        }, 1500);
+    });
+
+    // Atmospheric visual effect
+    document.addEventListener('mousemove', (e) => {
+        const x = e.clientX / window.innerWidth;
+        const y = e.clientY / window.innerHeight;
+        document.body.style.background = `radial-gradient(circle at ${x * 100}% ${y * 100}%, #1a1a1a 0%, #0a0a0a 100%)`;
+    });
+</script>
+</body></html>
