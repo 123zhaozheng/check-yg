@@ -15,7 +15,7 @@ import {
   InputGroup,
   InputGroupAddon,
 } from "~/components/ui/input-group"
-import { IconPlaceholder } from "@/app/(create)/components/icon-placeholder"
+import { SearchIcon, CheckIcon } from "lucide-react"
 
 function Command({
   className,
@@ -81,14 +81,7 @@ function CommandInput({
           {...props}
         />
         <InputGroupAddon>
-          <IconPlaceholder
-            lucide="SearchIcon"
-            tabler="IconSearch"
-            hugeicons="SearchIcon"
-            phosphor="MagnifyingGlassIcon"
-            remixicon="RiSearchLine"
-            className="size-4 shrink-0 opacity-50"
-          />
+          <SearchIcon className="size-4 shrink-0 opacity-50" />
         </InputGroupAddon>
       </InputGroup>
     </div>
@@ -168,14 +161,7 @@ function CommandItem({
       {...props}
     >
       {children}
-      <IconPlaceholder
-        lucide="CheckIcon"
-        tabler="IconCheck"
-        hugeicons="Tick02Icon"
-        phosphor="CheckIcon"
-        remixicon="RiCheckLine"
-        className="ml-auto opacity-0 group-has-data-[slot=command-shortcut]/command-item:hidden group-data-[checked=true]/command-item:opacity-100"
-      />
+      <CheckIcon className="ml-auto opacity-0 group-has-data-[slot=command-shortcut]/command-item:hidden group-data-[checked=true]/command-item:opacity-100" />
     </CommandPrimitive.Item>
   )
 }

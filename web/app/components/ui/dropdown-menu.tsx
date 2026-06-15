@@ -4,7 +4,7 @@ import * as React from "react"
 import { DropdownMenu as DropdownMenuPrimitive } from "radix-ui"
 
 import { cn } from "~/lib/utils"
-import { IconPlaceholder } from "@/app/(create)/components/icon-placeholder"
+import { CheckIcon, ChevronRightIcon } from "lucide-react"
 
 function DropdownMenu({
   ...props
@@ -109,13 +109,7 @@ function DropdownMenuCheckboxItem({
         data-slot="dropdown-menu-checkbox-item-indicator"
       >
         <DropdownMenuPrimitive.ItemIndicator>
-          <IconPlaceholder
-            lucide="CheckIcon"
-            tabler="IconCheck"
-            hugeicons="Tick02Icon"
-            phosphor="CheckIcon"
-            remixicon="RiCheckLine"
-          />
+          <CheckIcon />
         </DropdownMenuPrimitive.ItemIndicator>
       </span>
       {children}
@@ -157,13 +151,7 @@ function DropdownMenuRadioItem({
         data-slot="dropdown-menu-radio-item-indicator"
       >
         <DropdownMenuPrimitive.ItemIndicator>
-          <IconPlaceholder
-            lucide="CheckIcon"
-            tabler="IconCheck"
-            hugeicons="Tick02Icon"
-            phosphor="CheckIcon"
-            remixicon="RiCheckLine"
-          />
+          <CheckIcon />
         </DropdownMenuPrimitive.ItemIndicator>
       </span>
       {children}
@@ -245,14 +233,7 @@ function DropdownMenuSubTrigger({
       {...props}
     >
       {children}
-      <IconPlaceholder
-        lucide="ChevronRightIcon"
-        tabler="IconChevronRight"
-        hugeicons="ArrowRight01Icon"
-        phosphor="CaretRightIcon"
-        remixicon="RiArrowRightSLine"
-        className="cn-rtl-flip ml-auto"
-      />
+      <ChevronRightIcon className="cn-rtl-flip ml-auto" />
     </DropdownMenuPrimitive.SubTrigger>
   )
 }

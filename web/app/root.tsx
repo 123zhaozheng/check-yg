@@ -9,10 +9,12 @@ import {
 
 import type { Route } from "./+types/root"
 import "./app.css"
+import { Providers } from "~/components/providers"
+import { Toaster } from "~/components/ui/sonner"
 
 export function Layout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="zh-CN" className="dark">
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -20,7 +22,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <Links />
       </head>
       <body>
-        {children}
+        <Providers>
+          {children}
+          <Toaster position="top-right" />
+        </Providers>
         <ScrollRestoration />
         <Scripts />
       </body>
