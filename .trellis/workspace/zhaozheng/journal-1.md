@@ -171,3 +171,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 6: Onboarding: join Trellis project
+
+**Date**: 2026-06-15
+**Task**: Onboarding: join Trellis project
+**Branch**: `feat/web-split`
+
+### Summary
+
+Completed joiner onboarding task 00-join-zhaozheng; learned Trellis workflow, runtime mechanics, and project conventions.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `1ea5d3a` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
