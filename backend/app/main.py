@@ -37,5 +37,8 @@ async def root():
     return {"status": "ok"}
 
 
-# TODO: Register routers
-# from app.routers import auth, tasks, documents, customers, reviews, reports, settings
+# Register routers
+from app.routers import auth_router, users_router
+
+app.include_router(auth_router, prefix="/api")
+app.include_router(users_router, prefix="/api")

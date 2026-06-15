@@ -9,6 +9,7 @@ dependencies = [
     "beautifulsoup4>=4.15.0",
     "celery>=5.6.3",
     "chinesecalendar>=1.11.0",
+    "email-validator>=2.3.0",
     "fastapi>=0.137.0",
     "httpx>=0.28.1",
     "lxml>=6.1.1",
