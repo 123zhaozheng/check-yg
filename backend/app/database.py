@@ -23,7 +23,7 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 
 
 async def init_db() -> None:
-    """Initialize database tables."""
+    """Initialize database tables and seed default data."""
     from app.models import (  # noqa: F401
         Collaborator,
         CustomerList,
@@ -39,6 +39,36 @@ async def init_db() -> None:
         User,
     )
     from app.models.base import Base
+    from app.auth.password import hash_password
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+    # Seed default roles and admin user
+    from sqlalchemy import select
+    async with async_session() as session:
+        # Create default roles if not exist
+        for role_name in ["admin", "auditor", "viewer"]:
+            result = await session.execute(
+                select(Role).where(Role.name == role_name)
+            )
+            if not result.scalar_one_or_none():
+                session.add(Role(name=role_name))
+        await session.commit()
+
+        # Create default admin user if not exist
+        result = await session.execute(
+            select(User).where(User.username == "admin")
+        )
+        if not result.scalar_one_or_none():
+            admin_role = (await session.execute(
+                select(Role).where(Role.name == "admin")
+            )).scalar_one()
+            session.add(User(
+                username="admin",
+                email="admin@check-yg.com",
+                hashed_password=hash_password("admin123"),
+                role_id=admin_role.id,
+                is_active=True,
+            ))
+            await session.commit()

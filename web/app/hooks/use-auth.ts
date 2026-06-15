@@ -26,14 +26,14 @@ export const useAuthStore = create<AuthState>((set) => ({
   isAuthenticated: false,
 
   login: async (username: string, password: string) => {
-    const response = await api.post<{ access_token: string }>("/auth/login", {
+    const response = await api.post<{ access_token: string }>("/api/auth/login", {
       username,
       password,
     });
     setToken(response.access_token);
     set({ isAuthenticated: true });
     // Fetch user info after login
-    const user = await api.get<User>("/auth/me");
+    const user = await api.get<User>("/api/auth/me");
     set({ user, isLoading: false });
   },
 
@@ -50,7 +50,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     }
 
     try {
-      const user = await api.get<User>("/auth/me");
+      const user = await api.get<User>("/api/auth/me");
       set({ user, isAuthenticated: true, isLoading: false });
     } catch {
       clearToken();

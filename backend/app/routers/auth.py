@@ -80,14 +80,18 @@ async def login(request: LoginRequest, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/me", response_model=UserResponse)
-async def get_current_user_info(current_user: User = Depends(get_current_user)):
+async def get_current_user_info(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     """Get current user information."""
-    # Get role name
-    result = await current_user.awaitable_attrs.role
+    # Get role name via role_id
+    result = await db.execute(select(Role).where(Role.id == current_user.role_id))
+    role = result.scalar_one_or_none()
     return UserResponse(
         id=current_user.id,
         username=current_user.username,
         email=current_user.email,
-        role=result.name if result else "unknown",
+        role=role.name if role else "unknown",
         is_active=current_user.is_active
     )

@@ -127,7 +127,8 @@ async def list_users(
 
     user_responses = []
     for user in users:
-        role = await user.awaitable_attrs.role
+        role_result = await db.execute(select(Role).where(Role.id == user.role_id))
+        role = role_result.scalar_one_or_none()
         user_responses.append(
             UserResponse(
                 id=user.id,
@@ -164,7 +165,8 @@ async def get_user(
             detail="User not found",
         )
 
-    role = await user.awaitable_attrs.role
+    role_result = await db.execute(select(Role).where(Role.id == user.role_id))
+    role = role_result.scalar_one_or_none()
     return UserResponse(
         id=user.id,
         username=user.username,
@@ -228,7 +230,8 @@ async def update_user(
     await db.commit()
     await db.refresh(user)
 
-    role = await user.awaitable_attrs.role
+    role_result = await db.execute(select(Role).where(Role.id == user.role_id))
+    role = role_result.scalar_one_or_none()
     return UserResponse(
         id=user.id,
         username=user.username,

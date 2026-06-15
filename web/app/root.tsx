@@ -6,11 +6,21 @@ import {
   ScrollRestoration,
   isRouteErrorResponse,
 } from "react-router"
+import { useEffect } from "react"
 
 import type { Route } from "./+types/root"
 import "./app.css"
 import { Providers } from "~/components/providers"
 import { Toaster } from "~/components/ui/sonner"
+import { useAuth } from "~/hooks/use-auth"
+
+function AuthInit() {
+  const { checkAuth } = useAuth()
+  useEffect(() => {
+    checkAuth()
+  }, [checkAuth])
+  return null
+}
 
 export function Layout({ children }: { children: React.ReactNode }) {
   return (
@@ -23,6 +33,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       </head>
       <body>
         <Providers>
+          <AuthInit />
           {children}
           <Toaster position="top-right" />
         </Providers>

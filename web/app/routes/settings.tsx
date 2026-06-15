@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "~/components/ui/card"
 import { Button } from "~/components/ui/button"
 import { Input } from "~/components/ui/input"
@@ -10,6 +10,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "~/components/ui/select"
+import { api } from "~/lib/api"
+import { toast } from "sonner"
 import {
   Settings,
   Cpu,
@@ -22,27 +24,78 @@ import {
   Info,
   Server,
   Key,
-  Zap,
 } from "lucide-react"
 
 type SettingsTab = "basic" | "ai" | "security"
 
+interface SettingItem {
+  key: string
+  value: string
+  category: string
+}
+
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState<SettingsTab>("basic")
   const [showApiKey, setShowApiKey] = useState(false)
-  const [saved, setSaved] = useState(false)
+  const [saving, setSaving] = useState(false)
 
-  // Mock form state
+  // Form state
   const [mineruMode, setMineruMode] = useState("fast")
   const [mineruConcurrency, setMineruConcurrency] = useState("16")
-  const [mineruEndpoint, setMineruEndpoint] = useState("https://mineru.api.check-yg.com/v1")
-  const [llmBaseUrl, setLlmBaseUrl] = useState("https://api.openai.com/v1")
-  const [llmModelName, setLlmModelName] = useState("gpt-4-turbo-preview")
-  const [llmApiKey, setLlmApiKey] = useState("sk-xxxxxxxxxxxxxxxx")
+  const [mineruEndpoint, setMineruEndpoint] = useState("")
+  const [llmBaseUrl, setLlmBaseUrl] = useState("")
+  const [llmModelName, setLlmModelName] = useState("")
+  const [llmApiKey, setLlmApiKey] = useState("")
 
-  const handleSave = () => {
-    setSaved(true)
-    setTimeout(() => setSaved(false), 2000)
+  useEffect(() => {
+    async function fetchSettings() {
+      try {
+        const settings = await api.get<SettingItem[]>("/api/settings/")
+        const map: Record<string, string> = {}
+        settings.forEach((s) => { map[s.key] = s.value })
+
+        setMineruMode(map["mineru.mode"] || "fast")
+        setMineruConcurrency(map["mineru.max_concurrency"] || "16")
+        setMineruEndpoint(map["mineru.api_endpoint"] || "")
+        setLlmBaseUrl(map["llm.base_url"] || "")
+        setLlmModelName(map["llm.model_name"] || "")
+        setLlmApiKey(map["llm.api_key"] || "")
+      } catch {
+        // Settings not available yet
+      }
+    }
+    fetchSettings()
+  }, [])
+
+  async function saveSetting(key: string, value: string) {
+    try {
+      await api.put(`/api/settings/${key}`, { value })
+    } catch {
+      toast.error(`保存 ${key} 失败`)
+    }
+  }
+
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      await Promise.all([
+        saveSetting("mineru.mode", mineruMode),
+        saveSetting("mineru.max_concurrency", mineruConcurrency),
+        saveSetting("mineru.api_endpoint", mineruEndpoint),
+        saveSetting("llm.base_url", llmBaseUrl),
+        saveSetting("llm.model_name", llmModelName),
+        saveSetting("llm.api_key", llmApiKey),
+      ])
+      toast.success("设置已保存")
+    } catch {
+      toast.error("保存失败")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleTestConnection = () => {
+    toast.info("测试连接功能开发中")
   }
 
   const tabs = [
@@ -134,6 +187,7 @@ export default function SettingsPage() {
                         value={mineruEndpoint}
                         onChange={(e) => setMineruEndpoint(e.target.value)}
                         className="pl-9 bg-surface-container-low"
+                        placeholder="https://mineru.api.check-yg.com/v1"
                       />
                     </div>
                   </div>
@@ -163,6 +217,7 @@ export default function SettingsPage() {
                         value={llmBaseUrl}
                         onChange={(e) => setLlmBaseUrl(e.target.value)}
                         className="bg-surface-container-low"
+                        placeholder="https://api.openai.com/v1"
                       />
                     </div>
                     <div className="space-y-2">
@@ -171,6 +226,7 @@ export default function SettingsPage() {
                         value={llmModelName}
                         onChange={(e) => setLlmModelName(e.target.value)}
                         className="bg-surface-container-low"
+                        placeholder="gpt-4-turbo-preview"
                       />
                     </div>
                   </div>
@@ -183,6 +239,7 @@ export default function SettingsPage() {
                         value={llmApiKey}
                         onChange={(e) => setLlmApiKey(e.target.value)}
                         className="pl-9 pr-10 bg-surface-container-low"
+                        placeholder="sk-..."
                       />
                       <button
                         type="button"
@@ -201,20 +258,14 @@ export default function SettingsPage() {
 
               {/* Action Buttons */}
               <div className="flex items-center gap-3 pt-4 border-t border-border">
-                {saved && (
-                  <div className="flex items-center gap-1 text-xs text-success">
-                    <CheckCircle2 className="w-3.5 h-3.5" />
-                    所有变更已自动保存
-                  </div>
-                )}
                 <div className="ml-auto flex gap-2">
-                  <Button variant="outline">
+                  <Button variant="outline" onClick={handleTestConnection}>
                     <TestTube className="w-4 h-4 mr-2" />
                     测试连接
                   </Button>
-                  <Button onClick={handleSave}>
+                  <Button onClick={handleSave} disabled={saving}>
                     <Save className="w-4 h-4 mr-2" />
-                    保存设置
+                    {saving ? "保存中..." : "保存设置"}
                   </Button>
                 </div>
               </div>
@@ -268,13 +319,6 @@ export default function SettingsPage() {
                 <p className="text-[11px] text-muted-foreground leading-relaxed">
                   建议使用上下文窗口大于 128k 的模型，以确保长篇审计报告的逻辑连贯性。
                 </p>
-              </div>
-              <div className="h-px bg-border" />
-              <div className="bg-surface-container-low rounded-lg p-3">
-                <div className="font-mono text-[10px] text-muted-foreground space-y-1">
-                  <div>SYSTEM_STATUS: STABLE</div>
-                  <div>LATENCY: 42ms</div>
-                </div>
               </div>
             </CardContent>
           </Card>
