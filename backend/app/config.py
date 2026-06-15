@@ -23,5 +23,11 @@ class Settings(BaseSettings):
     # CORS
     CORS_ORIGINS: list[str] = ["http://localhost:5173"]
 
+    # LLM
+    LLM_API_ENDPOINT: str = "http://localhost:11434/v1"
+    LLM_API_KEY: str = "ollama"
+    LLM_MODEL_NAME: str = "qwen2.5:7b"
+    LLM_TIMEOUT: int = 60
+
 
 settings = Settings()
