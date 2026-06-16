@@ -3,7 +3,7 @@
  */
 
 import { create } from "zustand";
-import { api, getToken, setToken, clearToken } from "~/lib/api";
+import { api, getToken, setToken, setRefreshToken, clearToken } from "~/lib/api";
 
 export interface User {
   id: string;
@@ -26,11 +26,12 @@ export const useAuthStore = create<AuthState>((set) => ({
   isAuthenticated: false,
 
   login: async (username: string, password: string) => {
-    const response = await api.post<{ access_token: string }>("/api/auth/login", {
+    const response = await api.post<{ access_token: string; refresh_token: string }>("/api/auth/login", {
       username,
       password,
     });
     setToken(response.access_token);
+    setRefreshToken(response.refresh_token);
     set({ isAuthenticated: true });
     // Fetch user info after login
     const user = await api.get<User>("/api/auth/me");

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """JWT token utilities."""
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from jose import JWTError, jwt
@@ -12,9 +12,9 @@ from ..config import settings
 def create_access_token(user_id: int, expires_delta: Optional[timedelta] = None) -> str:
     """Create JWT access token."""
     if expires_delta:
-        expire = datetime.utcnow() + expires_delta
+        expire = datetime.now(timezone.utc) + expires_delta
     else:
-        expire = datetime.utcnow() + timedelta(minutes=settings.JWT_EXPIRE_MINUTES)
+        expire = datetime.now(timezone.utc) + timedelta(minutes=settings.JWT_EXPIRE_MINUTES)
 
     to_encode = {
         "sub": str(user_id),
@@ -27,7 +27,7 @@ def create_access_token(user_id: int, expires_delta: Optional[timedelta] = None)
 
 def create_refresh_token(user_id: int) -> str:
     """Create JWT refresh token (7 days)."""
-    expire = datetime.utcnow() + timedelta(days=7)
+    expire = datetime.now(timezone.utc) + timedelta(days=7)
     to_encode = {
         "sub": str(user_id),
         "exp": expire,

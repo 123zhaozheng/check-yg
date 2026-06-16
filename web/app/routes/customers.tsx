@@ -65,11 +65,11 @@ export default function CustomersPage() {
           </p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline">
+          <Button variant="outline" disabled title="后端导入接口尚未开放">
             <Upload className="w-4 h-4 mr-2" />
             导入名单
           </Button>
-          <Button>
+          <Button disabled title="后端新建名单接口尚未开放">
             <Plus className="w-4 h-4 mr-2" />
             新建名单
           </Button>
@@ -102,7 +102,7 @@ export default function CustomersPage() {
             <Users className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
             <h3 className="text-lg font-semibold text-foreground mb-2">暂无客户名单</h3>
             <p className="text-sm text-muted-foreground mb-4">创建第一个客户名单开始使用</p>
-            <Button>
+            <Button disabled title="后端新建名单接口尚未开放">
               <Plus className="w-4 h-4 mr-2" />
               新建名单
             </Button>
@@ -142,12 +142,12 @@ export default function CustomersPage() {
           ))}
 
           {/* Create New Card */}
-          <Card className="bg-card border-border border-dashed hover:border-primary/50 transition-colors cursor-pointer">
+          <Card className="bg-card border-border border-dashed opacity-60">
             <CardContent className="p-5 flex flex-col items-center justify-center h-full min-h-[200px]">
               <div className="w-12 h-12 rounded-full bg-surface-container-high flex items-center justify-center mb-3">
                 <Plus className="w-6 h-6 text-muted-foreground" />
               </div>
-              <p className="text-sm text-muted-foreground">创建新名单</p>
+              <p className="text-sm text-muted-foreground">新建接口待开放</p>
             </CardContent>
           </Card>
         </div>

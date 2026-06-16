@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react"
+import { useNavigate } from "react-router"
 import { Card, CardContent, CardHeader, CardTitle } from "~/components/ui/card"
 import { Badge } from "~/components/ui/badge"
 import { Button } from "~/components/ui/button"
 import { Progress } from "~/components/ui/progress"
 import { api } from "~/lib/api"
+import { toast } from "sonner"
 import {
   ClipboardList,
   TrendingUp,
@@ -31,6 +33,7 @@ interface DashboardStats {
 }
 
 export default function Dashboard() {
+  const navigate = useNavigate()
   const [stats, setStats] = useState<DashboardStats>({
     totalTasks: 0,
     activeTasks: 0,
@@ -61,7 +64,7 @@ export default function Dashboard() {
           completedThisMonth: completedRes.total,
         }))
       } catch {
-        // API not ready, use defaults
+        toast.error("工作台数据加载失败")
       } finally {
         setLoading(false)
       }
@@ -131,7 +134,7 @@ export default function Dashboard() {
       <Card className="bg-card border-border">
         <CardHeader className="flex flex-row items-center justify-between pb-4">
           <CardTitle className="text-base font-semibold">最近任务</CardTitle>
-          <Button variant="ghost" size="sm" className="text-xs" onClick={() => window.location.href = "/tasks"}>
+          <Button variant="ghost" size="sm" className="text-xs" onClick={() => navigate("/tasks")}>
             查看全部
             <ArrowUpRight className="w-3 h-3 ml-1" />
           </Button>

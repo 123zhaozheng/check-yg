@@ -108,9 +108,9 @@ export default function LoginPage() {
 
             {/* Links */}
             <div className="flex items-center justify-between text-xs">
-              <a href="#" className="text-[#c4c7c9] transition-colors hover:text-white">
+              <span className="cursor-not-allowed text-[#c4c7c9]/40" title="请联系管理员重置密码">
                 忘记密码？
-              </a>
+              </span>
               <div className="group relative flex items-center gap-1">
                 <span className="cursor-not-allowed text-[#c4c7c9]/40">通过邀请码注册</span>
                 <svg className="h-3.5 w-3.5 text-[#c4c7c9]/40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

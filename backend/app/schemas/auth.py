@@ -18,9 +18,28 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
 
 
+class RefreshRequest(BaseModel):
+    """Refresh token request."""
+
+    refresh_token: str
+
+
+class UserResponse(BaseModel):
+    """User info response."""
+
+    id: int
+    username: str
+    email: str
+    role: str
+    is_active: bool
+
+    class Config:
+        from_attributes = True
+
+
 class TokenPayload(BaseModel):
     """JWT token payload."""
 
     sub: str
-    role: str
+    type: str
     exp: int

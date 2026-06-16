@@ -24,12 +24,47 @@ export function setToken(token: string): void {
   localStorage.setItem("auth_token", token);
 }
 
+export function getRefreshToken(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem("refresh_token");
+}
+
+export function setRefreshToken(token: string): void {
+  localStorage.setItem("refresh_token", token);
+}
+
 export function clearToken(): void {
   localStorage.removeItem("auth_token");
+  localStorage.removeItem("refresh_token");
 }
 
 export interface ApiRequestOptions extends RequestInit {
   params?: Record<string, string>;
+}
+
+let refreshPromise: Promise<string> | null = null;
+
+async function refreshAccessToken(): Promise<string> {
+  const refreshToken = getRefreshToken();
+  if (!refreshToken) {
+    throw new Error("No refresh token");
+  }
+
+  const response = await fetch(`${API_BASE}/api/auth/refresh`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ refresh_token: refreshToken }),
+  });
+
+  if (!response.ok) {
+    clearToken();
+    throw new Error("Refresh failed");
+  }
+
+  const data = await response.json();
+  setToken(data.access_token);
+  setRefreshToken(data.refresh_token);
+  return data.access_token;
 }
 
 export async function apiFetch<T>(
@@ -54,10 +89,32 @@ export async function apiFetch<T>(
     (headers as Record<string, string>)["Authorization"] = `Bearer ${token}`;
   }
 
-  const response = await fetch(url, {
+  let response = await fetch(url, {
     ...fetchOptions,
     headers,
   });
+
+  const isRefreshEndpoint = endpoint === "/api/auth/login" || endpoint === "/api/auth/refresh";
+
+  // Handle 401 by attempting token refresh. Keep /auth/me eligible so route guards can recover expired access tokens.
+  if (response.status === 401 && !isRefreshEndpoint) {
+    if (!refreshPromise) {
+      refreshPromise = refreshAccessToken().finally(() => {
+        refreshPromise = null;
+      });
+    }
+
+    try {
+      const newToken = await refreshPromise;
+      (headers as Record<string, string>)["Authorization"] = `Bearer ${newToken}`;
+      response = await fetch(url, {
+        ...fetchOptions,
+        headers,
+      });
+    } catch {
+      // Refresh failed, fall through to throw original error
+    }
+  }
 
   if (!response.ok) {
     let data: unknown;

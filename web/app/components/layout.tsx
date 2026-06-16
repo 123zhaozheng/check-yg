@@ -120,13 +120,16 @@ export function Layout() {
           <button
             className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors hover:opacity-80"
             style={{ color: "var(--sidebar-foreground)", opacity: 0.7 }}
+            onClick={() => navigate("/settings")}
           >
             <User className="h-4 w-4" />
             用户资料
           </button>
           <button
-            className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors hover:opacity-80"
-            style={{ color: "var(--sidebar-foreground)", opacity: 0.7 }}
+            className="flex w-full cursor-not-allowed items-center gap-3 rounded-lg px-3 py-2 text-sm"
+            style={{ color: "var(--sidebar-foreground)", opacity: 0.45 }}
+            disabled
+            title="主题切换暂未接入"
           >
             <Moon className="h-4 w-4" />
             主题

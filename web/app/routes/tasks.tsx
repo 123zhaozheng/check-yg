@@ -18,11 +18,29 @@ import {
   TableHeader,
   TableRow,
 } from "~/components/ui/table"
+import { Textarea } from "~/components/ui/textarea"
+import { Label } from "~/components/ui/label"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "~/components/ui/dialog"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "~/components/ui/dropdown-menu"
 import { api } from "~/lib/api"
+import { toast } from "sonner"
 import {
   Search,
   Plus,
-  Filter,
+  RefreshCw,
   ChevronLeft,
   ChevronRight,
   MoreHorizontal,
@@ -32,6 +50,8 @@ import {
   XCircle,
   FileText,
   Pause,
+  Play,
+  Square,
 } from "lucide-react"
 
 interface TaskItem {
@@ -40,7 +60,13 @@ interface TaskItem {
   description: string | null
   status: string
   owner_id: number
+  config: {
+    document_folder?: string | null
+    batch_size?: number
+    confidence_threshold?: number
+  } | null
   created_at: string
+  updated_at: string
   completed_at: string | null
 }
 
@@ -60,30 +86,105 @@ export default function TasksPage() {
   const [statusFilter, setStatusFilter] = useState("all")
   const [currentPage, setCurrentPage] = useState(1)
   const [loading, setLoading] = useState(true)
+  const [createOpen, setCreateOpen] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [actingTaskId, setActingTaskId] = useState<number | null>(null)
+  const [form, setForm] = useState({
+    title: "",
+    description: "",
+    document_folder: "",
+    batch_size: "20",
+    confidence_threshold: "70",
+  })
   const pageSize = 20
 
-  useEffect(() => {
-    async function fetchTasks() {
-      setLoading(true)
-      try {
-        const params: Record<string, string> = {
-          page: String(currentPage),
-          page_size: String(pageSize),
-        }
-        if (statusFilter !== "all") params.status_filter = statusFilter
-        if (searchTerm) params.search = searchTerm
-
-        const res = await api.get<{ items: TaskItem[]; total: number }>("/api/tasks/", params)
-        setTasks(res.items)
-        setTotal(res.total)
-      } catch {
-        // API error
-      } finally {
-        setLoading(false)
+  async function fetchTasks() {
+    setLoading(true)
+    try {
+      const params: Record<string, string> = {
+        page: String(currentPage),
+        page_size: String(pageSize),
       }
+      if (statusFilter !== "all") params.status_filter = statusFilter
+      if (searchTerm) params.search = searchTerm
+
+      const res = await api.get<{ items: TaskItem[]; total: number }>("/api/tasks/", params)
+      setTasks(res.items)
+      setTotal(res.total)
+    } catch {
+      toast.error("任务列表加载失败")
+    } finally {
+      setLoading(false)
     }
+  }
+
+  useEffect(() => {
     fetchTasks()
   }, [currentPage, statusFilter, searchTerm])
+
+  async function handleCreateTask() {
+    const title = form.title.trim()
+    if (!title) {
+      toast.error("请输入任务名称")
+      return
+    }
+
+    setSaving(true)
+    try {
+      const task = await api.post<TaskItem>("/api/tasks/", {
+        title,
+        description: form.description.trim() || undefined,
+        document_folder: form.document_folder.trim() || undefined,
+        batch_size: Number(form.batch_size) || 20,
+        confidence_threshold: Number(form.confidence_threshold) || 70,
+      })
+      setCreateOpen(false)
+      setForm({
+        title: "",
+        description: "",
+        document_folder: "",
+        batch_size: "20",
+        confidence_threshold: "70",
+      })
+      toast.success("任务已创建")
+      if (task.config?.document_folder) {
+        await handleTaskAction(task.id, "start", {
+          document_folder: task.config.document_folder,
+          batch_size: task.config.batch_size || 20,
+          confidence_threshold: task.config.confidence_threshold || 70,
+        })
+      } else {
+        await fetchTasks()
+      }
+    } catch {
+      toast.error("任务创建失败")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function handleTaskAction(
+    taskId: number,
+    action: "start" | "pause" | "resume" | "cancel",
+    body?: Record<string, unknown>
+  ) {
+    setActingTaskId(taskId)
+    try {
+      await api.post<TaskItem>(`/api/tasks/${taskId}/${action}`, body)
+      const labels = {
+        start: "任务已启动",
+        pause: "任务已暂停",
+        resume: "任务已继续",
+        cancel: "任务已取消",
+      }
+      toast.success(labels[action])
+      await fetchTasks()
+    } catch {
+      toast.error("任务操作失败")
+    } finally {
+      setActingTaskId(null)
+    }
+  }
 
   const totalPages = Math.ceil(total / pageSize) || 1
 
@@ -97,7 +198,7 @@ export default function TasksPage() {
             管理和跟踪所有审计任务的执行进度与审查状态。
           </p>
         </div>
-        <Button>
+        <Button onClick={() => setCreateOpen(true)}>
           <Plus className="w-4 h-4 mr-2" />
           创建新任务
         </Button>
@@ -129,8 +230,8 @@ export default function TasksPage() {
                 <SelectItem value="failed">失败</SelectItem>
               </SelectContent>
             </Select>
-            <Button variant="outline" size="icon">
-              <Filter className="w-4 h-4" />
+            <Button variant="outline" size="icon" onClick={fetchTasks} title="刷新">
+              <RefreshCw className="w-4 h-4" />
             </Button>
           </div>
         </CardContent>
@@ -185,9 +286,49 @@ export default function TasksPage() {
                         {task.completed_at ? new Date(task.completed_at).toLocaleString("zh-CN") : "-"}
                       </TableCell>
                       <TableCell>
-                        <Button variant="ghost" size="icon" className="h-8 w-8">
-                          <MoreHorizontal className="w-4 h-4" />
-                        </Button>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="icon" className="h-8 w-8" disabled={actingTaskId === task.id}>
+                              <MoreHorizontal className="w-4 h-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-36">
+                            {(task.status === "draft" || task.status === "failed" || task.status === "cancelled") && (
+                              <DropdownMenuItem
+                                onClick={() => handleTaskAction(task.id, "start", {
+                                  document_folder: task.config?.document_folder,
+                                  batch_size: task.config?.batch_size || 20,
+                                  confidence_threshold: task.config?.confidence_threshold || 70,
+                                })}
+                                disabled={!task.config?.document_folder}
+                              >
+                                <Play className="w-4 h-4" />
+                                启动
+                              </DropdownMenuItem>
+                            )}
+                            {task.status === "running" && (
+                              <DropdownMenuItem onClick={() => handleTaskAction(task.id, "pause")}>
+                                <Pause className="w-4 h-4" />
+                                暂停
+                              </DropdownMenuItem>
+                            )}
+                            {task.status === "paused" && (
+                              <DropdownMenuItem onClick={() => handleTaskAction(task.id, "resume")}>
+                                <Play className="w-4 h-4" />
+                                继续
+                              </DropdownMenuItem>
+                            )}
+                            {(task.status === "running" || task.status === "paused") && (
+                              <>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem variant="destructive" onClick={() => handleTaskAction(task.id, "cancel")}>
+                                  <Square className="w-4 h-4" />
+                                  取消
+                                </DropdownMenuItem>
+                              </>
+                            )}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </TableCell>
                     </TableRow>
                   )
@@ -235,6 +376,72 @@ export default function TasksPage() {
           </div>
         </div>
       )}
+
+      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>创建审查任务</DialogTitle>
+            <DialogDescription>
+              填写后端可访问的文档目录。保存后如果目录已填写，会立即启动抽取。
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>任务名称</Label>
+              <Input
+                value={form.title}
+                onChange={(e) => setForm((prev) => ({ ...prev, title: e.target.value }))}
+                placeholder="例如：6月员工客户流水审查"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>文档目录</Label>
+              <Input
+                value={form.document_folder}
+                onChange={(e) => setForm((prev) => ({ ...prev, document_folder: e.target.value }))}
+                placeholder="D:\\audit\\documents"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label>批处理行数</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  value={form.batch_size}
+                  onChange={(e) => setForm((prev) => ({ ...prev, batch_size: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>流水判定阈值</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  max={100}
+                  value={form.confidence_threshold}
+                  onChange={(e) => setForm((prev) => ({ ...prev, confidence_threshold: e.target.value }))}
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>备注</Label>
+              <Textarea
+                value={form.description}
+                onChange={(e) => setForm((prev) => ({ ...prev, description: e.target.value }))}
+                placeholder="可选"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCreateOpen(false)} disabled={saving}>
+              取消
+            </Button>
+            <Button onClick={handleCreateTask} disabled={saving}>
+              {saving ? "创建中..." : "创建并启动"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

@@ -2,12 +2,11 @@ import {
   type RouteConfig,
   index,
   route,
-  layout,
 } from "@react-router/dev/routes"
 
 export default [
   route("login", "routes/login.tsx"),
-  layout("components/layout.tsx", [
+  route("", "routes/_app.tsx", [
     index("routes/home.tsx"),
     route("dashboard", "routes/dashboard.tsx"),
     route("tasks", "routes/tasks.tsx"),

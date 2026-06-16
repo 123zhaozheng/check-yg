@@ -94,8 +94,13 @@ export default function SettingsPage() {
     }
   }
 
-  const handleTestConnection = () => {
-    toast.info("测试连接功能开发中")
+  const handleTestConnection = async () => {
+    const result = await api.post<{ ok: boolean; message: string }>("/api/settings/test-connection")
+    if (result.ok) {
+      toast.success(result.message || "连接测试通过")
+    } else {
+      toast.error(result.message || "连接测试失败")
+    }
   }
 
   const tabs = [

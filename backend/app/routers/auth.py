@@ -4,43 +4,18 @@
 from datetime import timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.dependencies import get_current_user
-from ..auth.jwt import create_access_token, create_refresh_token
+from ..auth.jwt import create_access_token, create_refresh_token, verify_token
 from ..auth.password import verify_password
 from ..config import settings
 from ..database import get_db
 from ..models import User, Role
+from ..schemas.auth import LoginRequest, TokenResponse, RefreshRequest, UserResponse
 
 router = APIRouter(prefix="/auth", tags=["auth"])
-
-
-class LoginRequest(BaseModel):
-    """Login request schema."""
-    username: str
-    password: str
-
-
-class TokenResponse(BaseModel):
-    """Token response schema."""
-    access_token: str
-    refresh_token: str
-    token_type: str = "bearer"
-
-
-class UserResponse(BaseModel):
-    """User response schema."""
-    id: int
-    username: str
-    email: str
-    role: str
-    is_active: bool
-
-    class Config:
-        from_attributes = True
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -94,4 +69,39 @@ async def get_current_user_info(
         email=current_user.email,
         role=role.name if role else "unknown",
         is_active=current_user.is_active
+    )
+
+
+@router.post("/refresh", response_model=TokenResponse)
+async def refresh_token(request: RefreshRequest, db: AsyncSession = Depends(get_db)):
+    """Refresh access token using refresh token."""
+    payload = verify_token(request.refresh_token)
+    if not payload or payload.get("type") != "refresh":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid refresh token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    user_id = int(payload["sub"])
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+
+    if not user or not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found or disabled",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    access_token = create_access_token(
+        user_id=user.id,
+        expires_delta=timedelta(minutes=settings.JWT_EXPIRE_MINUTES)
+    )
+    new_refresh_token = create_refresh_token(user_id=user.id)
+
+    return TokenResponse(
+        access_token=access_token,
+        refresh_token=new_refresh_token,
+        token_type="bearer"
     )

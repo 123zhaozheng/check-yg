@@ -4,6 +4,7 @@
 from datetime import datetime
 from typing import Optional
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -30,6 +31,11 @@ class SettingResponse(BaseModel):
 
 class SettingUpdate(BaseModel):
     value: str
+
+
+class ConnectionTestResponse(BaseModel):
+    ok: bool
+    message: str
 
 
 @router.get("/", response_model=list[SettingResponse])
@@ -106,3 +112,34 @@ async def update_setting(
         updated_at=setting.updated_at,
         updated_by=setting.updated_by,
     )
+
+
+@router.post("/test-connection", response_model=ConnectionTestResponse)
+async def test_connection(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Test configured LLM endpoint reachability."""
+    result = await db.execute(select(Setting))
+    settings_map = {s.key: s.value for s in result.scalars().all()}
+    base_url = (settings_map.get("llm.base_url") or "").rstrip("/")
+    api_key = settings_map.get("llm.api_key") or ""
+
+    if not base_url:
+        return ConnectionTestResponse(ok=False, message="LLM Base URL is not configured")
+
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = "Bearer %s" % api_key
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.get("%s/models" % base_url, headers=headers)
+        if response.status_code >= 400:
+            return ConnectionTestResponse(
+                ok=False,
+                message="LLM endpoint returned HTTP %s" % response.status_code,
+            )
+        return ConnectionTestResponse(ok=True, message="LLM endpoint is reachable")
+    except Exception as exc:
+        return ConnectionTestResponse(ok=False, message=str(exc))
