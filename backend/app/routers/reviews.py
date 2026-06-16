@@ -15,6 +15,7 @@ from app.schemas.review import (
     ReviewRunRequest,
 )
 from app.services.review_service import ReviewService
+from app.websocket.notifications import notify_user
 
 router = APIRouter(tags=["reviews"])
 
@@ -42,6 +43,13 @@ async def run_task_review(
         raise HTTPException(status_code=404, detail=str(exc))
 
     _, total = await service.list_matches(db, review.id, page=1, page_size=1)
+    await notify_user(
+        current_user.id,
+        event="review.completed",
+        title="审查完成",
+        message=f"任务 {task_id} 审查完成，命中 {total} 条匹配。",
+        resource={"task_id": task_id, "review_id": review.id},
+    )
     return _review_response(review, total)
 
 

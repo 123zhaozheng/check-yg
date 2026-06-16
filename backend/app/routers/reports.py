@@ -13,6 +13,7 @@ from app.database import get_db
 from app.models import User
 from app.schemas.review import ReportResponse, ReportRunRequest
 from app.services.report_service import ReportService, load_report
+from app.websocket.notifications import notify_user
 
 router = APIRouter(tags=["reports"])
 
@@ -39,6 +40,13 @@ async def generate_task_report(
         raise HTTPException(status_code=404, detail=str(exc))
 
     content = await service.read_report_content(report)
+    await notify_user(
+        current_user.id,
+        event="report.completed",
+        title="报告完成",
+        message=f"任务 {task_id} 报告已生成。",
+        resource={"task_id": task_id, "report_id": report.id, "review_id": report.review_id},
+    )
     return _report_response(report, content)
 
 

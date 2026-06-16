@@ -13,6 +13,7 @@ from app.database import get_db
 from app.models import User
 from app.schemas.review import ExportResponse, ExportRunRequest
 from app.services.export_service import ExportService, load_export
+from app.websocket.notifications import notify_user
 
 router = APIRouter(tags=["exports"])
 
@@ -36,6 +37,7 @@ async def export_task_excel(
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+    await _notify_export_completed(current_user.id, export)
     return _export_response(export)
 
 
@@ -58,6 +60,7 @@ async def export_task_bundle(
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+    await _notify_export_completed(current_user.id, export)
     return _export_response(export)
 
 
@@ -93,4 +96,19 @@ def _export_response(export) -> ExportResponse:
         format=export.format,
         file_path=export.file_path,
         created_at=export.created_at,
+    )
+
+
+async def _notify_export_completed(user_id: int, export) -> None:
+    await notify_user(
+        user_id,
+        event="export.completed",
+        title="导出完成",
+        message=f"任务 {export.task_id} {export.format} 导出已生成。",
+        resource={
+            "task_id": export.task_id,
+            "review_id": export.review_id,
+            "export_id": export.id,
+            "format": export.format,
+        },
     )

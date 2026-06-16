@@ -1,6 +1,9 @@
 import { NavLink, Outlet, useNavigate } from "react-router"
+import { useEffect, useState } from "react"
+import { toast } from "sonner"
 import { cn } from "~/lib/utils"
 import { useAuth } from "~/hooks/use-auth"
+import { useWebSocket } from "~/hooks/use-websocket"
 import {
   LayoutDashboard,
   ClipboardList,
@@ -16,7 +19,6 @@ import {
   LogOut,
   Moon,
 } from "lucide-react"
-import { useState } from "react"
 
 const navItems = [
   { to: "/dashboard", label: "工作台", icon: LayoutDashboard },
@@ -31,9 +33,24 @@ const navItems = [
 
 export function Layout() {
   const { user, logout } = useAuth()
+  const { status, lastMessage } = useWebSocket("/ws")
   const navigate = useNavigate()
   const [searchOpen, setSearchOpen] = useState(false)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
+
+  useEffect(() => {
+    if (lastMessage?.type !== "notification" || !lastMessage.payload) {
+      return
+    }
+
+    const payload = lastMessage.payload as {
+      title?: string
+      message?: string
+    }
+    toast(payload.title || "通知", {
+      description: payload.message,
+    })
+  }, [lastMessage])
 
   function handleLogout() {
     logout()
@@ -170,9 +187,20 @@ export function Layout() {
             <button
               className="relative rounded-lg p-2 transition-colors hover:opacity-80"
               style={{ color: "var(--muted-foreground)" }}
+              title={`WebSocket: ${status}`}
             >
               <Bell className="h-4 w-4" />
-              <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full" style={{ backgroundColor: "var(--destructive)" }} />
+              <span
+                className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full"
+                style={{
+                  backgroundColor:
+                    status === "connected"
+                      ? "var(--chart-2)"
+                      : status === "connecting"
+                        ? "var(--chart-4)"
+                        : "var(--muted-foreground)",
+                }}
+              />
             </button>
             <button
               className="rounded-lg p-2 transition-colors hover:opacity-80"
