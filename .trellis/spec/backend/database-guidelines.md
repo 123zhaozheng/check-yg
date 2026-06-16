@@ -208,3 +208,125 @@ folders = self._normalize_document_folder(task_data.get("document_folder"))
 for folder in folders:
     scanner.scan_directory(folder)
 ```
+
+---
+
+## Web Review / Report / Export Scenario
+
+### 1. Scope / Trigger
+- Trigger: A completed FastAPI task needs backend customer-list matching, report generation, and downloadable Excel/ZIP exports.
+- This requires code-spec depth because it adds API signatures, SQLAlchemy tables/columns, task permission boundaries, and file output contracts.
+
+### 2. Signatures
+```python
+# app.core.matcher
+class NameMatcher:
+    def match(self, customer_name: str, text: str, include_fuzzy: bool = True) -> Optional[MatchResult]: ...
+
+# app.services.review_service
+class ReviewService:
+    async def run_review(
+        self,
+        db: AsyncSession,
+        task_id: int,
+        customer_list_id: Optional[int] = None,
+        match_config: Optional[dict[str, Any]] = None,
+    ) -> Review: ...
+
+    async def load_task_records(self, db: AsyncSession, task_id: int) -> list[FlowRecord]: ...
+    async def list_matches(self, db: AsyncSession, review_id: int, page: int = 1, page_size: int = 20) -> tuple[list[ReviewMatch], int]: ...
+
+# API
+POST /api/tasks/{task_id}/review
+GET  /api/reviews/{review_id}
+GET  /api/reviews/{review_id}/matches?page=1&page_size=20
+POST /api/tasks/{task_id}/report
+GET  /api/reports/{report_id}
+GET  /api/reports/{report_id}/download
+POST /api/tasks/{task_id}/export/excel
+POST /api/tasks/{task_id}/export/bundle
+GET  /api/exports/{export_id}/download
+```
+
+### 3. Contracts
+- `POST /api/tasks/{task_id}/review` request:
+  - `customer_list_id?: int` selects a customer list; if omitted, service may choose the latest list owned by the task owner.
+  - `match_config?: dict` supports `include_fuzzy: bool` and `fuzzy_threshold: float`.
+- `Document.flow_tables` may contain any of:
+  - `{"records": [normalized_record, ...]}`
+  - `{"flow_records": [normalized_record, ...]}`
+  - `{"flow_tables": [{"records": [...]}, {"rows": [...]}]}`
+- Normalized record aliases accepted by services:
+  - `source_file` / `来源文件`
+  - `original_row` / `row_index` / `原始行号` / `流水行号`
+  - `transaction_time` / `交易时间`
+  - `counterparty_name` / `counterparty` / `交易对手名` / `对手名`
+  - `counterparty_account` / `交易对手账号` / `对手账号`
+  - `amount` / `金额`
+  - `summary` / `摘要`
+  - `transaction_type` / `收支类型`
+- SQLAlchemy persistence:
+  - `reviews`: task/customer list/match config/status metadata.
+  - `review_matches`: one row per matched record, including `record_id`, `customer_name`, `match_type`, `score`, counterparty fields, source file, time, amount, summary, and `record_payload`.
+  - `reports`: Markdown report metadata and `content_path`.
+  - `exports`: generated Excel/ZIP metadata and `file_path`.
+- Output files:
+  - Reports write under `settings.OUTPUT_DIR/reports/{task_id}/`.
+  - Exports write under `settings.OUTPUT_DIR/exports/{task_id}/`.
+  - Excel workbooks must close in `finally`.
+
+### 4. Validation & Error Matrix
+| Condition | Behavior |
+|----------|----------|
+| Current user lacks task access | Return 403; do not expose task/review/export contents |
+| Current user is task owner | Allow read/write for task-level review/report/export |
+| Current user is task collaborator | Require collaborator role hierarchy: `read < write < admin` |
+| Current user has global `admin` role | Allow task read/write even when not owner/collaborator |
+| Task/review/report/export does not exist | Return 404 |
+| Report/export file missing on disk | Return 404 from download endpoint |
+| LLM unavailable | Generate deterministic fallback report; core workflow must not fail |
+| Existing SQLite DB lacks additive columns | `init_db()` applies lightweight `ALTER TABLE` additions for new review-match fields |
+
+### 5. Good/Base/Bad Cases
+- Good: Completed task with normalized records and customer list -> `POST /review` creates one `Review`, multiple `ReviewMatch` rows, report and downloads work.
+- Base: No review exists -> report/export may still return task-level artifacts with empty match lists.
+- Bad: Unauthorized user requests another user's export -> 403, with no file path/content disclosure.
+
+### 6. Tests Required
+- Unit: `NameMatcher` returns exact, masked, and fuzzy matches with priority exact > masked > fuzzy.
+- Integration: `ReviewService.run_review()` persists `Review` and `ReviewMatch` details from `Document.flow_tables`.
+- API: Unauthorized task review/report/export path returns 403.
+- API: Admin role can perform task write operations without being owner/collaborator.
+- File generation: Excel export opens with `openpyxl` and includes `标准化流水` plus `匹配详情`; bundle export opens with `zipfile` and contains `skill_manifest.json`.
+
+### 7. Wrong vs Correct
+#### Wrong
+```python
+# Assumes only owner/collaborator can write task artifacts.
+if not await check_task_permission(db, current_user, task_id, required_role="write"):
+    raise HTTPException(status_code=403)
+```
+
+#### Correct
+```python
+# check_task_permission must include the global admin bypass internally.
+if not await check_task_permission(db, current_user, task_id, required_role="write"):
+    raise HTTPException(status_code=403, detail="Task access denied")
+```
+
+#### Wrong
+```python
+wb = openpyxl.Workbook()
+write_workbook(wb)
+wb.save(path)
+```
+
+#### Correct
+```python
+wb = openpyxl.Workbook()
+try:
+    write_workbook(wb)
+    wb.save(path)
+finally:
+    wb.close()
+```

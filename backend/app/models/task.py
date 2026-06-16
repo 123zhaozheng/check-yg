@@ -32,3 +32,4 @@ class Task(Base, TimestampMixin):
     reviews: Mapped[list["Review"]] = relationship("Review", back_populates="task")  # noqa: F821
     reports: Mapped[list["Report"]] = relationship("Report", back_populates="task")  # noqa: F821
     collaborators: Mapped[list["Collaborator"]] = relationship("Collaborator", back_populates="task")  # noqa: F821
+    exports: Mapped[list["ExportFile"]] = relationship("ExportFile", back_populates="task")  # noqa: F821

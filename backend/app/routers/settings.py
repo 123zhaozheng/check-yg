@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.dependencies import get_current_user
+from ..auth.permissions import check_admin_permission
 from ..database import get_db
 from ..models import Setting, User
 
@@ -82,6 +83,9 @@ async def update_setting(
     current_user: User = Depends(get_current_user),
 ):
     """Update a setting."""
+    if not await check_admin_permission(db, current_user):
+        raise HTTPException(status_code=403, detail="Admin permission required")
+
     result = await db.execute(select(Setting).where(Setting.key == key))
     setting = result.scalar_one_or_none()
 

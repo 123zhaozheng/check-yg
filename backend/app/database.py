@@ -29,6 +29,7 @@ async def init_db() -> None:
         CustomerList,
         CustomerListItem,
         Document,
+        ExportFile,
         Report,
         Review,
         ReviewMatch,
@@ -43,6 +44,7 @@ async def init_db() -> None:
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await _run_lightweight_migrations(conn)
 
     # Seed default roles and admin user
     from sqlalchemy import select
@@ -72,3 +74,26 @@ async def init_db() -> None:
                 is_active=True,
             ))
             await session.commit()
+
+
+async def _run_lightweight_migrations(conn) -> None:
+    """Apply additive SQLite migrations for deployments using create_all."""
+    if not settings.DATABASE_URL.startswith("sqlite"):
+        return
+
+    result = await conn.exec_driver_sql("PRAGMA table_info(review_matches)")
+    existing = {row[1] for row in result.fetchall()}
+    additions = {
+        "counterparty_name": "VARCHAR(255)",
+        "counterparty_account": "VARCHAR(255)",
+        "source_file": "VARCHAR(255)",
+        "transaction_time": "VARCHAR(100)",
+        "amount": "VARCHAR(100)",
+        "summary": "TEXT",
+        "record_payload": "JSON",
+    }
+    for column, column_type in additions.items():
+        if column not in existing:
+            await conn.exec_driver_sql(
+                f"ALTER TABLE review_matches ADD COLUMN {column} {column_type}"
+            )

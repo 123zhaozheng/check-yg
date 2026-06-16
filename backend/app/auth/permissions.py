@@ -6,7 +6,7 @@ from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..models import Collaborator, Task, User
+from ..models import Collaborator, Role, Task, User
 
 
 async def check_task_permission(
@@ -37,6 +37,9 @@ async def check_task_permission(
     if task.owner_id == user.id:
         return True
 
+    if await check_admin_permission(db, user):
+        return True
+
     # Check if user is a collaborator
     result = await db.execute(
         select(Collaborator).where(
@@ -59,13 +62,8 @@ async def check_task_permission(
     return True
 
 
-async def check_admin_permission(user: User) -> bool:
+async def check_admin_permission(db: AsyncSession, user: User) -> bool:
     """Check if user has admin role."""
-    role = await user.awaitable_attrs.role
-    return role.name == "admin"
-
-
-async def check_auditor_permission(user: User) -> bool:
-    """Check if user has auditor or admin role."""
-    role = await user.awaitable_attrs.role
-    return role.name in ("auditor", "admin")
+    result = await db.execute(select(Role).where(Role.id == user.role_id))
+    role = result.scalar_one_or_none()
+    return bool(role and role.name == "admin")

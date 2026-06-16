@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, JSON, String, func
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, JSON, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -42,6 +42,13 @@ class ReviewMatch(Base):
     customer_name: Mapped[str] = mapped_column(String(255), nullable=False)
     match_type: Mapped[str] = mapped_column(String(20), nullable=False)  # exact/masked/fuzzy
     score: Mapped[float] = mapped_column(Float, nullable=False)
+    counterparty_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    counterparty_account: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    source_file: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    transaction_time: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    amount: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    record_payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     # Relationships
     review: Mapped["Review"] = relationship("Review", back_populates="matches")
