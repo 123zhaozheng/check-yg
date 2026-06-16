@@ -238,3 +238,36 @@ Completed joiner onboarding task 00-join-zhaozheng; learned Trellis workflow, ru
 ### Next Steps
 
 - None - task complete
+
+
+## Session 8: Review export backend APIs
+
+**Date**: 2026-06-16
+**Task**: Review export backend APIs
+**Branch**: `feat/web-split`
+
+### Summary
+
+Implemented backend review matching, report generation, Excel and skills bundle export APIs with SQLAlchemy models, permissions, tests, and backend spec contracts.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c6ede60` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
