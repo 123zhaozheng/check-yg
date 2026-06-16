@@ -10,6 +10,7 @@ from sqlalchemy import select
 
 from app.database import async_session
 from app.models import Task, TaskLog
+from app.services.settings_service import load_runtime_settings
 from app.websocket.notifications import notify_user
 
 from .extractor import FlowExtractor
@@ -43,7 +44,10 @@ class ExtractionTaskRunner:
         if self.is_running(task_id):
             raise ValueError("Task is already running")
 
-        extractor = FlowExtractor()
+        async with async_session() as session:
+            runtime_settings = await load_runtime_settings(session)
+
+        extractor = FlowExtractor(runtime_settings=runtime_settings)
         loop = asyncio.get_running_loop()
 
         def report_progress(report: ProgressReport) -> None:

@@ -14,6 +14,7 @@ from ..auth.dependencies import get_current_user
 from ..auth.permissions import check_admin_permission
 from ..database import get_db
 from ..models import Setting, User
+from ..services.settings_service import DEFAULT_SETTINGS, load_runtime_settings, setting_category
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 
@@ -45,18 +46,44 @@ async def list_settings(
 ):
     """List all settings."""
     result = await db.execute(select(Setting))
-    settings = result.scalars().all()
+    saved_settings = {item.key: item for item in result.scalars().all()}
 
-    return [
-        SettingResponse(
-            key=s.key,
-            value=s.value,
-            category=s.category,
-            updated_at=s.updated_at,
-            updated_by=s.updated_by,
+    responses = []
+    for key, default in DEFAULT_SETTINGS.items():
+        saved = saved_settings.pop(key, None)
+        if saved:
+            responses.append(
+                SettingResponse(
+                    key=saved.key,
+                    value=saved.value,
+                    category=saved.category,
+                    updated_at=saved.updated_at,
+                    updated_by=saved.updated_by,
+                )
+            )
+        else:
+            responses.append(
+                SettingResponse(
+                    key=key,
+                    value=default["value"],
+                    category=default["category"],
+                    updated_at=datetime.now(),
+                    updated_by=current_user.id,
+                )
+            )
+
+    for saved in saved_settings.values():
+        responses.append(
+            SettingResponse(
+                key=saved.key,
+                value=saved.value,
+                category=saved.category,
+                updated_at=saved.updated_at,
+                updated_by=saved.updated_by,
+            )
         )
-        for s in settings
-    ]
+
+    return responses
 
 
 @router.get("/{key}", response_model=SettingResponse)
@@ -96,7 +123,12 @@ async def update_setting(
     setting = result.scalar_one_or_none()
 
     if not setting:
-        setting = Setting(key=key, value=request.value, category="general", updated_by=current_user.id)
+        setting = Setting(
+            key=key,
+            value=request.value,
+            category=DEFAULT_SETTINGS.get(key, {}).get("category", setting_category(key)),
+            updated_by=current_user.id,
+        )
         db.add(setting)
     else:
         setting.value = request.value
@@ -120,8 +152,7 @@ async def test_connection(
     current_user: User = Depends(get_current_user),
 ):
     """Test configured LLM endpoint reachability."""
-    result = await db.execute(select(Setting))
-    settings_map = {s.key: s.value for s in result.scalars().all()}
+    settings_map = await load_runtime_settings(db)
     base_url = (settings_map.get("llm.base_url") or "").rstrip("/")
     api_key = settings_map.get("llm.api_key") or ""
 

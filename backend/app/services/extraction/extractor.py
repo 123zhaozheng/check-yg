@@ -56,7 +56,14 @@ class ExtractionResult:
 class FlowExtractor:
     """Async flow extraction pipeline."""
 
-    def __init__(self):
+    def __init__(self, runtime_settings: Optional[Dict[str, str]] = None):
+        runtime_settings = runtime_settings or {}
+        llm_timeout = self._int_setting(
+            runtime_settings.get("llm.timeout"),
+            settings.LLM_TIMEOUT,
+            minimum=1,
+            maximum=600,
+        )
         self.scanner = DocumentScanner()
         self.checkpoint_manager = CheckpointManager()
         self.progress_reporter = ProgressReporter()
@@ -68,24 +75,36 @@ class FlowExtractor:
 
         # Initialize LLM components
         self.classifier = FlowTableClassifier(
-            api_url=settings.LLM_API_ENDPOINT,
-            api_key=settings.LLM_API_KEY,
-            model=settings.LLM_MODEL_NAME,
+            api_url=runtime_settings.get("llm.base_url") or settings.LLM_API_ENDPOINT,
+            api_key=runtime_settings.get("llm.api_key") or settings.LLM_API_KEY,
+            model=runtime_settings.get("llm.model_name") or settings.LLM_MODEL_NAME,
+            timeout=llm_timeout,
         )
         self.normalizer = FlowDataNormalizer(
-            api_url=settings.LLM_API_ENDPOINT,
-            api_key=settings.LLM_API_KEY,
-            model=settings.LLM_MODEL_NAME,
+            api_url=runtime_settings.get("llm.base_url") or settings.LLM_API_ENDPOINT,
+            api_key=runtime_settings.get("llm.api_key") or settings.LLM_API_KEY,
+            model=runtime_settings.get("llm.model_name") or settings.LLM_MODEL_NAME,
+            timeout=llm_timeout,
         )
         self.portrait_extractor = DocumentPortraitExtractor(
-            api_url=settings.LLM_API_ENDPOINT,
-            api_key=settings.LLM_API_KEY,
-            model=settings.LLM_MODEL_NAME,
+            api_url=runtime_settings.get("llm.base_url") or settings.LLM_API_ENDPOINT,
+            api_key=runtime_settings.get("llm.api_key") or settings.LLM_API_KEY,
+            model=runtime_settings.get("llm.model_name") or settings.LLM_MODEL_NAME,
+            timeout=llm_timeout,
         )
 
         # Control flags
         self._cancel_requested = False
         self._pause_requested = False
+
+    @staticmethod
+    def _int_setting(value: Optional[str], default: int, minimum: int, maximum: int) -> int:
+        """Read a bounded integer runtime setting."""
+        try:
+            parsed = int(value) if value is not None else default
+        except (TypeError, ValueError):
+            parsed = default
+        return min(max(parsed, minimum), maximum)
 
     def set_progress_callback(self, callback) -> None:
         """Set progress callback function."""
