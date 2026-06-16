@@ -21,9 +21,10 @@ logger = logging.getLogger(__name__)
 class ExtractionResult:
     """Result of extraction pipeline."""
 
-    def __init__(self, task_id: str):
+    def __init__(self, task_id: str, document_folder: str = ""):
         self.task_id = task_id
         self.task_time = datetime.now().isoformat()
+        self.document_folder = document_folder
         self.total_documents = 0
         self.processed_documents = 0
         self.total_tables = 0
@@ -39,6 +40,7 @@ class ExtractionResult:
         return {
             "task_id": self.task_id,
             "task_time": self.task_time,
+            "document_folder": self.document_folder,
             "total_documents": self.total_documents,
             "processed_documents": self.processed_documents,
             "total_tables": self.total_tables,
@@ -127,7 +129,7 @@ class FlowExtractor:
         if not task_id:
             task_id = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-        result = ExtractionResult(task_id)
+        result = ExtractionResult(task_id, document_folder=document_folder)
 
         # Stage 1: Scan documents
         self.progress_reporter.report(
@@ -160,12 +162,25 @@ class FlowExtractor:
             )
 
             try:
-                doc_result = await self._process_document_stage1(
-                    doc_path, task_id, confidence_threshold
-                )
+                checkpoint = self.checkpoint_manager.load_checkpoint(task_id, doc_path.name)
+                if checkpoint and checkpoint.get("status") in ("stage1_done", "completed"):
+                    doc_result = self._stage1_result_from_checkpoint(doc_path, checkpoint)
+                else:
+                    doc_result = await self._process_document_stage1(
+                        doc_path, task_id, confidence_threshold
+                    )
                 if doc_result:
-                    stage2_docs.append(doc_result)
+                    completed_records = doc_result.get("completed_records")
+                    if completed_records is not None:
+                        result.flow_records.extend(completed_records)
+                        result.per_document_stats[doc_path.name] = {
+                            "record_count": len(completed_records)
+                        }
+                    else:
+                        stage2_docs.append(doc_result)
                     result.processed_documents += 1
+                    result.total_tables += int(doc_result.get("total_tables", 0) or 0)
+                    result.flow_tables += len(doc_result.get("flow_tables", []))
             except Exception as e:
                 logger.error("Failed to process document %s: %s", doc_path.name, e)
                 result.failed_documents.append(doc_path.name)
@@ -213,6 +228,21 @@ class FlowExtractor:
 
         return result
 
+    async def extract_flows_append(
+        self,
+        task_id: str,
+        new_folder: str,
+        batch_size: int = 20,
+        confidence_threshold: int = 70,
+    ) -> ExtractionResult:
+        """Append extraction by processing an additional folder under an existing task."""
+        return await self.extract_flows(
+            document_folder=new_folder,
+            task_id=task_id,
+            batch_size=batch_size,
+            confidence_threshold=confidence_threshold,
+        )
+
     async def _process_document_stage1(
         self,
         doc_path: Path,
@@ -229,6 +259,20 @@ class FlowExtractor:
         raw_tables = await loop.run_in_executor(None, parser.extract_raw_tables, doc_path)
 
         if not raw_tables:
+            self.checkpoint_manager.save_checkpoint(
+                task_id,
+                doc_path.name,
+                {
+                    "document_name": doc_path.name,
+                    "document_path": str(doc_path),
+                    "status": "completed",
+                    "total_tables": 0,
+                    "flow_tables_count": 0,
+                    "total_flow_rows": 0,
+                    "flow_tables": [],
+                    "errors": ["No tables extracted"],
+                },
+            )
             return None
 
         # Extract document portrait
@@ -258,21 +302,74 @@ class FlowExtractor:
             confidence = classification.get("confidence", 0)
 
             if is_flow and confidence >= confidence_threshold:
+                header_row_index = int(classification.get("header_row_index", -1) or -1)
+                data_start_row = int(classification.get("data_start_row", 0) or 0)
+                if header_row_index >= 0:
+                    data_start_row = max(header_row_index + 1, data_start_row)
+                data_start_row = min(max(0, data_start_row), len(table.rows))
                 flow_tables.append(
                     {
                         "table": table,
                         "classification": classification,
                         "portrait": portrait,
+                        "rows": table.rows[data_start_row:],
+                        "data_start_row": data_start_row,
                     }
                 )
 
         if not flow_tables:
+            self.checkpoint_manager.save_checkpoint(
+                task_id,
+                doc_path.name,
+                {
+                    "document_name": doc_path.name,
+                    "document_path": str(doc_path),
+                    "status": "completed",
+                    "total_tables": len(raw_tables),
+                    "flow_tables_count": 0,
+                    "total_flow_rows": 0,
+                    "flow_tables": [],
+                    "portrait": portrait,
+                    "errors": [],
+                },
+            )
             return None
+
+        checkpoint_tables = []
+        total_flow_rows = 0
+        for item in flow_tables:
+            rows = item.get("rows", [])
+            total_flow_rows += len(rows)
+            table = item["table"]
+            checkpoint_tables.append(
+                {
+                    "table_index": table.table_index,
+                    "classification": item.get("classification", {}),
+                    "data_start_row": item.get("data_start_row", 0),
+                    "rows": rows,
+                }
+            )
+        self.checkpoint_manager.save_checkpoint(
+            task_id,
+            doc_path.name,
+            {
+                "document_name": doc_path.name,
+                "document_path": str(doc_path),
+                "status": "stage1_done",
+                "total_tables": len(raw_tables),
+                "flow_tables_count": len(flow_tables),
+                "total_flow_rows": total_flow_rows,
+                "flow_tables": checkpoint_tables,
+                "portrait": portrait,
+                "errors": [],
+            },
+        )
 
         return {
             "doc_path": doc_path,
             "flow_tables": flow_tables,
             "portrait": portrait,
+            "total_tables": len(raw_tables),
         }
 
     async def _process_document_stage2(
@@ -293,7 +390,8 @@ class FlowExtractor:
                 break
 
             table = ft["table"]
-            rows = table.rows
+            rows = ft.get("rows") or table.rows
+            data_start_row = int(ft.get("data_start_row", 0) or 0)
 
             # Process in batches
             for i in range(0, len(rows), batch_size):
@@ -306,7 +404,7 @@ class FlowExtractor:
                     if item.get("is_valid", True):
                         record = FlowRecord(
                             source_file=doc_path.name,
-                            original_row=i + batch_offset,
+                            original_row=data_start_row + i + batch_offset,
                             transaction_time=item.get("transaction_time", ""),
                             counterparty_name=item.get("counterparty_name", ""),
                             counterparty_account=item.get("counterparty_account", ""),
@@ -316,8 +414,69 @@ class FlowExtractor:
                         )
                         records.append(record)
 
+        checkpoint = self.checkpoint_manager.load_checkpoint(task_id, doc_path.name) or {}
+        checkpoint["status"] = "completed"
+        checkpoint["processed_rows"] = sum(
+            len(item.get("rows", [])) for item in checkpoint.get("flow_tables", [])
+        )
+        checkpoint["normalized_records"] = len(records)
+        checkpoint["records"] = [record.to_dict() for record in records]
+        self.checkpoint_manager.save_checkpoint(task_id, doc_path.name, checkpoint)
+
         return {
             "doc_path": doc_path,
             "records": records,
             "stats": {doc_path.name: {"record_count": len(records)}},
+        }
+
+    def _stage1_result_from_checkpoint(
+        self,
+        doc_path: Path,
+        checkpoint: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        """Rehydrate stage-1 data from a saved checkpoint."""
+        if checkpoint.get("status") == "completed" and checkpoint.get("records"):
+            records = []
+            for item in checkpoint.get("records", []):
+                records.append(
+                    FlowRecord(
+                        source_file=item.get("source_file", doc_path.name),
+                        original_row=int(item.get("original_row", 0) or 0),
+                        transaction_time=item.get("transaction_time", ""),
+                        counterparty_name=item.get("counterparty_name", ""),
+                        counterparty_account=item.get("counterparty_account", ""),
+                        amount=item.get("amount", ""),
+                        summary=item.get("summary", ""),
+                        transaction_type=item.get("transaction_type", ""),
+                    )
+                )
+            return {
+                "doc_path": doc_path,
+                "flow_tables": [],
+                "portrait": checkpoint.get("portrait"),
+                "total_tables": int(checkpoint.get("total_tables", 0) or 0),
+                "completed_records": records,
+            }
+
+        flow_tables = []
+        for item in checkpoint.get("flow_tables", []) or []:
+            flow_tables.append(
+                {
+                    "table": RawTable(
+                        table_index=int(item.get("table_index", 0) or 0),
+                        rows=item.get("rows", []) or [],
+                    ),
+                    "classification": item.get("classification", {}),
+                    "portrait": checkpoint.get("portrait"),
+                    "rows": item.get("rows", []) or [],
+                    "data_start_row": int(item.get("data_start_row", 0) or 0),
+                }
+            )
+        if not flow_tables:
+            return None
+        return {
+            "doc_path": doc_path,
+            "flow_tables": flow_tables,
+            "portrait": checkpoint.get("portrait"),
+            "total_tables": int(checkpoint.get("total_tables", 0) or 0),
         }
