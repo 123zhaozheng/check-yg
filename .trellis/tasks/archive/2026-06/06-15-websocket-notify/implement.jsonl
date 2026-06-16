@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend guideline index for routing to relevant implementation rules."}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "Use existing backend module organization when adding WebSocket router and helpers."}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Notification send failures must be logged without breaking primary API responses."}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "WebSocket connection and broadcast failures need project-consistent logging."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Implementation must follow project Python quality and testing expectations."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Task spans backend API, WebSocket transport, and frontend notification UI."}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Reuse existing auth, WebSocket frontend manager, and route patterns instead of adding duplicates."}
