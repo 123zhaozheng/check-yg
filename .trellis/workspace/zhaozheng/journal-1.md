@@ -271,3 +271,36 @@ Implemented backend review matching, report generation, Excel and skills bundle 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 9: WebSocket notifications
+
+**Date**: 2026-06-16
+**Task**: WebSocket notifications
+**Branch**: `feat/web-split`
+
+### Summary
+
+Implemented authenticated WebSocket notifications for review, report, and export completion; wired frontend toast feedback and added focused backend tests.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d2d7e36` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

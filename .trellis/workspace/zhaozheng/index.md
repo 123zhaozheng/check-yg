@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 8
+- **Total Sessions**: 9
 - **Last Active**: 2026-06-16
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~273 | Active |
+| `journal-1.md` | ~306 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 9 | 2026-06-16 | WebSocket notifications | `d2d7e36` | `feat/web-split` |
 | 8 | 2026-06-16 | Review export backend APIs | `c6ede60` | `feat/web-split` |
 | 7 | 2026-06-15 | Web-Split Phase 1: 基础设施完成 | `bf6c1d6`, `6e63285` | `feat/web-split` |
 | 6 | 2026-06-15 | Onboarding: join Trellis project | `1ea5d3a` | `feat/web-split` |
