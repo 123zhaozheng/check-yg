@@ -69,7 +69,20 @@ class FlowExtractor:
         self.progress_reporter = ProgressReporter()
 
         # Initialize parsers
-        self.pdf_parser = PDFParser()
+        mineru_timeout = self._int_setting(
+            runtime_settings.get("mineru.timeout"),
+            settings.MINERU_TIMEOUT,
+            minimum=1,
+            maximum=3600,
+        )
+        self.pdf_parser = PDFParser(
+            mineru_mode=runtime_settings.get("mineru.mode") or settings.MINERU_MODE,
+            mineru_url=runtime_settings.get("mineru.url") or settings.MINERU_URL,
+            mineru_public_url=runtime_settings.get("mineru.public_url") or settings.MINERU_PUBLIC_URL,
+            mineru_public_api_key=runtime_settings.get("mineru.public_api_key")
+            or settings.MINERU_PUBLIC_API_KEY,
+            timeout=mineru_timeout,
+        )
         self.excel_parser = ExcelParser()
         self.docx_parser = DocxParser()
 

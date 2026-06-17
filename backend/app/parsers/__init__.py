@@ -4,6 +4,7 @@
 from .base import BaseParser, FlowRecord, RawTable
 from .excel_parser import ExcelParser
 from .docx_parser import DocxParser
+from .html_parser import HTMLTableParser
 from .pdf_parser import PDFParser
 
 __all__ = [
@@ -12,5 +13,6 @@ __all__ = [
     "RawTable",
     "ExcelParser",
     "DocxParser",
+    "HTMLTableParser",
     "PDFParser",
 ]

@@ -29,6 +29,26 @@ DEFAULT_SETTINGS: Dict[str, Dict[str, str]] = {
         "value": str(settings.LLM_TIMEOUT),
         "category": "llm",
     },
+    "mineru.mode": {
+        "value": "local",
+        "category": "mineru",
+    },
+    "mineru.url": {
+        "value": "http://localhost:8000",
+        "category": "mineru",
+    },
+    "mineru.public_url": {
+        "value": "https://mineru.net/api/v1/agent",
+        "category": "mineru",
+    },
+    "mineru.public_api_key": {
+        "value": "",
+        "category": "mineru",
+    },
+    "mineru.timeout": {
+        "value": "300",
+        "category": "mineru",
+    },
     "flow.batch_size": {
         "value": "20",
         "category": "flow",

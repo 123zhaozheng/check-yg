@@ -29,5 +29,12 @@ class Settings(BaseSettings):
     LLM_MODEL_NAME: str = "qwen2.5:7b"
     LLM_TIMEOUT: int = 60
 
+    # MinerU PDF parser
+    MINERU_MODE: str = "local"
+    MINERU_URL: str = "http://localhost:8000"
+    MINERU_PUBLIC_URL: str = "https://mineru.net/api/v1/agent"
+    MINERU_PUBLIC_API_KEY: str = ""
+    MINERU_TIMEOUT: int = 300
+
 
 settings = Settings()
