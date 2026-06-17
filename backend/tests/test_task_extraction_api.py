@@ -149,48 +149,59 @@ def test_append_result_merge_preserves_previous_records():
     assert merged["append_runs"][0]["document_folder"] == "D:/new"
 
 
-def test_append_merge_dedups_records_by_source_file():
-    """A new run that re-extracts an already-seen document must not duplicate it."""
+def test_append_merge_keeps_same_name_different_path_and_accumulates_paths():
+    """Document identity is the full path, not the filename.
+
+    Same-named files in different folders are distinct documents and both
+    records are kept. processed_document_paths accumulates (deduped by path).
+    Previous per_document_stats are preserved.
+    """
     previous = {
         "total_documents": 1,
         "processed_documents": 1,
         "total_tables": 1,
         "flow_tables": 1,
         "total_records": 1,
-        "flow_records": [{"source_file": "dup.xlsx", "amount": "100"}],
-        "failed_documents": ["dup.xlsx"],
+        "flow_records": [{"source_file": "流水.pdf", "amount": "100"}],
+        "failed_documents": ["流水.pdf"],
         "errors": [],
-        "per_document_stats": {"dup.xlsx": {"record_count": 1}},
+        "per_document_stats": {"流水.pdf": {"record_count": 1}},
+        "processed_document_paths": ["D:/old/流水.pdf"],
     }
+    # Append run: a NEW folder containing a same-named file (distinct path)
+    # plus the exact same path already processed (which the append stage would
+    # have filtered out, so it does not appear in current records).
     current = {
         "task_time": "2026-06-17T00:00:00",
-        "document_folder": "D:/again",
-        "total_documents": 2,
-        "processed_documents": 2,
+        "document_folder": "D:/new",
+        "total_documents": 1,
+        "processed_documents": 1,
         "total_tables": 1,
         "flow_tables": 1,
-        "total_records": 2,
+        "total_records": 1,
         "flow_records": [
-            {"source_file": "dup.xlsx", "amount": "999"},  # duplicate -> dropped
-            {"source_file": "fresh.xlsx", "amount": "50"},  # new -> kept
+            {"source_file": "流水.pdf", "amount": "999"},  # same name, different folder
         ],
-        "failed_documents": ["dup.xlsx"],  # already in previous -> not re-added
+        "failed_documents": [],
         "errors": [],
-        "per_document_stats": {"dup.xlsx": {"record_count": 2}, "fresh.xlsx": {"record_count": 1}},
+        "per_document_stats": {"流水.pdf": {"record_count": 1}},
+        "processed_document_paths": ["D:/new/流水.pdf"],
     }
 
     merged = ExtractionTaskRunner._merge_results(previous, current)
 
-    sources = [item["source_file"] for item in merged["flow_records"]]
-    assert sources == ["dup.xlsx", "fresh.xlsx"]
+    # Both same-named records kept (path-based identity, not source_file dedup).
+    amounts = [item["amount"] for item in merged["flow_records"]]
+    assert amounts == ["100", "999"]
     assert merged["total_records"] == 2
-    # Previous per_document_stats preserved (dup.xlsx not overwritten by current).
-    assert merged["per_document_stats"]["dup.xlsx"]["record_count"] == 1
-    assert merged["per_document_stats"]["fresh.xlsx"]["record_count"] == 1
-    # failed_documents deduped.
-    assert merged["failed_documents"] == ["dup.xlsx"]
+    # processed_document_paths accumulates both distinct paths.
+    assert merged["processed_document_paths"] == ["D:/old/流水.pdf", "D:/new/流水.pdf"]
+    # Previous per_document_stats preserved (not overwritten by current).
+    assert merged["per_document_stats"]["流水.pdf"]["record_count"] == 1
+    # failed_documents deduped by name.
+    assert merged["failed_documents"] == ["流水.pdf"]
     # append_runs accumulates.
-    assert merged["append_runs"][0]["document_folder"] == "D:/again"
+    assert merged["append_runs"][0]["document_folder"] == "D:/new"
 
 
 @pytest.mark.asyncio

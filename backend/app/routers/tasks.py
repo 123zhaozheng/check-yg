@@ -5,17 +5,23 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.dependencies import get_current_user
+from ..config import settings
 from ..database import get_db
 from ..models import Task, TaskLog, User
 from ..services.extraction.runner import runner
+from ..services.extraction.scanner import DocumentScanner
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
+
+# Shared scanner so upload endpoints validate the same supported extensions
+# as the extraction pipeline.
+_SCANNER = DocumentScanner()
 
 
 class TaskCreateRequest(BaseModel):
@@ -66,6 +72,75 @@ def _task_response(task: Task) -> TaskResponse:
         updated_at=task.updated_at,
         completed_at=task.completed_at,
     )
+
+
+def _next_upload_run_dir(task_id: int, config: dict) -> Path:
+    """Compute a fresh per-run subfolder for uploaded files.
+
+    Each create/append upload gets its own subfolder under
+    ``UPLOAD_DIR/tasks/{task_id}/`` so same-named files in different runs do
+    not overwrite each other and remain distinct documents (path-aware
+    identity). The run counter is persisted in the task config.
+    """
+    run_index = int(config.get("upload_run_index") or 0) + 1
+    config["upload_run_index"] = run_index
+    folder = Path(settings.UPLOAD_DIR) / "tasks" / str(task_id) / f"run-{run_index}"
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder
+
+
+def _has_supported_file(files: List[UploadFile]) -> bool:
+    """Return True if any uploaded file has a supported extension."""
+    for upload in files:
+        name = upload.filename or ""
+        if is_supported_upload_name(name):
+            return True
+    return False
+
+
+def is_supported_upload_name(filename: str) -> bool:
+    name = Path(filename).name
+    if not name or name.startswith("~$"):
+        return False
+    return Path(name).suffix.lower() in _SCANNER.supported_extensions
+
+
+def _ensure_supported_files(files: List[UploadFile]) -> None:
+    """Reject early if no supported file is present (before creating any task)."""
+    if not _has_supported_file(files):
+        raise HTTPException(
+            status_code=422,
+            detail="No supported files uploaded (expected .pdf/.docx/.xlsx/.xls)",
+        )
+
+
+async def _save_uploads(files: List[UploadFile], dest_dir: Path) -> Path:
+    """Persist uploaded files to dest_dir, keeping only supported extensions.
+
+    Returns dest_dir if at least one supported file was saved, else raises 422.
+    """
+    saved = 0
+    for upload in files:
+        filename = upload.filename or ""
+        if not is_supported_upload_name(filename):
+            continue
+        safe_name = Path(filename).name
+        if not safe_name:
+            continue
+        dest = dest_dir / safe_name
+        with open(dest, "wb") as out:
+            while True:
+                chunk = await upload.read(1024 * 1024)
+                if not chunk:
+                    break
+                out.write(chunk)
+        saved += 1
+    if saved == 0:
+        raise HTTPException(
+            status_code=422,
+            detail="No supported files uploaded (expected .pdf/.docx/.xlsx/.xls)",
+        )
+    return dest_dir
 
 
 @router.get("/", response_model=TaskListResponse)
@@ -127,6 +202,126 @@ async def create_task(
     db.add(TaskLog(task_id=task.id, level="info", message="Task created"))
     await db.commit()
     await db.refresh(task)
+    return _task_response(task)
+
+
+@router.post("/upload", response_model=TaskResponse, status_code=status.HTTP_201_CREATED)
+async def create_task_from_upload(
+    title: str = Form(...),
+    description: Optional[str] = Form(None),
+    batch_size: int = Form(20),
+    confidence_threshold: int = Form(70),
+    files: List[UploadFile] = File(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Create a task from uploaded files and start extraction immediately.
+
+    Files are saved under a per-task upload subfolder, which becomes the
+    extraction ``document_folder`` — no backend-local directory path is typed
+    by the user.
+    """
+    clean_title = title.strip()
+    if not clean_title:
+        raise HTTPException(status_code=422, detail="Task title cannot be empty")
+    _ensure_supported_files(files)
+
+    config: dict[str, Any] = {
+        "batch_size": batch_size,
+        "confidence_threshold": confidence_threshold,
+    }
+    task = Task(
+        title=clean_title,
+        description=description,
+        owner_id=current_user.id,
+        status="draft",
+        config=config,
+    )
+    db.add(task)
+    await db.flush()
+    db.add(TaskLog(task_id=task.id, level="info", message="Task created from upload"))
+    await db.commit()
+    await db.refresh(task)
+
+    upload_dir = _next_upload_run_dir(task.id, config)
+    await _save_uploads(files, upload_dir)
+    config["document_folder"] = str(upload_dir)
+    task.config = config
+    task.status = "running"
+    task.completed_at = None
+    db.add(TaskLog(task_id=task.id, level="info", message="Extraction started"))
+    await db.commit()
+    await db.refresh(task)
+
+    try:
+        await runner.start(
+            task_id=task.id,
+            owner_id=current_user.id,
+            document_folder=str(upload_dir),
+            batch_size=batch_size,
+            confidence_threshold=confidence_threshold,
+            append=False,
+        )
+    except ValueError as exc:
+        task.status = "draft"
+        await db.commit()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    return _task_response(task)
+
+
+@router.post("/{task_id}/append-upload", response_model=TaskResponse)
+async def append_task_from_upload(
+    task_id: int,
+    batch_size: Optional[int] = Form(None),
+    confidence_threshold: Optional[int] = Form(None),
+    files: List[UploadFile] = File(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Append uploaded documents to an existing task and start append extraction.
+
+    Files land in a fresh per-run subfolder so same-named files from different
+    append runs stay distinct (path-aware document identity).
+    """
+    task = await _load_owned_task(db, task_id, current_user)
+    if task.status == "running" or runner.is_running(task.id):
+        raise HTTPException(status_code=409, detail="Task is already running")
+    _ensure_supported_files(files)
+
+    config = dict(task.config or {})
+    upload_dir = _next_upload_run_dir(task.id, config)
+    await _save_uploads(files, upload_dir)
+
+    bs = batch_size or int(config.get("batch_size") or 20)
+    ct = confidence_threshold or int(config.get("confidence_threshold") or 70)
+    append_folders = list(config.get("append_document_folders") or [])
+    if str(upload_dir) not in append_folders:
+        append_folders.append(str(upload_dir))
+    config["append_document_folders"] = append_folders
+    config["append_document_folder"] = str(upload_dir)
+    config["document_folder"] = config.get("document_folder") or str(upload_dir)
+    task.config = config
+    task.status = "running"
+    task.completed_at = None
+    db.add(TaskLog(task_id=task.id, level="info", message="Append extraction started from upload"))
+    await db.commit()
+    await db.refresh(task)
+
+    try:
+        await runner.start(
+            task_id=task.id,
+            owner_id=current_user.id,
+            document_folder=str(upload_dir),
+            batch_size=bs,
+            confidence_threshold=ct,
+            append=True,
+        )
+    except ValueError as exc:
+        task.status = "failed"
+        await db.commit()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
     return _task_response(task)
 
 

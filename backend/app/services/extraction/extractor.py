@@ -34,6 +34,9 @@ class ExtractionResult:
         self.flow_records: List[FlowRecord] = []
         self.errors: List[Dict[str, Any]] = []
         self.per_document_stats: Dict[str, Dict[str, Any]] = {}
+        # Full paths of documents that reached stage 1, for path-aware append
+        # dedup (same-named files in different folders are distinct).
+        self.processed_document_paths: List[str] = []
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
@@ -50,6 +53,7 @@ class ExtractionResult:
             "flow_records": [r.to_dict() for r in self.flow_records],
             "errors": self.errors,
             "per_document_stats": self.per_document_stats,
+            "processed_document_paths": self.processed_document_paths,
         }
 
 
@@ -189,8 +193,13 @@ class FlowExtractor:
         task_id: Optional[str] = None,
         batch_size: int = 20,
         confidence_threshold: int = 70,
+        documents: Optional[List[Path]] = None,
     ) -> ExtractionResult:
-        """Extract flow records from documents."""
+        """Extract flow records from documents.
+
+        When ``documents`` is supplied (append path), scanning is skipped and
+        only those pre-filtered documents are processed.
+        """
         self._cancel_requested = False
         self._pause_requested = False
 
@@ -199,11 +208,12 @@ class FlowExtractor:
 
         result = ExtractionResult(task_id, document_folder=document_folder)
 
-        # Stage 1: Scan documents
-        self.progress_reporter.report(
-            task_id, "scanning", 0, 1, f"Scanning directory: {document_folder}"
-        )
-        documents = self.scanner.scan_directory(document_folder)
+        # Stage 1: Scan documents (unless a pre-filtered set was supplied)
+        if documents is None:
+            self.progress_reporter.report(
+                task_id, "scanning", 0, 1, f"Scanning directory: {document_folder}"
+            )
+            documents = self.scanner.scan_directory(document_folder)
         result.total_documents = len(documents)
 
         if not documents:
@@ -230,7 +240,9 @@ class FlowExtractor:
             )
 
             try:
-                checkpoint = self.checkpoint_manager.load_checkpoint(task_id, doc_path.name)
+                checkpoint = self.checkpoint_manager.load_checkpoint(
+                    task_id, doc_path.name, document_path=str(doc_path)
+                )
                 if checkpoint and checkpoint.get("status") in ("stage1_done", "completed"):
                     doc_result = self._stage1_result_from_checkpoint(doc_path, checkpoint)
                 else:
@@ -247,6 +259,7 @@ class FlowExtractor:
                     else:
                         stage2_docs.append(doc_result)
                     result.processed_documents += 1
+                    result.processed_document_paths.append(str(doc_path))
                     result.total_tables += int(doc_result.get("total_tables", 0) or 0)
                     result.flow_tables += len(doc_result.get("flow_tables", []))
             except Exception as e:
@@ -302,13 +315,35 @@ class FlowExtractor:
         new_folder: str,
         batch_size: int = 20,
         confidence_threshold: int = 70,
+        existing_document_paths: Optional[List[str]] = None,
     ) -> ExtractionResult:
-        """Append extraction by processing an additional folder under an existing task."""
+        """Append extraction by processing an additional folder under an existing task.
+
+        Documents whose full path was already processed in a prior run
+        (``existing_document_paths``) are skipped — so a same-named file in a
+        new folder is still processed, while the exact same file is not
+        re-extracted. Mirrors ``src/core/flow_extractor_v2.py`` append dedup.
+        """
+        self.progress_reporter.report(
+            task_id, "scanning", 0, 1, f"Scanning directory: {new_folder}"
+        )
+        all_documents = self.scanner.scan_directory(new_folder)
+
+        existing = {
+            Path(str(p)).as_posix() for p in (existing_document_paths or [])
+        }
+        new_documents = [
+            doc for doc in all_documents if doc.as_posix() not in existing
+        ]
+        skipped = len(all_documents) - len(new_documents)
+        if skipped:
+            logger.info("Append skipped %d already-processed document(s)", skipped)
         return await self.extract_flows(
             document_folder=new_folder,
             task_id=task_id,
             batch_size=batch_size,
             confidence_threshold=confidence_threshold,
+            documents=new_documents,
         )
 
     async def _process_document_stage1(
@@ -322,9 +357,20 @@ class FlowExtractor:
         if not parser:
             return None
 
-        # Parse tables (run in thread pool since parsers are sync)
+        # Parse tables + non-table context in one MinerU fetch when supported
+        # (avoids a second MinerU API call for the same PDF).
         loop = asyncio.get_running_loop()
-        raw_tables = await loop.run_in_executor(None, parser.extract_raw_tables, doc_path)
+        if hasattr(parser, "extract_tables_and_context"):
+            raw_tables, non_table_context = await loop.run_in_executor(
+                None, parser.extract_tables_and_context, doc_path
+            )
+        else:
+            raw_tables = await loop.run_in_executor(None, parser.extract_raw_tables, doc_path)
+            non_table_context = ""
+            if hasattr(parser, "extract_non_table_context"):
+                non_table_context = await loop.run_in_executor(
+                    None, parser.extract_non_table_context, doc_path
+                )
 
         if not raw_tables:
             self.checkpoint_manager.save_checkpoint(
@@ -340,15 +386,9 @@ class FlowExtractor:
                     "flow_tables": [],
                     "errors": ["No tables extracted"],
                 },
+                document_path=str(doc_path),
             )
             return None
-
-        # Extract document portrait
-        non_table_context = ""
-        if hasattr(parser, "extract_non_table_context"):
-            non_table_context = await loop.run_in_executor(
-                None, parser.extract_non_table_context, doc_path
-            )
 
         content_preview = "\n\n".join(
             table.get_preview(4) for table in raw_tables if table.get_preview(4)
@@ -402,6 +442,7 @@ class FlowExtractor:
                     "portrait": portrait,
                     "errors": [],
                 },
+                document_path=str(doc_path),
             )
             return None
 
@@ -433,6 +474,7 @@ class FlowExtractor:
                 "portrait": portrait,
                 "errors": [],
             },
+            document_path=str(doc_path),
         )
 
         return {
@@ -507,14 +549,18 @@ class FlowExtractor:
                         )
                         records.append(record)
 
-        checkpoint = self.checkpoint_manager.load_checkpoint(task_id, doc_path.name) or {}
+        checkpoint = self.checkpoint_manager.load_checkpoint(
+            task_id, doc_path.name, document_path=str(doc_path)
+        ) or {}
         checkpoint["status"] = "completed"
         checkpoint["processed_rows"] = sum(
             len(item.get("rows", [])) for item in checkpoint.get("flow_tables", [])
         )
         checkpoint["normalized_records"] = len(records)
         checkpoint["records"] = [record.to_dict() for record in records]
-        self.checkpoint_manager.save_checkpoint(task_id, doc_path.name, checkpoint)
+        self.checkpoint_manager.save_checkpoint(
+            task_id, doc_path.name, checkpoint, document_path=str(doc_path)
+        )
 
         return {
             "doc_path": doc_path,

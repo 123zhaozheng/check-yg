@@ -260,11 +260,16 @@ if (response.status === 401 && !isRefreshEndpoint) {
 ### 2. Signatures
 - `PDFParser(mineru_mode, mineru_url, mineru_public_url, mineru_public_api_key, timeout)` — chooses `MinerUClient` (local) or `PublicMinerUClient` (public agent) from `mineru_mode`.
 - `PDFParser.extract_raw_tables(path) -> List[RawTable]` and `PDFParser.extract_non_table_context(path, max_chars) -> str` parse MinerU markdown via `HTMLTableParser`.
+- `PDFParser.extract_tables_and_context(path, max_chars) -> (List[RawTable], str)` fetches MinerU markdown **once** and returns both tables and non-table context — the extractor must use this for PDFs to avoid a second MinerU API call (costly on the public agent).
 - `FlowExtractor(runtime_settings)` constructs `PDFParser` from runtime MinerU settings with config env defaults as fallback.
+- `POST /api/tasks/upload` (multipart) and `POST /api/tasks/{task_id}/append-upload` (multipart) save uploaded files under `UPLOAD_DIR/tasks/{task_id}/run-{n}/` and start/append extraction — the web UI never asks the user for a backend-local directory path.
+- `CheckpointManager.load/save/clear_checkpoint(task_id, document_name, document_path=...)` keys checkpoint files by `name|posix_path` md5 hash, so same-named files in different folders get distinct checkpoints.
 
 ### 3. Contracts
 - MinerU runtime settings keys (all category `mineru`, in `DEFAULT_SETTINGS` and `config.py` env defaults): `mineru.mode` (`local`|`public`), `mineru.url`, `mineru.public_url`, `mineru.public_api_key`, `mineru.timeout`.
-- The settings UI must only expose keys the runtime consumes — no `fast`/`precise` mode (no such runtime concept), no `max_concurrency`, no `mineru.api_endpoint` (wrong key; runtime reads `mineru.url`).
+- The settings UI must only expose keys the runtime consumes — no `fast`/`precise` mode (no such runtime concept), no `max_concurrency`, no `mineru.api_endpoint` (wrong key; runtime reads `mineru.url`). No placeholder AI/Security tabs.
+- Document identity is the full path (posix-normalized), not the filename: checkpoints, append dedup, and `processed_document_paths` all use `name|path`. `source_file` stays as the filename for display only.
+- Each create/append upload gets its own `run-{n}/` subfolder so same-named files across runs stay distinct documents (path-aware identity).
 - Encrypted PDFs: auto-extract password from the last parenthesized filename segment; fall back to an optional password callback; surface a clear error when no callback is set.
 - The normalizer prompt guarantees `amount` is always positive and `raw_amount` preserves the source sign; the extractor post-processes `transaction_type` from `raw_amount` + `amount_sign_rule` (credit cards defer to the LLM).
 
@@ -274,10 +279,13 @@ if (response.status === 401 && !isRefreshEndpoint) {
 | `mineru.mode=public` but no `public_api_key` | Public client sends no Authorization header; MinerU API rejects |
 | MinerU service unreachable | `extract_raw_tables` returns `[]`, `extract_non_table_context` returns `""` (log + continue) |
 | Encrypted PDF with no filename password and no callback | `extract_raw_tables` returns `[]`; error logged |
+| Upload with no supported files | `POST /tasks/upload` and `/append-upload` return 422 before creating/changing any task |
 | `flow.batch_size` / `flow.confidence_threshold` in settings | NOT consumed — start/append reads request > task.config > hardcoded 20/70; do not add these to `DEFAULT_SETTINGS` |
 
 ### 5. Tests Required
-- Client selection (local vs public), markdown→table, non-table context stripping, encrypted-PDF fallback, and runtime-settings wiring into `PDFParser` (see `tests/test_pdf_parser.py`).
+- Client selection (local vs public), markdown→table, non-table context stripping, encrypted-PDF fallback, single-Mineru-fetch (`extract_tables_and_context` calls `_get_markdown` once), and runtime-settings wiring into `PDFParser` (see `tests/test_pdf_parser.py`, `tests/test_review_fixes.py`).
+- Upload endpoints create+start and append, distinct run dirs, 422 on unsupported files.
+- Path-aware checkpoint identity (same name + different path → distinct checkpoints) and append skips already-processed paths.
 - `DEFAULT_SETTINGS` contains the mineru.* keys and excludes decorative `flow.*` keys.
 
 ### 6. Wrong vs Correct

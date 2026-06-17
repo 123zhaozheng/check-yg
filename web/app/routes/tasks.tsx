@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "~/components/ui/card"
 import { Badge } from "~/components/ui/badge"
 import { Button } from "~/components/ui/button"
@@ -35,7 +35,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "~/components/ui/dropdown-menu"
-import { api, downloadFile } from "~/lib/api"
+import { api, downloadFile, uploadForm } from "~/lib/api"
 import { toast } from "sonner"
 import {
   Search,
@@ -56,6 +56,9 @@ import {
   FileSpreadsheet,
   FileArchive,
   ClipboardCheck,
+  Upload,
+  X,
+  FileUp,
 } from "lucide-react"
 
 interface TaskItem {
@@ -95,6 +98,21 @@ interface ExportSummary {
   format: string
 }
 
+// Supported document extensions (must match backend DocumentScanner).
+const SUPPORTED_EXTS = [".pdf", ".docx", ".xlsx", ".xls"]
+
+function isSupportedFile(name: string): boolean {
+  const lower = name.toLowerCase()
+  if (lower.startsWith("~$")) return false
+  return SUPPORTED_EXTS.some((ext) => lower.endsWith(ext))
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
 const statusConfig: Record<string, { label: string; variant: "default" | "secondary" | "destructive" | "outline"; icon: any }> = {
   draft: { label: "草稿", variant: "outline", icon: FileText },
   running: { label: "进行中", variant: "default", icon: Clock },
@@ -102,6 +120,87 @@ const statusConfig: Record<string, { label: string; variant: "default" | "second
   completed: { label: "已完成", variant: "secondary", icon: CheckCircle2 },
   failed: { label: "失败", variant: "destructive", icon: XCircle },
   cancelled: { label: "已取消", variant: "outline", icon: AlertCircle },
+}
+
+/**
+ * Multi-file picker + drag-and-drop dropzone with a removable selected list.
+ * Pure UI: reports the chosen File[] up via onChange.
+ */
+function FileDropzone({ files, onChange, disabled }: { files: File[]; onChange: (files: File[]) => void; disabled?: boolean }) {
+  const [dragging, setDragging] = useState(false)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  function addIncoming(incoming: FileList | null) {
+    if (!incoming) return
+    const accepted = Array.from(incoming).filter((f) => isSupportedFile(f.name))
+    if (accepted.length === 0) {
+      toast.error("请选择支持的文件类型：PDF / Word / Excel")
+      return
+    }
+    const existing = new Set(files.map((f) => `${f.name}:${f.size}`))
+    const fresh = accepted.filter((f) => !existing.has(`${f.name}:${f.size}`))
+    onChange([...files, ...fresh])
+  }
+
+  function removeAt(index: number) {
+    onChange(files.filter((_, i) => i !== index))
+  }
+
+  return (
+    <div className="space-y-3">
+      <div
+        onDragOver={(e) => { e.preventDefault(); if (!disabled) setDragging(true) }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={(e) => {
+          e.preventDefault()
+          setDragging(false)
+          if (!disabled) addIncoming(e.dataTransfer.files)
+        }}
+        onClick={() => !disabled && inputRef.current?.click()}
+        className={`cursor-pointer rounded-lg border-2 border-dashed p-6 text-center transition-colors ${
+          disabled ? "opacity-50 cursor-not-allowed" : dragging ? "border-primary bg-primary/5" : "border-border hover:bg-surface-container-low"
+        }`}
+      >
+        <FileUp className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
+        <p className="text-sm text-foreground">点击选择文件，或将文件拖到此处</p>
+        <p className="text-xs text-muted-foreground mt-1">支持 PDF / Word / Excel，可多选</p>
+        <input
+          ref={inputRef}
+          type="file"
+          multiple
+          accept={SUPPORTED_EXTS.join(",")}
+          className="hidden"
+          onChange={(e) => { addIncoming(e.target.files); e.target.value = "" }}
+          disabled={disabled}
+        />
+      </div>
+
+      {files.length > 0 && (
+        <div className="space-y-2 max-h-40 overflow-y-auto">
+          {files.map((file, index) => (
+            <div
+              key={`${file.name}:${index}`}
+              className="flex items-center justify-between rounded bg-surface-container-low p-2"
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                <FileText className="w-4 h-4 shrink-0 text-muted-foreground" />
+                <span className="text-sm truncate">{file.name}</span>
+                <span className="text-xs text-muted-foreground shrink-0">{formatBytes(file.size)}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => removeAt(index)}
+                className="text-muted-foreground hover:text-foreground shrink-0"
+                disabled={disabled}
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
 }
 
 export default function TasksPage() {
@@ -117,10 +216,13 @@ export default function TasksPage() {
   const [form, setForm] = useState({
     title: "",
     description: "",
-    document_folder: "",
     batch_size: "20",
     confidence_threshold: "70",
   })
+  const [createFiles, setCreateFiles] = useState<File[]>([])
+  const [appendOpen, setAppendOpen] = useState(false)
+  const [appendTask, setAppendTask] = useState<TaskItem | null>(null)
+  const [appendFiles, setAppendFiles] = useState<File[]>([])
 
   // Review / report / export workflow state for completed tasks.
   const [workflowTask, setWorkflowTask] = useState<TaskItem | null>(null)
@@ -162,36 +264,57 @@ export default function TasksPage() {
       toast.error("请输入任务名称")
       return
     }
+    if (createFiles.length === 0) {
+      toast.error("请选择至少一个文档文件")
+      return
+    }
 
     setSaving(true)
     try {
-      const task = await api.post<TaskItem>("/api/tasks/", {
-        title,
-        description: form.description.trim() || undefined,
-        document_folder: form.document_folder.trim() || undefined,
-        batch_size: Number(form.batch_size) || 20,
-        confidence_threshold: Number(form.confidence_threshold) || 70,
-      })
+      const formData = new FormData()
+      formData.append("title", title)
+      if (form.description.trim()) formData.append("description", form.description.trim())
+      formData.append("batch_size", String(Number(form.batch_size) || 20))
+      formData.append("confidence_threshold", String(Number(form.confidence_threshold) || 70))
+      createFiles.forEach((file) => formData.append("files", file, file.name))
+
+      await uploadForm<TaskItem>("/api/tasks/upload", formData)
       setCreateOpen(false)
-      setForm({
-        title: "",
-        description: "",
-        document_folder: "",
-        batch_size: "20",
-        confidence_threshold: "70",
-      })
-      toast.success("任务已创建")
-      if (task.config?.document_folder) {
-        await handleTaskAction(task.id, "start", {
-          document_folder: task.config.document_folder,
-          batch_size: task.config.batch_size || 20,
-          confidence_threshold: task.config.confidence_threshold || 70,
-        })
-      } else {
-        await fetchTasks()
-      }
+      setForm({ title: "", description: "", batch_size: "20", confidence_threshold: "70" })
+      setCreateFiles([])
+      toast.success("任务已创建并开始抽取")
+      await fetchTasks()
     } catch {
       toast.error("任务创建失败")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  function openAppend(task: TaskItem) {
+    setAppendTask(task)
+    setAppendFiles([])
+    setAppendOpen(true)
+  }
+
+  async function handleAppendUpload() {
+    if (!appendTask) return
+    if (appendFiles.length === 0) {
+      toast.error("请选择至少一个文档文件")
+      return
+    }
+    setSaving(true)
+    try {
+      const formData = new FormData()
+      appendFiles.forEach((file) => formData.append("files", file, file.name))
+      await uploadForm<TaskItem>(`/api/tasks/${appendTask.id}/append-upload`, formData)
+      setAppendOpen(false)
+      setAppendFiles([])
+      setAppendTask(null)
+      toast.success("已追加文档并开始抽取")
+      await fetchTasks()
+    } catch {
+      toast.error("追加抽取失败")
     } finally {
       setSaving(false)
     }
@@ -473,6 +596,10 @@ export default function TasksPage() {
                             {task.status === "completed" && (
                               <>
                                 <DropdownMenuSeparator />
+                                <DropdownMenuItem onClick={() => openAppend(task)}>
+                                  <Upload className="w-4 h-4" />
+                                  追加文档
+                                </DropdownMenuItem>
                                 <DropdownMenuItem onClick={() => openWorkflow(task)}>
                                   <ClipboardCheck className="w-4 h-4" />
                                   审查 / 报告 / 导出
@@ -529,12 +656,12 @@ export default function TasksPage() {
         </div>
       )}
 
-      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+      <Dialog open={createOpen} onOpenChange={(open) => { setCreateOpen(open); if (!open) setCreateFiles([]) }}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>创建审查任务</DialogTitle>
             <DialogDescription>
-              填写后端可访问的文档目录。保存后如果目录已填写，会立即启动抽取。
+              选择或拖入待审查的文档文件，保存后立即开始抽取。
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
@@ -547,12 +674,8 @@ export default function TasksPage() {
               />
             </div>
             <div className="space-y-2">
-              <Label>文档目录</Label>
-              <Input
-                value={form.document_folder}
-                onChange={(e) => setForm((prev) => ({ ...prev, document_folder: e.target.value }))}
-                placeholder="D:\\audit\\documents"
-              />
+              <Label>文档文件</Label>
+              <FileDropzone files={createFiles} onChange={setCreateFiles} disabled={saving} />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-2">
@@ -595,6 +718,29 @@ export default function TasksPage() {
         </DialogContent>
       </Dialog>
 
+      {/* Append upload dialog */}
+      <Dialog open={appendOpen} onOpenChange={(open) => { setAppendOpen(open); if (!open) { setAppendFiles([]); setAppendTask(null) } }}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>追加文档</DialogTitle>
+            <DialogDescription>
+              选择或拖入新文档，将追加到任务 #{appendTask?.id} 并继续抽取。
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <FileDropzone files={appendFiles} onChange={setAppendFiles} disabled={saving} />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAppendOpen(false)} disabled={saving}>
+              取消
+            </Button>
+            <Button onClick={handleAppendUpload} disabled={saving || appendFiles.length === 0}>
+              {saving ? "上传中..." : "开始追加"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Review / Report / Export workflow */}
       <Dialog open={!!workflowTask} onOpenChange={(open) => { if (!open) closeWorkflow() }}>
         <DialogContent className="sm:max-w-2xl">
@@ -624,7 +770,7 @@ export default function TasksPage() {
                 <Label className="text-xs text-muted-foreground">客户名单</Label>
                 {customerLists.length === 0 ? (
                   <p className="text-xs text-muted-foreground">
-                    暂无客户名单，请先在“客户名单”页面创建。审查将使用系统默认名单。
+                    暂无客户名单，请先在客户名单页面创建后再进行审查。
                   </p>
                 ) : (
                   <Select value={selectedListId} onValueChange={setSelectedListId}>
@@ -643,7 +789,7 @@ export default function TasksPage() {
               </div>
               <Button
                 onClick={handleRunReview}
-                disabled={workflowBusy !== null}
+                disabled={workflowBusy !== null || customerLists.length === 0}
               >
                 {workflowBusy === "review" ? "审查中..." : review ? "重新审查" : "运行审查"}
               </Button>

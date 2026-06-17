@@ -474,6 +474,45 @@ class PDFParser(BaseParser):
             return []
         return self.html_parser.extract_raw_tables_from_html(markdown)
 
+    def extract_tables_and_context(
+        self, file_path: Path, max_chars: int = 2000
+    ) -> Tuple[List[RawTable], str]:
+        """
+        Extract raw tables and non-table context from a single MinerU fetch.
+
+        Avoids the redundant MinerU API call that separate
+        :meth:`extract_raw_tables` + :meth:`extract_non_table_context` would
+        make (costly for the public agent: upload/poll/download twice).
+
+        Returns:
+            (raw_tables, non_table_context). Both degrade to empty on failure.
+        """
+        try:
+            markdown = self._get_markdown(file_path)
+        except Exception as exc:
+            self.logger.error(
+                "Failed to parse PDF %s for tables+context: %s", file_path.name, exc
+            )
+            return [], ""
+
+        tables = self.html_parser.extract_raw_tables_from_html(markdown)
+        context = self._strip_tables_to_context(markdown, max_chars)
+        return tables, context
+
+    @staticmethod
+    def _strip_tables_to_context(markdown: str, max_chars: int = 2000) -> str:
+        """Remove HTML table blocks from markdown and truncate to max_chars."""
+        non_table_text = re.sub(
+            r"<table[^>]*>.*?</table>",
+            "",
+            markdown,
+            flags=re.DOTALL | re.IGNORECASE,
+        )
+        non_table_text = re.sub(r"\n{3,}", "\n\n", non_table_text).strip()
+        if len(non_table_text) > max_chars:
+            non_table_text = non_table_text[:max_chars]
+        return non_table_text
+
     def extract_non_table_context(self, file_path: Path, max_chars: int = 2000) -> str:
         """
         Extract non-table text content from a PDF for document portrait extraction.
@@ -498,19 +537,4 @@ class PDFParser(BaseParser):
             )
             return ""
 
-        # Remove all HTML table blocks from the markdown
-        non_table_text = re.sub(
-            r"<table[^>]*>.*?</table>",
-            "",
-            markdown,
-            flags=re.DOTALL | re.IGNORECASE,
-        )
-
-        # Strip excess whitespace
-        non_table_text = re.sub(r"\n{3,}", "\n\n", non_table_text).strip()
-
-        # Truncate to max_chars
-        if len(non_table_text) > max_chars:
-            non_table_text = non_table_text[:max_chars]
-
-        return non_table_text
+        return self._strip_tables_to_context(markdown, max_chars)

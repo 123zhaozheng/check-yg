@@ -15,12 +15,10 @@ import { toast } from "sonner"
 import {
   Settings,
   Cpu,
-  Shield,
   Eye,
   EyeOff,
   TestTube,
   Save,
-  CheckCircle2,
   Info,
   Server,
   Key,
@@ -111,8 +109,6 @@ export default function SettingsPage() {
 
   const tabs = [
     { id: "basic" as const, label: "基础", icon: Settings },
-    { id: "ai" as const, label: "AI", icon: Cpu },
-    { id: "security" as const, label: "安全", icon: Shield },
   ]
 
   return (
@@ -316,30 +312,6 @@ export default function SettingsPage() {
                 </div>
               </div>
             </>
-          )}
-
-          {activeTab === "ai" && (
-            <Card className="bg-card border-border">
-              <CardContent className="p-8 text-center">
-                <Cpu className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
-                <h3 className="text-lg font-semibold text-foreground mb-2">AI 配置</h3>
-                <p className="text-sm text-muted-foreground">
-                  AI 相关配置将在后续版本中提供
-                </p>
-              </CardContent>
-            </Card>
-          )}
-
-          {activeTab === "security" && (
-            <Card className="bg-card border-border">
-              <CardContent className="p-8 text-center">
-                <Shield className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
-                <h3 className="text-lg font-semibold text-foreground mb-2">安全配置</h3>
-                <p className="text-sm text-muted-foreground">
-                  安全相关配置将在后续版本中提供
-                </p>
-              </CardContent>
-            </Card>
           )}
         </div>
 

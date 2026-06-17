@@ -162,6 +162,54 @@ export const api = {
 };
 
 /**
+ * POST a multipart/form-data request (file uploads + form fields).
+ * Uses fetch directly because apiFetch forces JSON Content-Type.
+ * Token refresh on 401 mirrors apiFetch.
+ */
+export async function uploadForm<T>(
+  endpoint: string,
+  formData: FormData
+): Promise<T> {
+  const url = `${API_BASE}${endpoint}`;
+  const buildHeaders = (): HeadersInit => {
+    // Let the browser set the multipart Content-Type + boundary.
+    const headers: HeadersInit = {};
+    const token = getToken();
+    if (token) {
+      (headers as Record<string, string>)["Authorization"] = `Bearer ${token}`;
+    }
+    return headers;
+  };
+
+  let response = await fetch(url, { method: "POST", headers: buildHeaders(), body: formData });
+
+  if (response.status === 401) {
+    try {
+      if (!refreshPromise) {
+        refreshPromise = refreshAccessToken().finally(() => {
+          refreshPromise = null;
+        });
+      }
+      await refreshPromise;
+      response = await fetch(url, { method: "POST", headers: buildHeaders(), body: formData });
+    } catch {
+      // fall through to throw original 401
+    }
+  }
+
+  if (!response.ok) {
+    let data: unknown;
+    try {
+      data = await response.json();
+    } catch {
+      // non-JSON error
+    }
+    throw new ApiError(response.status, response.statusText, data);
+  }
+  return response.json();
+}
+
+/**
  * Download a binary file from an authenticated GET endpoint.
  * Fetches with the Bearer token (apiFetch cannot return blobs), then triggers
  * a browser download using the filename from the Content-Disposition header

@@ -119,11 +119,13 @@ class ExtractionTaskRunner:
     ) -> None:
         try:
             if append:
+                existing_paths = await self._load_existing_document_paths(task_id)
                 result = await extractor.extract_flows_append(
                     task_id=str(task_id),
                     new_folder=document_folder,
                     batch_size=batch_size,
                     confidence_threshold=confidence_threshold,
+                    existing_document_paths=existing_paths,
                 )
             else:
                 result = await extractor.extract_flows(
@@ -139,6 +141,17 @@ class ExtractionTaskRunner:
         finally:
             self._extractors.pop(task_id, None)
             self._jobs.pop(task_id, None)
+
+    @staticmethod
+    async def _load_existing_document_paths(task_id: int) -> list:
+        """Return full paths already processed for a task, for append dedup."""
+        async with async_session() as session:
+            db_result = await session.execute(select(Task).where(Task.id == task_id))
+            task = db_result.scalar_one_or_none()
+            if not task:
+                return []
+            last_result = (task.config or {}).get("last_result") or {}
+            return list(last_result.get("processed_document_paths", []) or [])
 
     async def _mark_finished(self, task_id: int, owner_id: int, result: dict, append: bool = False) -> None:
         status = "failed" if result.get("failed_documents") or result.get("errors") else "completed"
@@ -229,9 +242,10 @@ class ExtractionTaskRunner:
 
         Aligns with the original append semantics:
 
-        * New records whose ``source_file`` already exists in the previous
-          result are dropped (document-level dedup — an already-extracted
-          document is not re-added).
+        * Document identity is the full path, not the filename — same-named
+          files in different folders are distinct and both are kept.
+        * ``processed_document_paths`` accumulates every processed path so the
+          next append can skip already-extracted files.
         * Previous per-document stats are preserved; stats for genuinely new
           documents are added.
         * ``append_runs`` accumulates every append folder, not just the last.
@@ -243,23 +257,11 @@ class ExtractionTaskRunner:
         previous_records = previous.get("flow_records", []) or []
         current_records = current.get("flow_records", []) or []
 
-        # Document-level dedup: keep previous records, then add only new
-        # records whose source_file was not already extracted.
-        existing_sources = {
-            str(r.get("source_file") or "").strip()
-            for r in previous_records
-            if isinstance(r, dict)
-        }
-        deduped_current = [
-            r
-            for r in current_records
-            if isinstance(r, dict)
-            and str(r.get("source_file") or "").strip() not in existing_sources
-        ]
-        merged["flow_records"] = previous_records + deduped_current
+        # The append stage already filtered out already-processed documents by
+        # full path, so current records are genuinely new — concatenate.
+        merged["flow_records"] = previous_records + current_records
         merged["total_records"] = len(merged["flow_records"])
 
-        # Recompute totals from the deduped record set so they stay honest.
         merged["total_documents"] = int(previous.get("total_documents", 0) or 0) + int(
             current.get("total_documents", 0) or 0
         )
@@ -273,7 +275,7 @@ class ExtractionTaskRunner:
             current.get("flow_tables", 0) or 0
         )
 
-        # Dedup failed_documents by name as well.
+        # Dedup failed_documents by name (display-level).
         prev_failed = previous.get("failed_documents", []) or []
         curr_failed = current.get("failed_documents", []) or []
         seen_failed = set(prev_failed)
@@ -290,6 +292,14 @@ class ExtractionTaskRunner:
             if doc_name not in prev_stats:
                 prev_stats[doc_name] = stat
         merged["per_document_stats"] = prev_stats
+
+        # Accumulate processed full paths (deduped, path-aware).
+        prev_paths = list(previous.get("processed_document_paths", []) or [])
+        curr_paths = list(current.get("processed_document_paths", []) or [])
+        seen_paths = set(prev_paths)
+        merged["processed_document_paths"] = prev_paths + [
+            p for p in curr_paths if p not in seen_paths
+        ]
 
         merged["append_runs"] = (previous.get("append_runs", []) or []) + [
             {
