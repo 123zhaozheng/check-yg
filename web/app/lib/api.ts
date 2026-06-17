@@ -160,3 +160,75 @@ export const api = {
   delete: <T>(endpoint: string) =>
     apiFetch<T>(endpoint, { method: "DELETE" }),
 };
+
+/**
+ * Download a binary file from an authenticated GET endpoint.
+ * Fetches with the Bearer token (apiFetch cannot return blobs), then triggers
+ * a browser download using the filename from the Content-Disposition header
+ * or a fallback derived from the endpoint.
+ */
+export async function downloadFile(endpoint: string, fallbackName: string): Promise<void> {
+  const url = `${API_BASE}${endpoint}`;
+  const buildHeaders = (): HeadersInit => {
+    const headers: HeadersInit = {};
+    const token = getToken();
+    if (token) {
+      (headers as Record<string, string>)["Authorization"] = `Bearer ${token}`;
+    }
+    return headers;
+  };
+
+  let response = await fetch(url, { headers: buildHeaders() });
+
+  // Mirror apiFetch: retry once after refreshing an expired access token.
+  if (response.status === 401) {
+    try {
+      if (!refreshPromise) {
+        refreshPromise = refreshAccessToken().finally(() => {
+          refreshPromise = null;
+        });
+      }
+      await refreshPromise;
+      response = await fetch(url, { headers: buildHeaders() });
+    } catch {
+      // Refresh failed — fall through to throw the original 401.
+    }
+  }
+
+  if (!response.ok) {
+    throw new ApiError(response.status, response.statusText);
+  }
+
+  const blob = await response.blob();
+  const disposition = response.headers.get("Content-Disposition") || "";
+  const filename = parseFilenameFromDisposition(disposition) || fallbackName;
+  triggerBrowserDownload(blob, filename);
+}
+
+function parseFilenameFromDisposition(disposition: string): string | null {
+  // RFC 5987 filename*=UTF-8''<value> first, then plain filename="...".
+  const star = /filename\*=(?:UTF-8'')?([^;]+)/i.exec(disposition);
+  if (star) {
+    try {
+      return decodeURIComponent(star[1].trim().replace(/^"|"$/g, ""));
+    } catch {
+      return star[1].trim();
+    }
+  }
+  const plain = /filename="?([^";]+)"?/i.exec(disposition);
+  if (plain) {
+    return plain[1].trim();
+  }
+  return null;
+}
+
+function triggerBrowserDownload(blob: Blob, filename: string): void {
+  const objectUrl = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = objectUrl;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(objectUrl);
+}

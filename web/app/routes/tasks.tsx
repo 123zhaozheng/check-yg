@@ -35,7 +35,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "~/components/ui/dropdown-menu"
-import { api } from "~/lib/api"
+import { api, downloadFile } from "~/lib/api"
 import { toast } from "sonner"
 import {
   Search,
@@ -52,6 +52,10 @@ import {
   Pause,
   Play,
   Square,
+  Download,
+  FileSpreadsheet,
+  FileArchive,
+  ClipboardCheck,
 } from "lucide-react"
 
 interface TaskItem {
@@ -68,6 +72,27 @@ interface TaskItem {
   created_at: string
   updated_at: string
   completed_at: string | null
+}
+
+interface CustomerListOption {
+  id: number
+  name: string
+  row_count: number
+}
+
+interface ReviewSummary {
+  id: number
+  total_matches: number
+}
+
+interface ReportSummary {
+  id: number
+  content: string
+}
+
+interface ExportSummary {
+  id: number
+  format: string
 }
 
 const statusConfig: Record<string, { label: string; variant: "default" | "secondary" | "destructive" | "outline"; icon: any }> = {
@@ -96,6 +121,15 @@ export default function TasksPage() {
     batch_size: "20",
     confidence_threshold: "70",
   })
+
+  // Review / report / export workflow state for completed tasks.
+  const [workflowTask, setWorkflowTask] = useState<TaskItem | null>(null)
+  const [customerLists, setCustomerLists] = useState<CustomerListOption[]>([])
+  const [selectedListId, setSelectedListId] = useState<string>("")
+  const [review, setReview] = useState<ReviewSummary | null>(null)
+  const [report, setReport] = useState<ReportSummary | null>(null)
+  const [exports, setExports] = useState<ExportSummary[]>([])
+  const [workflowBusy, setWorkflowBusy] = useState<string | null>(null)
   const pageSize = 20
 
   async function fetchTasks() {
@@ -183,6 +217,115 @@ export default function TasksPage() {
       toast.error("任务操作失败")
     } finally {
       setActingTaskId(null)
+    }
+  }
+
+  function openWorkflow(task: TaskItem) {
+    setWorkflowTask(task)
+    setReview(null)
+    setReport(null)
+    setExports([])
+    setSelectedListId("")
+    setCustomerLists([])
+    fetchCustomerLists()
+  }
+
+  function closeWorkflow() {
+    setWorkflowTask(null)
+    setReview(null)
+    setReport(null)
+    setExports([])
+    setSelectedListId("")
+    setCustomerLists([])
+  }
+
+  async function fetchCustomerLists() {
+    try {
+      const res = await api.get<{ items: CustomerListOption[]; total: number }>(
+        "/api/customers/lists",
+        { page: "1", page_size: "100" }
+      )
+      setCustomerLists(res.items)
+      if (res.items.length > 0) {
+        setSelectedListId(String(res.items[0].id))
+      }
+    } catch {
+      toast.error("客户名单加载失败")
+    }
+  }
+
+  async function handleRunReview() {
+    if (!workflowTask) return
+    if (!selectedListId) {
+      toast.error("请先选择客户名单")
+      return
+    }
+    setWorkflowBusy("review")
+    try {
+      const res = await api.post<ReviewSummary>(
+        `/api/tasks/${workflowTask.id}/review`,
+        { customer_list_id: Number(selectedListId) }
+      )
+      setReview(res)
+      setReport(null)
+      setExports([])
+      toast.success(`审查完成，命中 ${res.total_matches} 条匹配`)
+    } catch {
+      toast.error("审查失败")
+    } finally {
+      setWorkflowBusy(null)
+    }
+  }
+
+  async function handleGenerateReport() {
+    if (!workflowTask) return
+    setWorkflowBusy("report")
+    try {
+      const res = await api.post<ReportSummary>(
+        `/api/tasks/${workflowTask.id}/report`,
+        review ? { review_id: review.id } : undefined
+      )
+      setReport(res)
+      toast.success("报告已生成")
+    } catch {
+      toast.error("报告生成失败")
+    } finally {
+      setWorkflowBusy(null)
+    }
+  }
+
+  async function handleExport(format: "excel" | "bundle") {
+    if (!workflowTask) return
+    setWorkflowBusy(`export-${format}`)
+    try {
+      const res = await api.post<ExportSummary>(
+        `/api/tasks/${workflowTask.id}/export/${format}`,
+        review ? { review_id: review.id } : undefined
+      )
+      setExports((prev) => [...prev, res])
+      toast.success(format === "excel" ? "Excel 导出已生成" : "技能包已生成")
+    } catch {
+      toast.error("导出失败")
+    } finally {
+      setWorkflowBusy(null)
+    }
+  }
+
+  async function handleDownloadReport() {
+    if (!report) return
+    try {
+      await downloadFile(`/api/reports/${report.id}/download`, `report-${report.id}.md`)
+    } catch {
+      toast.error("报告下载失败")
+    }
+  }
+
+  async function handleDownloadExport(exportId: number, format: string) {
+    const ext = format === "excel" ? "xlsx" : "zip"
+    try {
+      await downloadFile(`/api/exports/${exportId}/download`, `export-${exportId}.${ext}`)
+    } catch {
+      toast.error("下载失败")
     }
   }
 
@@ -327,6 +470,15 @@ export default function TasksPage() {
                                 </DropdownMenuItem>
                               </>
                             )}
+                            {task.status === "completed" && (
+                              <>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem onClick={() => openWorkflow(task)}>
+                                  <ClipboardCheck className="w-4 h-4" />
+                                  审查 / 报告 / 导出
+                                </DropdownMenuItem>
+                              </>
+                            )}
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </TableCell>
@@ -439,6 +591,148 @@ export default function TasksPage() {
             <Button onClick={handleCreateTask} disabled={saving}>
               {saving ? "创建中..." : "创建并启动"}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Review / Report / Export workflow */}
+      <Dialog open={!!workflowTask} onOpenChange={(open) => { if (!open) closeWorkflow() }}>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>审查、报告与导出</DialogTitle>
+            <DialogDescription>
+              任务 #{workflowTask?.id} — {workflowTask?.title}。依次完成审查、生成报告与导出产物。
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-5 max-h-[60vh] overflow-y-auto">
+            {/* Step 1: Review */}
+            <div className="space-y-3 rounded-lg border border-border p-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <ClipboardCheck className="w-4 h-4 text-foreground" />
+                  <span className="font-medium text-sm">1. 审查匹配</span>
+                </div>
+                {review && (
+                  <Badge variant="secondary" className="gap-1">
+                    <CheckCircle2 className="w-3 h-3" />
+                    命中 {review.total_matches} 条
+                  </Badge>
+                )}
+              </div>
+              <div className="space-y-2">
+                <Label className="text-xs text-muted-foreground">客户名单</Label>
+                {customerLists.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">
+                    暂无客户名单，请先在“客户名单”页面创建。审查将使用系统默认名单。
+                  </p>
+                ) : (
+                  <Select value={selectedListId} onValueChange={setSelectedListId}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="选择客户名单" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {customerLists.map((list) => (
+                        <SelectItem key={list.id} value={String(list.id)}>
+                          {list.name}（{list.row_count} 条）
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              </div>
+              <Button
+                onClick={handleRunReview}
+                disabled={workflowBusy !== null}
+              >
+                {workflowBusy === "review" ? "审查中..." : review ? "重新审查" : "运行审查"}
+              </Button>
+            </div>
+
+            {/* Step 2: Report */}
+            <div className="space-y-3 rounded-lg border border-border p-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <FileText className="w-4 h-4 text-foreground" />
+                  <span className="font-medium text-sm">2. 生成报告</span>
+                </div>
+                {report && (
+                  <Badge variant="secondary" className="gap-1">
+                    <CheckCircle2 className="w-3 h-3" />
+                    报告 #{report.id}
+                  </Badge>
+                )}
+              </div>
+              <Button
+                onClick={handleGenerateReport}
+                disabled={workflowBusy !== null}
+              >
+                {workflowBusy === "report" ? "生成中..." : report ? "重新生成报告" : "生成报告"}
+              </Button>
+              {report && (
+                <div className="space-y-2">
+                  <div className="max-h-40 overflow-y-auto rounded bg-surface-container-low p-2 text-xs text-muted-foreground whitespace-pre-wrap">
+                    {report.content || "（报告内容为空）"}
+                  </div>
+                  <Button variant="outline" size="sm" onClick={handleDownloadReport}>
+                    <Download className="w-4 h-4 mr-2" />
+                    下载报告 (.md)
+                  </Button>
+                </div>
+              )}
+            </div>
+
+            {/* Step 3: Export */}
+            <div className="space-y-3 rounded-lg border border-border p-4">
+              <div className="flex items-center gap-2">
+                <FileSpreadsheet className="w-4 h-4 text-foreground" />
+                <span className="font-medium text-sm">3. 导出产物</span>
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() => handleExport("excel")}
+                  disabled={workflowBusy !== null}
+                >
+                  <FileSpreadsheet className="w-4 h-4 mr-2" />
+                  {workflowBusy === "export-excel" ? "导出中..." : "导出 Excel"}
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => handleExport("bundle")}
+                  disabled={workflowBusy !== null}
+                >
+                  <FileArchive className="w-4 h-4 mr-2" />
+                  {workflowBusy === "export-bundle" ? "打包中..." : "导出技能包 ZIP"}
+                </Button>
+              </div>
+              {exports.length > 0 && (
+                <div className="space-y-2">
+                  {exports.map((exp) => (
+                    <div
+                      key={exp.id}
+                      className="flex items-center justify-between rounded bg-surface-container-low p-2"
+                    >
+                      <span className="text-xs text-muted-foreground">
+                        {exp.format === "excel" ? "Excel" : "技能包 ZIP"} #{exp.id}
+                      </span>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleDownloadExport(exp.id, exp.format)}
+                      >
+                        <Download className="w-4 h-4 mr-1" />
+                        下载
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={closeWorkflow}>关闭</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
