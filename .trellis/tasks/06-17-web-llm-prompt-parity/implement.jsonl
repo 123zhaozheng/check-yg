@@ -1,1 +1,4 @@
 {"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "LLM API error pattern: check status, log, return None; JSONDecode retry fallback"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "module logger %s, no hardcoded URLs, dataclass to_dict, Chinese docstrings"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "portrait->classifier->normalizer->FlowRecord data contract across llm+extraction layers"}

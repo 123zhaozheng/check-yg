@@ -119,6 +119,42 @@ class FlowExtractor:
             parsed = default
         return min(max(parsed, minimum), maximum)
 
+    @staticmethod
+    def _infer_transaction_type(
+        raw_amount: str,
+        amount_sign_rule: str,
+        portrait: Optional[Dict[str, Any]] = None,
+    ) -> Optional[str]:
+        """
+        根据 raw_amount 正负号与 amount_sign_rule 推断 transaction_type
+
+        信用卡账户交由 LLM 按交易语义判断（符号规则反直觉），返回 None。
+        返回 "收入" 或 "支出"，无法确定时返回 None。
+        """
+        if not raw_amount:
+            return None
+
+        # Credit card mode: rely on LLM semantic judgment.
+        if portrait and portrait.get("account_type") == "credit_card":
+            return None
+
+        raw = str(raw_amount).strip()
+        has_negative = raw.startswith("-")
+
+        if amount_sign_rule == "pos_income":
+            return "支出" if has_negative else "收入"
+        if amount_sign_rule == "pos_expense":
+            return "收入" if has_negative else "支出"
+        if amount_sign_rule == "split_cols":
+            return None  # LLM handles split columns
+        if amount_sign_rule == "no_sign":
+            return None  # rely on LLM/summary
+        if amount_sign_rule == "unknown":
+            if has_negative:
+                return "支出"
+            return None
+        return None
+
     def set_progress_callback(self, callback) -> None:
         """Set progress callback function."""
         self.progress_reporter.set_callback(callback)
@@ -329,7 +365,9 @@ class FlowExtractor:
             if self._cancel_requested:
                 break
 
-            classification = await self.classifier.classify(table, doc_path.name)
+            classification = await self.classifier.classify(
+                table, doc_path.name, document_portrait=portrait
+            )
             is_flow = classification.get("is_flow_table", False)
             confidence = classification.get("confidence", 0)
 
@@ -431,6 +469,29 @@ class FlowExtractor:
                 normalized = await self.normalizer.normalize(
                     batch, portrait, source_file=doc_path.name
                 )
+
+                # Post-processing: code-based transaction_type inference.
+                # The LLM may misjudge 收支 direction; raw_amount sign +
+                # amount_sign_rule give a deterministic correction for
+                # non-credit-card accounts (credit cards stay LLM-judged).
+                amount_sign_rule = (portrait or {}).get("amount_sign_rule", "unknown")
+                for item in normalized:
+                    if not item.get("is_valid", True):
+                        continue
+                    raw_amount = str(item.get("raw_amount", "") or "")
+                    inferred_type = self._infer_transaction_type(
+                        raw_amount, amount_sign_rule, portrait
+                    )
+                    if inferred_type and item.get("transaction_type") != inferred_type:
+                        logger.info(
+                            "代码修正收支类型: %s raw_amount=%s LLM=%s → 代码=%s (rule=%s)",
+                            doc_path.name,
+                            raw_amount,
+                            item.get("transaction_type"),
+                            inferred_type,
+                            amount_sign_rule,
+                        )
+                        item["transaction_type"] = inferred_type
 
                 for batch_offset, item in enumerate(normalized):
                     if item.get("is_valid", True):

@@ -1,5 +1,18 @@
 # -*- coding: utf-8 -*-
-"""Flow data normalizer using LLM."""
+"""Flow data normalizer using LLM.
+
+Ports the mature ``src/llm/data_normalizer.py`` prompt and fallback behavior
+into the FastAPI backend while keeping the backend's async ``httpx`` transport
+and the ``normalize()`` contract consumed by the extraction pipeline.
+
+Key parity guarantees versus the original prompt:
+
+* ``amount`` is always positive (no sign); ``raw_amount`` preserves the source sign.
+* ``transaction_type`` is restricted to "收入" / "支出".
+* Date normalization includes missing-year inference from the portrait.
+* Noise rows (totals/balances/headers) are filtered via ``is_valid=false``.
+* A filename-based document context fallback is preserved for graceful degradation.
+"""
 
 import json
 import logging
@@ -10,38 +23,157 @@ import httpx
 logger = logging.getLogger(__name__)
 
 
-SYSTEM_PROMPT = """你是一个银行流水数据标准化专家。请将原始流水行数据标准化为统一格式。
+SYSTEM_PROMPT_DATA_NORMALIZER = """你是一个银行/支付流水数据标准化专家。
 
-标准化规则：
-1. 交易时间: 统一为 YYYY-MM-DD HH:MM:SS 格式
-2. 金额: 统一为数字，收入为正，支出为负
-3. 收支类型: 统一为 "收入" 或 "支出"
-4. 交易对手: 清理多余空格和符号
-5. 摘要: 清理多余空格和符号
+## 任务
+给定文档画像（含列映射）以及若干行原始表格数据，输出标准化流水记录。
 
-请返回JSON格式：
+## 标准字段
+1) transaction_time - 交易时间（日期或日期时间）
+2) counterparty_name - 交易对手/商户名称
+3) counterparty_account - 交易对手账号/卡号（仅纯数字/卡号，无则为空）
+4) amount - 交易金额（正数，不含负号）
+5) raw_amount - 原始金额（保留源文档原始正负号，如"-795.42"、"1200.00"，无符号则为原值）
+6) summary - 摘要/备注/交易说明/商品信息
+7) transaction_type - 收支类型（只允许"收入"或"支出"）
+8) source_file - 来源文件名
+
+## 列映射规则
+用户消息中 document_portrait 包含 header_attributes 和 column_mapping 两个有序数组，一一对应。
+- 严格按 column_mapping 填充，映射到的列内容原封不动还原（不做改写/缩写/翻译）
+- 映射值为 null 的列忽略
+- 映射值为数组的列，该列内容填入数组中所有目标字段
+- transaction_type：允许语义归纳（如"借"→"支出"，"贷"→"收入"，"收"→"收入"）
+- summary：允许从多列拼接或提炼关键词
+- 其余字段（transaction_time, counterparty_name, counterparty_account, amount）必须原封不动还原原文档内容
+- 若 column_mapping 缺失，尽力根据行内容自行判断映射
+
+## 铁规则
+1. amount 始终为正数，禁止出现负号；raw_amount 保留原始正负号
+2. transaction_type 只允许"收入"或"支出"
+3. counterparty_account 仅填纯数字账号/卡号，禁止填入开户行、银行名称等非数字内容，无账号列为空
+4. 过滤噪音行（合计/小计/总计/余额/页脚/页眉/空行），is_valid=false
+
+## 收支方向判断（仅代码无法确定时由你判断）
+代码已根据 amount_sign_rule + raw_amount 正负号确定收支方向的场景，你无需再判断。以下场景需你判断：
+- amount_sign_rule=no_sign：无正负号，按摘要/收支列语义判断
+- amount_sign_rule=split_cols：收入列→"收入"，支出列→"支出"
+- amount_sign_rule=unknown：综合判断，正负号优先于摘要
+- account_type=credit_card：按交易语义判断（消费→支出，还款/退款→收入）
+
+## 字段清洗
+1. 日期统一 "YYYY-MM-DD hh:mm:ss"，仅日期补 "00:00:00"，缺秒补 ":00"
+2. 日期缺年推断：若表格日期仅含月日无年份（如"12/15"、"1月3日"），必须结合画像信息推断年份：
+   - 优先使用 statement_period 中的年份或日期范围
+   - 若 account_type=credit_card 且画像含出账单日/账单周期：注意账单跨年场景（如1月出账单覆盖上年12月消费，则12月日期应为上一年）
+   - 参考 key_observations 中的年份提示
+   - 无法推断年份时保持原样，禁止猜测
+3. 金额去除前缀（"RMB""￥""¥"", ""），amount 去负号，raw_amount 保留原值
+4. 若只有一个"交易描述/商户名称"列，counterparty_name 与 summary 可相同
+
+## 文档画像
+画像数据在下方用户消息中提供，请参考画像信息进行标准化。
+
+## 返回JSON格式
 {
-    "rows": [
-        {
-            "transaction_time": "2024-01-01 12:00:00",
-            "counterparty_name": "张三",
-            "counterparty_account": "6222000000000000",
-            "amount": "100.00",
-            "summary": "转账",
-            "transaction_type": "收入"
-        }
-    ]
-}"""
+  "rows": [
+    {
+      "row_index": 原始行号,
+      "is_valid": true或false,
+      "transaction_time": "...",
+      "counterparty_name": "...",
+      "counterparty_account": "...",
+      "amount": "...",
+      "raw_amount": "...",
+      "summary": "...",
+      "transaction_type": "...",
+      "source_file": "..."
+    }
+  ]
+}
+"""
 
 
 class FlowDataNormalizer:
-    """Normalize flow table data using LLM."""
+    """Normalize raw flow table rows into standardized records via an LLM.
 
-    def __init__(self, api_url: str, api_key: str, model: str, timeout: int = 60):
-        self.api_url = api_url
+    Output contract: a list of row dicts, each with ``is_valid`` and the standard
+    fields including ``raw_amount`` (preserving the source sign) and positive
+    ``amount``. Returns an empty list when normalization fails.
+    """
+
+    def __init__(self, api_url: str, api_key: str, model: str, timeout: int = 60, max_retries: int = 3):
+        self.api_url = api_url.rstrip("/")
         self.api_key = api_key
         self.model = model
         self.timeout = timeout
+        self.max_retries = max_retries
+
+    async def _post(
+        self,
+        system_prompt: str,
+        user_message: str,
+    ) -> Optional[Dict[str, Any]]:
+        """POST a chat completion and parse JSON content with retry + fallback."""
+        if not self.api_key:
+            logger.warning("No API key configured for normalizer")
+            return None
+
+        url = f"{self.api_url}/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message},
+            ],
+            "temperature": 0.1,
+            "max_tokens": 4000,
+            "response_format": {"type": "json_object"},
+        }
+
+        response = None
+        for attempt in range(self.max_retries):
+            try:
+                async with httpx.AsyncClient(timeout=self.timeout, trust_env=False) as client:
+                    response = await client.post(url, headers=headers, json=payload)
+                response.raise_for_status()
+                data = response.json()
+                message = data["choices"][0]["message"]
+                content = (
+                    message.get("content")
+                    or message.get("reasoning_content")
+                    or message.get("reasoning")
+                )
+                if not content:
+                    raise ValueError(
+                        "Empty message content: %s"
+                        % json.dumps(message, ensure_ascii=False)[:500]
+                    )
+                return json.loads(content)
+            except json.JSONDecodeError as exc:
+                text = ""
+                try:
+                    text = response.text if response is not None else ""
+                except Exception:
+                    text = ""
+                logger.warning(
+                    "Normalizer JSON decode failed: %s; response=%s",
+                    exc,
+                    text[:500],
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Normalizer request failed (attempt %d/%d): %s",
+                    attempt + 1,
+                    self.max_retries,
+                    exc,
+                )
+
+        return None
 
     async def normalize(
         self,
@@ -49,54 +181,91 @@ class FlowDataNormalizer:
         document_portrait: Optional[Dict[str, Any]] = None,
         source_file: str = "",
     ) -> List[Dict[str, Any]]:
-        """Normalize raw table rows."""
-        prompt = f"原始数据行:\n{json.dumps(rows, ensure_ascii=False)}"
-        if document_portrait:
-            prompt += f"\n\n文档画像:\n{json.dumps(document_portrait, ensure_ascii=False)}"
+        """
+        将原始表格行标准化为统一流水记录
 
-        try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.post(
-                    f"{self.api_url}/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {self.api_key}",
-                        "Content-Type": "application/json",
-                    },
-                    json={
-                        "model": self.model,
-                        "messages": [
-                            {"role": "system", "content": SYSTEM_PROMPT},
-                            {"role": "user", "content": prompt},
-                        ],
-                        "temperature": 0.1,
-                        "response_format": {"type": "json_object"},
-                    },
-                )
-                response.raise_for_status()
-                result = response.json()
-                content = result["choices"][0]["message"]["content"]
-                data = json.loads(content)
-                return data.get("rows", [])
-        except Exception as e:
-            logger.error("Failed to normalize rows: %s", e)
+        Args:
+            rows: 原始行数据（每行为单元格字符串列表）
+            document_portrait: 文档画像，含 header_attributes 与 column_mapping。
+                为 None 时退化为基于文件名的上下文推断。
+            source_file: 来源文件名
+
+        Returns:
+            标准化记录列表，每项含 is_valid 与标准字段（含 raw_amount）。
+            失败时返回空列表。
+        """
+        if not rows:
             return []
 
+        portrait = document_portrait
+        if portrait is None:
+            portrait = self._infer_document_context(source_file)
+
+        # Convert flat string rows into {row_index, cells} payloads so the
+        # column_mapping rules in the prompt can resolve columns by position.
+        payload_rows = [
+            {"row_index": index, "cells": [str(cell) for cell in row]}
+            for index, row in enumerate(rows)
+        ]
+        user_message = json.dumps(
+            {
+                "document_portrait": portrait,
+                "rows": payload_rows,
+                "source_file": source_file,
+            },
+            ensure_ascii=False,
+        )
+
+        result = await self._post(SYSTEM_PROMPT_DATA_NORMALIZER, user_message)
+        if not result:
+            return []
+
+        return result.get("rows", []) or []
+
     @staticmethod
-    def infer_transaction_type(raw_amount: str, amount_sign_rule: str) -> Optional[str]:
-        """Infer transaction type from raw amount and sign rule."""
-        if not raw_amount:
-            return None
+    def _infer_document_context(document_name: str) -> Dict[str, Any]:
+        """
+        从文件名推断文档上下文（画像提取失败时的兜底）
 
-        raw = str(raw_amount).strip()
-        has_negative = raw.startswith("-")
+        Preserved as fallback for graceful degradation.
+        """
+        name = str(document_name or "").lower()
+        if any(keyword in name for keyword in ["信用卡", "credit", "贷记卡"]):
+            return {
+                "account_type": "credit_card",
+                "document_type": "credit_card_statement",
+                "document_type_hints": [
+                    "这是信用卡账单或信用卡交易明细",
+                    "信用卡场景下，消费金额显示为正数也可能属于支出",
+                    "应优先根据消费、还款、退款、手续费等交易语义判断收支方向",
+                ],
+            }
+        if any(keyword in name for keyword in ["支付宝", "alipay"]):
+            return {
+                "account_type": "alipay",
+                "document_type": "alipay_statement",
+                "document_type_hints": [
+                    "这是支付宝流水",
+                    "优先结合交易对方、收支标记、商品说明判断收支方向",
+                ],
+            }
+        if any(keyword in name for keyword in ["微信", "wechat", "weixin"]):
+            return {
+                "account_type": "wechat",
+                "document_type": "wechat_statement",
+                "document_type_hints": [
+                    "这是微信流水",
+                    "优先结合交易对方、收支标记、商品说明判断收支方向",
+                ],
+            }
+        return {
+            "account_type": "bank_general",
+            "document_type": "bank_or_general_statement",
+            "document_type_hints": [
+                "这是普通银行流水或通用交易流水",
+                "优先根据列名、借贷方向、收支标记、摘要语义综合判断收支方向",
+            ],
+        }
 
-        if amount_sign_rule == "pos_income":
-            return "支出" if has_negative else "收入"
-        elif amount_sign_rule == "pos_expense":
-            return "收入" if has_negative else "支出"
-        elif amount_sign_rule == "split_cols":
-            return None  # LLM should handle this
-        elif amount_sign_rule == "no_sign":
-            return None  # Must rely on LLM/summary
-
-        return None
+    def is_available(self) -> bool:
+        return bool(self.api_key)
