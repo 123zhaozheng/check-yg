@@ -1,9 +1,19 @@
 import { useEffect, useState } from "react"
 import { Card, CardContent } from "~/components/ui/card"
-import { Badge } from "~/components/ui/badge"
 import { Button } from "~/components/ui/button"
 import { Input } from "~/components/ui/input"
+import { Label } from "~/components/ui/label"
+import { Textarea } from "~/components/ui/textarea"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "~/components/ui/dialog"
 import { api } from "~/lib/api"
+import { toast } from "sonner"
 import {
   Users,
   Upload,
@@ -28,55 +38,118 @@ export default function CustomersPage() {
   const [searchTerm, setSearchTerm] = useState("")
   const [currentPage, setCurrentPage] = useState(1)
   const [loading, setLoading] = useState(true)
+  const [createOpen, setCreateOpen] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [form, setForm] = useState({ name: "", customersText: "" })
   const pageSize = 20
 
-  useEffect(() => {
-    async function fetchData() {
-      setLoading(true)
-      try {
-        const params: Record<string, string> = {
-          page: String(currentPage),
-          page_size: String(pageSize),
-        }
-        if (searchTerm) params.search = searchTerm
-
-        const res = await api.get<{ items: CustomerListItem[]; total: number }>("/api/customers/lists", params)
-        setLists(res.items)
-        setTotal(res.total)
-      } catch {
-        // API error
-      } finally {
-        setLoading(false)
+  async function fetchData() {
+    setLoading(true)
+    try {
+      const params: Record<string, string> = {
+        page: String(currentPage),
+        page_size: String(pageSize),
       }
+      if (searchTerm) params.search = searchTerm
+
+      const res = await api.get<{ items: CustomerListItem[]; total: number }>("/api/customers/lists", params)
+      setLists(res.items)
+      setTotal(res.total)
+    } catch {
+      toast.error("客户名单加载失败")
+    } finally {
+      setLoading(false)
     }
+  }
+
+  useEffect(() => {
     fetchData()
   }, [currentPage, searchTerm])
 
+  function parseCustomerNames(text: string) {
+    const seen = new Set<string>()
+    return text
+      .split(/[\n,，;；\t]+/)
+      .map((item) => item.trim())
+      .filter((item) => {
+        if (!item || seen.has(item)) return false
+        seen.add(item)
+        return true
+      })
+  }
+
+  async function handleCreateList() {
+    const name = form.name.trim()
+    const items = parseCustomerNames(form.customersText)
+    if (!name) {
+      toast.error("请输入名单名称")
+      return
+    }
+    if (items.length === 0) {
+      toast.error("请至少输入一个客户名称")
+      return
+    }
+
+    setSaving(true)
+    try {
+      await api.post<CustomerListItem>("/api/customers/lists", { name, items })
+      toast.success(`已创建名单，共 ${items.length} 名客户`)
+      setCreateOpen(false)
+      setForm({ name: "", customersText: "" })
+      setCurrentPage(1)
+      await fetchData()
+    } catch {
+      toast.error("客户名单创建失败")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function handleImportFile(file: File | undefined) {
+    if (!file) return
+    const text = await file.text()
+    setForm({
+      name: form.name || file.name.replace(/\.[^.]+$/, ""),
+      customersText: text,
+    })
+    setCreateOpen(true)
+  }
+
   const totalPages = Math.ceil(total / pageSize) || 1
+  const parsedCount = parseCustomerNames(form.customersText).length
 
   return (
     <div className="p-6 space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold text-foreground">客户名单</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            构建可复用的审计客户资产
+            构建可复用的审计客户资产，用于流水匹配和报告分析
           </p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" disabled title="后端导入接口尚未开放">
-            <Upload className="w-4 h-4 mr-2" />
-            导入名单
+          <Button variant="outline" asChild>
+            <label>
+              <input
+                type="file"
+                accept=".txt,.csv"
+                className="hidden"
+                onChange={(event) => {
+                  handleImportFile(event.target.files?.[0])
+                  event.target.value = ""
+                }}
+              />
+              <Upload className="w-4 h-4 mr-2" />
+              导入名单
+            </label>
           </Button>
-          <Button disabled title="后端新建名单接口尚未开放">
+          <Button onClick={() => setCreateOpen(true)}>
             <Plus className="w-4 h-4 mr-2" />
             新建名单
           </Button>
         </div>
       </div>
 
-      {/* Search */}
       <Card className="bg-card border-border">
         <CardContent className="p-4">
           <div className="relative max-w-md">
@@ -84,14 +157,16 @@ export default function CustomersPage() {
             <Input
               placeholder="搜索名单名称..."
               value={searchTerm}
-              onChange={(e) => { setSearchTerm(e.target.value); setCurrentPage(1) }}
+              onChange={(event) => {
+                setSearchTerm(event.target.value)
+                setCurrentPage(1)
+              }}
               className="pl-9"
             />
           </div>
         </CardContent>
       </Card>
 
-      {/* Customer List Grid */}
       {loading ? (
         <div className="flex items-center justify-center py-12 text-sm text-muted-foreground">
           加载中...
@@ -102,7 +177,7 @@ export default function CustomersPage() {
             <Users className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
             <h3 className="text-lg font-semibold text-foreground mb-2">暂无客户名单</h3>
             <p className="text-sm text-muted-foreground mb-4">创建第一个客户名单开始使用</p>
-            <Button disabled title="后端新建名单接口尚未开放">
+            <Button onClick={() => setCreateOpen(true)}>
               <Plus className="w-4 h-4 mr-2" />
               新建名单
             </Button>
@@ -111,7 +186,7 @@ export default function CustomersPage() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {lists.map((list) => (
-            <Card key={list.id} className="bg-card border-border hover:border-primary/50 transition-colors cursor-pointer">
+            <Card key={list.id} className="bg-card border-border hover:border-primary/50 transition-colors">
               <CardContent className="p-5">
                 <div className="flex items-start gap-3 mb-4">
                   <div className="w-10 h-10 rounded-lg bg-surface-container-high flex items-center justify-center">
@@ -141,19 +216,20 @@ export default function CustomersPage() {
             </Card>
           ))}
 
-          {/* Create New Card */}
-          <Card className="bg-card border-border border-dashed opacity-60">
+          <Card
+            className="bg-card border-border border-dashed transition-colors hover:border-primary/50 cursor-pointer"
+            onClick={() => setCreateOpen(true)}
+          >
             <CardContent className="p-5 flex flex-col items-center justify-center h-full min-h-[200px]">
               <div className="w-12 h-12 rounded-full bg-surface-container-high flex items-center justify-center mb-3">
                 <Plus className="w-6 h-6 text-muted-foreground" />
               </div>
-              <p className="text-sm text-muted-foreground">新建接口待开放</p>
+              <p className="text-sm text-muted-foreground">新建客户名单</p>
             </CardContent>
           </Card>
         </div>
       )}
 
-      {/* Pagination */}
       {total > 0 && (
         <div className="flex items-center justify-between">
           <div className="text-sm text-muted-foreground">
@@ -190,6 +266,47 @@ export default function CustomersPage() {
           </div>
         </div>
       )}
+
+      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+        <DialogContent className="sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>新建客户名单</DialogTitle>
+            <DialogDescription>
+              每行输入一个客户名称，也可以用逗号、分号或制表符分隔；保存时会自动去重。
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>名单名称</Label>
+              <Input
+                value={form.name}
+                onChange={(event) => setForm((prev) => ({ ...prev, name: event.target.value }))}
+                placeholder="例如：6月重点客户名单"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>客户名称</Label>
+              <Textarea
+                value={form.customersText}
+                onChange={(event) => setForm((prev) => ({ ...prev, customersText: event.target.value }))}
+                placeholder={"张三\n李四\n王五"}
+                className="min-h-48"
+              />
+              <p className="text-xs text-muted-foreground">
+                当前识别 {parsedCount} 名客户。
+              </p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCreateOpen(false)} disabled={saving}>
+              取消
+            </Button>
+            <Button onClick={handleCreateList} disabled={saving}>
+              {saving ? "保存中..." : "保存名单"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

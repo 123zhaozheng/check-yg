@@ -2,7 +2,9 @@
 """Task extraction API contract tests."""
 
 import pytest
+from sqlalchemy import select
 
+from app.models import Document, Task
 from app.services.extraction.runner import ExtractionTaskRunner
 
 
@@ -145,3 +147,42 @@ def test_append_result_merge_preserves_previous_records():
     assert merged["failed_documents"] == ["bad.pdf"]
     assert merged["per_document_stats"]["old.xlsx"]["record_count"] == 1
     assert merged["append_runs"][0]["document_folder"] == "D:/new"
+
+
+@pytest.mark.asyncio
+async def test_runner_persists_result_records_for_review_services(db_session):
+    session, user = db_session
+    task = Task(title="Persist records", owner_id=user.id, status="running")
+    session.add(task)
+    await session.commit()
+    await session.refresh(task)
+
+    result = {
+        "flow_records": [
+            {
+                "source_file": "a.xlsx",
+                "original_row": "2",
+                "transaction_time": "2026-06-17 10:00:00",
+                "counterparty_name": "张三",
+                "amount": "100.00",
+            },
+            {
+                "source_file": "b.xlsx",
+                "original_row": "3",
+                "transaction_time": "2026-06-17 11:00:00",
+                "counterparty_name": "李四",
+                "amount": "200.00",
+            },
+        ],
+        "failed_documents": [],
+        "errors": [],
+        "total_records": 2,
+    }
+
+    await ExtractionTaskRunner._persist_result_documents(session, task.id, result)
+
+    docs = (
+        await session.execute(select(Document).where(Document.task_id == task.id).order_by(Document.filename.asc()))
+    ).scalars().all()
+    assert [doc.filename for doc in docs] == ["a.xlsx", "b.xlsx"]
+    assert docs[0].flow_tables["records"][0]["counterparty_name"] == "张三"

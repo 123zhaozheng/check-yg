@@ -6,10 +6,10 @@ import logging
 from datetime import datetime, timezone
 from typing import Dict
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from app.database import async_session
-from app.models import Task, TaskLog
+from app.models import Document, Task, TaskLog
 from app.services.settings_service import load_runtime_settings
 from app.websocket.notifications import notify_user
 
@@ -159,6 +159,7 @@ class ExtractionTaskRunner:
                 **(task.config or {}),
                 "last_result": final_result,
             }
+            await self._persist_result_documents(session, task_id, final_result)
             session.add(
                 TaskLog(
                     task_id=task_id,
@@ -175,6 +176,29 @@ class ExtractionTaskRunner:
             message="抽取记录数: %s" % final_result.get("total_records", 0),
             resource={"task_id": task_id, "status": status},
         )
+
+    @staticmethod
+    async def _persist_result_documents(session, task_id: int, result: dict) -> None:
+        """Persist normalized records into Document rows for review/report services."""
+        records_by_source = {}
+        for record in result.get("flow_records", []) or []:
+            if not isinstance(record, dict):
+                continue
+            source_file = str(record.get("source_file") or "unknown").strip() or "unknown"
+            records_by_source.setdefault(source_file, []).append(record)
+
+        await session.execute(delete(Document).where(Document.task_id == task_id))
+
+        for source_file, records in records_by_source.items():
+            session.add(
+                Document(
+                    task_id=task_id,
+                    filename=source_file,
+                    original_path=source_file,
+                    status="completed",
+                    flow_tables={"records": records},
+                )
+            )
 
     async def _mark_failed(self, task_id: int, owner_id: int, error: str) -> None:
         async with async_session() as session:
