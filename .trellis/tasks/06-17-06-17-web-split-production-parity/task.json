@@ -1,0 +1,31 @@
+{
+  "id": "06-17-web-split-production-parity",
+  "name": "06-17-web-split-production-parity",
+  "title": "Web split production parity follow-up",
+  "description": "Umbrella task for follow-up implementation work discovered by the architecture/settings review. Tracks the work needed to move the FastAPI + React split from demo-like integration toward functional parity with the original src pipeline.",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P0",
+  "creator": "zhaozheng",
+  "assignee": "zhaozheng",
+  "createdAt": "2026-06-17",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "feat/web-split",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "06-17-web-extraction-parity-mineru",
+    "06-17-web-llm-prompt-parity",
+    "06-17-web-review-report-export-ux",
+    "06-17-web-settings-append-contract"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}
