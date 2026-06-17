@@ -248,3 +248,50 @@ if (response.status === 401 && !isRefreshEndpoint) {
   await refreshAccessToken()
 }
 ```
+
+---
+
+## Scenario: MinerU PDF Parser and Settings Wiring
+
+### 1. Scope / Trigger
+- Trigger: web extraction must parse heterogeneous PDFs (scanned, multi-column, encrypted) with the same production semantics as the desktop `src` pipeline, driven by runtime settings rather than hardcoded values.
+- Use this contract when changing `backend/app/parsers/pdf_parser.py`, `backend/app/services/settings_service.py`, `backend/app/services/extraction/extractor.py`, or `web/app/routes/settings.tsx`.
+
+### 2. Signatures
+- `PDFParser(mineru_mode, mineru_url, mineru_public_url, mineru_public_api_key, timeout)` — chooses `MinerUClient` (local) or `PublicMinerUClient` (public agent) from `mineru_mode`.
+- `PDFParser.extract_raw_tables(path) -> List[RawTable]` and `PDFParser.extract_non_table_context(path, max_chars) -> str` parse MinerU markdown via `HTMLTableParser`.
+- `FlowExtractor(runtime_settings)` constructs `PDFParser` from runtime MinerU settings with config env defaults as fallback.
+
+### 3. Contracts
+- MinerU runtime settings keys (all category `mineru`, in `DEFAULT_SETTINGS` and `config.py` env defaults): `mineru.mode` (`local`|`public`), `mineru.url`, `mineru.public_url`, `mineru.public_api_key`, `mineru.timeout`.
+- The settings UI must only expose keys the runtime consumes — no `fast`/`precise` mode (no such runtime concept), no `max_concurrency`, no `mineru.api_endpoint` (wrong key; runtime reads `mineru.url`).
+- Encrypted PDFs: auto-extract password from the last parenthesized filename segment; fall back to an optional password callback; surface a clear error when no callback is set.
+- The normalizer prompt guarantees `amount` is always positive and `raw_amount` preserves the source sign; the extractor post-processes `transaction_type` from `raw_amount` + `amount_sign_rule` (credit cards defer to the LLM).
+
+### 4. Validation & Error Matrix
+| Condition | Behavior |
+|----------|----------|
+| `mineru.mode=public` but no `public_api_key` | Public client sends no Authorization header; MinerU API rejects |
+| MinerU service unreachable | `extract_raw_tables` returns `[]`, `extract_non_table_context` returns `""` (log + continue) |
+| Encrypted PDF with no filename password and no callback | `extract_raw_tables` returns `[]`; error logged |
+| `flow.batch_size` / `flow.confidence_threshold` in settings | NOT consumed — start/append reads request > task.config > hardcoded 20/70; do not add these to `DEFAULT_SETTINGS` |
+
+### 5. Tests Required
+- Client selection (local vs public), markdown→table, non-table context stripping, encrypted-PDF fallback, and runtime-settings wiring into `PDFParser` (see `tests/test_pdf_parser.py`).
+- `DEFAULT_SETTINGS` contains the mineru.* keys and excludes decorative `flow.*` keys.
+
+### 6. Wrong vs Correct
+#### Wrong
+```python
+# Hardcoded MinerU URL; ignores runtime settings.
+self.pdf_parser = PDFParser()
+```
+#### Correct
+```python
+# Wire DB/runtime MinerU settings into the parser with env defaults as fallback.
+self.pdf_parser = PDFParser(
+    mineru_mode=runtime_settings.get("mineru.mode") or settings.MINERU_MODE,
+    mineru_url=runtime_settings.get("mineru.url") or settings.MINERU_URL,
+    timeout=mineru_timeout,
+)
+```

@@ -171,6 +171,9 @@ def start_append_extraction(self, task_id: str, folder_path: str) -> None
 - `extract_flows_append(task_id, new_folder, progress)`:
   - Returns `ExtractionResult` with `total_documents=0` if no new files found (caller handles UI prompt)
   - Merges old records from existing report JSON + new records into combined report
+  - Document-level dedup: new records whose `source_file` already exists in the previous result are dropped (an already-extracted document is not re-added); `failed_documents` are deduped by name
+  - Previous `per_document_stats` are preserved; stats for genuinely new documents are added
+  - `append_runs` accumulates every append folder; the task config keeps `append_document_folders` (a list of all appended folders, not just the latest)
   - Final status: `completed` (all succeed) or `failed` (any failed)
 
 ### 4. Validation & Error Matrix
