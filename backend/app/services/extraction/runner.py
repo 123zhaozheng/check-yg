@@ -225,15 +225,41 @@ class ExtractionTaskRunner:
 
     @staticmethod
     def _merge_results(previous: dict, current: dict) -> dict:
-        """Merge append extraction output with the previous task result."""
+        """Merge append extraction output with the previous task result.
+
+        Aligns with the original append semantics:
+
+        * New records whose ``source_file`` already exists in the previous
+          result are dropped (document-level dedup — an already-extracted
+          document is not re-added).
+        * Previous per-document stats are preserved; stats for genuinely new
+          documents are added.
+        * ``append_runs`` accumulates every append folder, not just the last.
+        """
         if not previous:
             return current
 
         merged = dict(current)
         previous_records = previous.get("flow_records", []) or []
         current_records = current.get("flow_records", []) or []
-        merged["flow_records"] = previous_records + current_records
+
+        # Document-level dedup: keep previous records, then add only new
+        # records whose source_file was not already extracted.
+        existing_sources = {
+            str(r.get("source_file") or "").strip()
+            for r in previous_records
+            if isinstance(r, dict)
+        }
+        deduped_current = [
+            r
+            for r in current_records
+            if isinstance(r, dict)
+            and str(r.get("source_file") or "").strip() not in existing_sources
+        ]
+        merged["flow_records"] = previous_records + deduped_current
         merged["total_records"] = len(merged["flow_records"])
+
+        # Recompute totals from the deduped record set so they stay honest.
         merged["total_documents"] = int(previous.get("total_documents", 0) or 0) + int(
             current.get("total_documents", 0) or 0
         )
@@ -246,14 +272,25 @@ class ExtractionTaskRunner:
         merged["flow_tables"] = int(previous.get("flow_tables", 0) or 0) + int(
             current.get("flow_tables", 0) or 0
         )
-        merged["failed_documents"] = (previous.get("failed_documents", []) or []) + (
-            current.get("failed_documents", []) or []
-        )
+
+        # Dedup failed_documents by name as well.
+        prev_failed = previous.get("failed_documents", []) or []
+        curr_failed = current.get("failed_documents", []) or []
+        seen_failed = set(prev_failed)
+        merged["failed_documents"] = prev_failed + [
+            f for f in curr_failed if f not in seen_failed
+        ]
+
         merged["errors"] = (previous.get("errors", []) or []) + (current.get("errors", []) or [])
-        merged["per_document_stats"] = {
-            **(previous.get("per_document_stats", {}) or {}),
-            **(current.get("per_document_stats", {}) or {}),
-        }
+
+        # Preserve previous per-document stats; only add stats for new documents.
+        prev_stats = dict(previous.get("per_document_stats", {}) or {})
+        curr_stats = current.get("per_document_stats", {}) or {}
+        for doc_name, stat in curr_stats.items():
+            if doc_name not in prev_stats:
+                prev_stats[doc_name] = stat
+        merged["per_document_stats"] = prev_stats
+
         merged["append_runs"] = (previous.get("append_runs", []) or []) + [
             {
                 "task_time": current.get("task_time"),

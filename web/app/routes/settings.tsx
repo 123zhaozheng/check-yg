@@ -40,9 +40,11 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false)
 
   // Form state
-  const [mineruMode, setMineruMode] = useState("fast")
-  const [mineruConcurrency, setMineruConcurrency] = useState("16")
-  const [mineruEndpoint, setMineruEndpoint] = useState("")
+  const [mineruMode, setMineruMode] = useState("local")
+  const [mineruUrl, setMineruUrl] = useState("")
+  const [mineruPublicUrl, setMineruPublicUrl] = useState("")
+  const [mineruPublicApiKey, setMineruPublicApiKey] = useState("")
+  const [mineruTimeout, setMineruTimeout] = useState("300")
   const [llmBaseUrl, setLlmBaseUrl] = useState("")
   const [llmModelName, setLlmModelName] = useState("")
   const [llmApiKey, setLlmApiKey] = useState("")
@@ -54,9 +56,11 @@ export default function SettingsPage() {
         const map: Record<string, string> = {}
         settings.forEach((s) => { map[s.key] = s.value })
 
-        setMineruMode(map["mineru.mode"] || "fast")
-        setMineruConcurrency(map["mineru.max_concurrency"] || "16")
-        setMineruEndpoint(map["mineru.api_endpoint"] || "")
+        setMineruMode(map["mineru.mode"] || "local")
+        setMineruUrl(map["mineru.url"] || "")
+        setMineruPublicUrl(map["mineru.public_url"] || "")
+        setMineruPublicApiKey(map["mineru.public_api_key"] || "")
+        setMineruTimeout(map["mineru.timeout"] || "300")
         setLlmBaseUrl(map["llm.base_url"] || "")
         setLlmModelName(map["llm.model_name"] || "")
         setLlmApiKey(map["llm.api_key"] || "")
@@ -80,8 +84,10 @@ export default function SettingsPage() {
     try {
       await Promise.all([
         saveSetting("mineru.mode", mineruMode),
-        saveSetting("mineru.max_concurrency", mineruConcurrency),
-        saveSetting("mineru.api_endpoint", mineruEndpoint),
+        saveSetting("mineru.url", mineruUrl),
+        saveSetting("mineru.public_url", mineruPublicUrl),
+        saveSetting("mineru.public_api_key", mineruPublicApiKey),
+        saveSetting("mineru.timeout", mineruTimeout),
         saveSetting("llm.base_url", llmBaseUrl),
         saveSetting("llm.model_name", llmModelName),
         saveSetting("llm.api_key", llmApiKey),
@@ -163,39 +169,74 @@ export default function SettingsPage() {
                 <CardContent className="space-y-4">
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <Label className="text-xs text-muted-foreground">解析模式 (Mode)</Label>
+                      <Label className="text-xs text-muted-foreground">部署模式 (Mode)</Label>
                       <Select value={mineruMode} onValueChange={setMineruMode}>
                         <SelectTrigger>
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="fast">Fast (快速解析)</SelectItem>
-                          <SelectItem value="precise">Precise (精确解析)</SelectItem>
+                          <SelectItem value="local">Local (自托管服务)</SelectItem>
+                          <SelectItem value="public">Public (公网 Agent)</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
                     <div className="space-y-2">
-                      <Label className="text-xs text-muted-foreground">最大并发数</Label>
+                      <Label className="text-xs text-muted-foreground">请求超时 (秒)</Label>
                       <Input
                         type="number"
-                        value={mineruConcurrency}
-                        onChange={(e) => setMineruConcurrency(e.target.value)}
+                        value={mineruTimeout}
+                        onChange={(e) => setMineruTimeout(e.target.value)}
                         className="bg-surface-container-low"
+                        placeholder="300"
                       />
                     </div>
                   </div>
-                  <div className="space-y-2">
-                    <Label className="text-xs text-muted-foreground">API 端点 (URL)</Label>
-                    <div className="relative">
-                      <Server className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                      <Input
-                        value={mineruEndpoint}
-                        onChange={(e) => setMineruEndpoint(e.target.value)}
-                        className="pl-9 bg-surface-container-low"
-                        placeholder="https://mineru.api.check-yg.com/v1"
-                      />
+                  {mineruMode === "local" ? (
+                    <div className="space-y-2">
+                      <Label className="text-xs text-muted-foreground">MinerU 服务地址 (URL)</Label>
+                      <div className="relative">
+                        <Server className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                        <Input
+                          value={mineruUrl}
+                          onChange={(e) => setMineruUrl(e.target.value)}
+                          className="pl-9 bg-surface-container-low"
+                          placeholder="http://localhost:8000"
+                        />
+                      </div>
                     </div>
-                  </div>
+                  ) : (
+                    <>
+                      <div className="space-y-2">
+                        <Label className="text-xs text-muted-foreground">公网 Agent 地址 (Public URL)</Label>
+                        <Input
+                          value={mineruPublicUrl}
+                          onChange={(e) => setMineruPublicUrl(e.target.value)}
+                          className="bg-surface-container-low"
+                          placeholder="https://mineru.net/api/v1/agent"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label className="text-xs text-muted-foreground">公网 API 密钥 (API Key)</Label>
+                        <div className="relative">
+                          <Key className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                          <Input
+                            type={showApiKey ? "text" : "password"}
+                            value={mineruPublicApiKey}
+                            onChange={(e) => setMineruPublicApiKey(e.target.value)}
+                            className="pl-9 pr-10 bg-surface-container-low"
+                            placeholder="公网 MinerU API Key"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowApiKey(!showApiKey)}
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                          >
+                            {showApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                          </button>
+                        </div>
+                      </div>
+                    </>
+                  )}
                 </CardContent>
               </Card>
 
@@ -315,7 +356,7 @@ export default function SettingsPage() {
               <div>
                 <h4 className="text-xs font-semibold text-foreground mb-1">关于 MinerU</h4>
                 <p className="text-[11px] text-muted-foreground leading-relaxed">
-                  MinerU 是我们自研的高性能 PDF 解析框架。建议在处理含有大量表格的审计报告时开启 Precise 模式。
+                  MinerU 是文档解析引擎。Local 模式连接自托管服务，Public 模式通过公网 Agent 调用，需配置 API 密钥。
                 </p>
               </div>
               <div className="h-px bg-border" />

@@ -149,6 +149,89 @@ def test_append_result_merge_preserves_previous_records():
     assert merged["append_runs"][0]["document_folder"] == "D:/new"
 
 
+def test_append_merge_dedups_records_by_source_file():
+    """A new run that re-extracts an already-seen document must not duplicate it."""
+    previous = {
+        "total_documents": 1,
+        "processed_documents": 1,
+        "total_tables": 1,
+        "flow_tables": 1,
+        "total_records": 1,
+        "flow_records": [{"source_file": "dup.xlsx", "amount": "100"}],
+        "failed_documents": ["dup.xlsx"],
+        "errors": [],
+        "per_document_stats": {"dup.xlsx": {"record_count": 1}},
+    }
+    current = {
+        "task_time": "2026-06-17T00:00:00",
+        "document_folder": "D:/again",
+        "total_documents": 2,
+        "processed_documents": 2,
+        "total_tables": 1,
+        "flow_tables": 1,
+        "total_records": 2,
+        "flow_records": [
+            {"source_file": "dup.xlsx", "amount": "999"},  # duplicate -> dropped
+            {"source_file": "fresh.xlsx", "amount": "50"},  # new -> kept
+        ],
+        "failed_documents": ["dup.xlsx"],  # already in previous -> not re-added
+        "errors": [],
+        "per_document_stats": {"dup.xlsx": {"record_count": 2}, "fresh.xlsx": {"record_count": 1}},
+    }
+
+    merged = ExtractionTaskRunner._merge_results(previous, current)
+
+    sources = [item["source_file"] for item in merged["flow_records"]]
+    assert sources == ["dup.xlsx", "fresh.xlsx"]
+    assert merged["total_records"] == 2
+    # Previous per_document_stats preserved (dup.xlsx not overwritten by current).
+    assert merged["per_document_stats"]["dup.xlsx"]["record_count"] == 1
+    assert merged["per_document_stats"]["fresh.xlsx"]["record_count"] == 1
+    # failed_documents deduped.
+    assert merged["failed_documents"] == ["dup.xlsx"]
+    # append_runs accumulates.
+    assert merged["append_runs"][0]["document_folder"] == "D:/again"
+
+
+@pytest.mark.asyncio
+async def test_append_task_records_all_folders_in_config(client, db_session, tmp_path, monkeypatch):
+    """Each append must accumulate the folder into append_document_folders, not overwrite."""
+    session, _user = db_session
+
+    async def fake_start(**kwargs):
+        return None
+
+    monkeypatch.setattr("app.routers.tasks.runner.start", fake_start)
+    monkeypatch.setattr("app.routers.tasks.runner.is_running", lambda task_id: False)
+
+    created = await client.post("/api/tasks/", json={"title": "Append folders"})
+    task_id = created.json()["id"]
+
+    folder_a = tmp_path / "a"
+    folder_b = tmp_path / "b"
+    folder_a.mkdir()
+    folder_b.mkdir()
+
+    # First append.
+    await client.post(f"/api/tasks/{task_id}/append", json={"document_folder": str(folder_a)})
+
+    # The router flips status to "running" and fake_start never finishes it;
+    # reset via the test session so the second append is accepted.
+    from app.models import Task as TaskModel
+    from sqlalchemy import select
+
+    row = await session.execute(select(TaskModel).where(TaskModel.id == task_id))
+    task = row.scalar_one()
+    task.status = "completed"
+    await session.commit()
+
+    resp = await client.post(f"/api/tasks/{task_id}/append", json={"document_folder": str(folder_b)})
+
+    assert resp.status_code == 200
+    folders = resp.json()["config"]["append_document_folders"]
+    assert folders == [str(folder_a), str(folder_b)]
+
+
 @pytest.mark.asyncio
 async def test_runner_persists_result_records_for_review_services(db_session):
     session, user = db_session

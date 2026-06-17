@@ -250,3 +250,12 @@ def test_default_settings_include_mineru_keys():
     ):
         assert key in DEFAULT_SETTINGS, f"missing default setting {key}"
         assert DEFAULT_SETTINGS[key]["category"] == "mineru"
+
+
+def test_default_settings_drop_decorative_flow_keys():
+    """flow.* settings are not consumed by the start/append runtime path,
+    so they must not appear in DEFAULT_SETTINGS (no decorative settings)."""
+    from app.services.settings_service import DEFAULT_SETTINGS
+
+    assert "flow.batch_size" not in DEFAULT_SETTINGS
+    assert "flow.confidence_threshold" not in DEFAULT_SETTINGS

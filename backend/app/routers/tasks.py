@@ -219,6 +219,12 @@ async def append_task_documents(
     config = dict(task.config or {})
     batch_size = request.batch_size or int(config.get("batch_size") or 20)
     confidence_threshold = request.confidence_threshold or int(config.get("confidence_threshold") or 70)
+    # Track every appended folder, not just the latest, so the task keeps a
+    # full history of source directories (mirrors the original document_folder list).
+    append_folders = list(config.get("append_document_folders") or [])
+    if str(folder_path) not in append_folders:
+        append_folders.append(str(folder_path))
+    config["append_document_folders"] = append_folders
     config["append_document_folder"] = str(folder_path)
     task.config = config
     task.status = "running"

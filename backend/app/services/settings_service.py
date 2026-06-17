@@ -49,14 +49,6 @@ DEFAULT_SETTINGS: Dict[str, Dict[str, str]] = {
         "value": "300",
         "category": "mineru",
     },
-    "flow.batch_size": {
-        "value": "20",
-        "category": "flow",
-    },
-    "flow.confidence_threshold": {
-        "value": "70",
-        "category": "flow",
-    },
 }
 
 
