@@ -475,3 +475,37 @@ S5 清洗标准化切片闭环，守住两条 P0 硬底线。①不删减：新�
 ### Next Steps
 
 - None - task complete
+
+
+## Session 15: S6 AI 分析骨架闭环
+
+**Date**: 2026-06-22
+**Task**: S6 AI 分析骨架闭环
+**Branch**: `feat/web-split`
+
+### Summary
+
+S6 AI 分析骨架切片闭环，agent tools 留接口+占位实现。后端：Finding 模型+migration 1d08c3cec268（severity high|medium|low/status pending|accepted|ignored/confidence/全标量无jsonb）；analysis.py agent 骨架遵循 pydantic-ai v1.107.0 conventions——AuditDeps(db,task_id) 传类型给 get_agent（agent_factory 新增 deps_type 参数默认 None 向后兼容，3 legacy 模块不变）、SYSTEM_PROMPT_ANALYSIS 新占位 instructions（非改 legacy）、3 @agent.tool 只读工具（query_transactions/by_counterparty/by_amount_range，RunContext[AuditDeps]+keyword 参数成 JSON schema+docstring 成描述，select FlowRecordRow record_type=standard 只读不改）、ModelMessagesTypeAdapter 序列化往返、message_history 多轮存 Task.config.analysis_chat_history；run_analysis/chat 占位返回不调真实 LLM（避免占位 prompt 产垃圾）+TODO 注释示范真实 agent.run 接入；4 接口 owner-only（POST analyze 占位建finding+写last_analysis_at / GET findings severity+confidence排序 / PATCH /findings/{id} 校验finding.task.owner 403 / POST chat history存回）。前端 analyze.tsx 完整单色分析页（无stitch自创）：顶部分析控制条+灰阶进度条+左侧发现列表风险等级灰阶+形状双编码（高方块黑底白字/中深灰圆角/低浅灰胶囊 禁红黄绿 选中黑竖条）+右侧详情（推理摘要+关联记录+时间分布灰阶bar+置信度灰阶水平条+采纳/忽略/备注三按钮）+底部对话区（AI浅灰底/用户黑底白字气泡+输入框+发送占位回复）。110 后端测试绿（含 test_llm_parity 18 提示词保真 + test_cleaning_no_drop 2 不删减回归 + 10 新增 agent结构introspection/findings排序/owner403/analyze占位/chat history），前端 build+typecheck 通过，Chrome108 CSS color-mix 在 @supports 块内。提示词保真：normalizer/classifier/portrait git diff 0行。不删减：agent tools 只读。check 复核自修 severity 形状双编码（high rounded-none/medium rounded/low rounded-full）。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `1876708` | (see git log) |
+| `04fa406` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
