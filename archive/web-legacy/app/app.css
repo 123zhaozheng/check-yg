@@ -177,12 +177,14 @@
     code, pre, kbd {
         @apply font-mono tabular-nums;
     }
-    /* Disable native autofill yellow background in dark mode */
+    /* Disable native autofill yellow background in dark mode.
+       -webkit-text-fill-color is not recognized as a color property by
+       Lightning CSS, so use the source hex directly (oklch→#e5e2e1). */
     input:-webkit-autofill,
     input:-webkit-autofill:hover,
     input:-webkit-autofill:focus {
         -webkit-box-shadow: 0 0 0 1000px oklch(0.1224 0 0) inset;
-        -webkit-text-fill-color: oklch(0.9289 0.0082 89.51);
+        -webkit-text-fill-color: #e5e2e1;
     }
 }
 
@@ -214,7 +216,9 @@
     .text-success { color: var(--success); }
     .text-warning { color: var(--warning); }
     .text-destructive { color: var(--destructive); }
-    .bg-success\/15 { background-color: color-mix(in oklch, var(--success) 15%, transparent); }
-    .bg-warning\/15 { background-color: color-mix(in oklch, var(--warning) 15%, transparent); }
-    .bg-destructive\/15 { background-color: color-mix(in oklch, var(--destructive) 15%, transparent); }
+    /* Semantic bg tints — static rgba (Chrome 108 has no color-mix()).
+       Source hex: success #10B981, warning #F59E0B, destructive #EF4444. */
+    .bg-success\/15 { background-color: rgba(16,185,129,0.15); }
+    .bg-warning\/15 { background-color: rgba(245,158,11,0.15); }
+    .bg-destructive\/15 { background-color: rgba(239,68,68,0.15); }
 }

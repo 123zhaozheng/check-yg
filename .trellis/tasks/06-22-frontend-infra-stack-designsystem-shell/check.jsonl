@@ -1,0 +1,4 @@
+{"file": "stitch_/monochrome_precision/DESIGN.md", "reason": "单色设计系统验收核对：9 级明度是否只用规定色阶、是否禁用红绿、error 是否黑底白字+2px 黑边、状态胶囊是否灰阶递进、字体与基线网格是否对齐设计稿。"}
+{"file": "docs/web-pages-design.md", "reason": "页面级验收：布局壳尺寸(侧栏/顶栏)、路由骨架是否走通、中文化是否对照英中表、单色设计自检清单(移除彩色后层级是否清晰)。"}
+{"file": "docs/zhixing-delivery-plan.md", "reason": "硬底线核对：Chrome108 渲染正常、单色原则(全站禁用彩色)、旧 web/ 已归档 archive/web-legacy、Vite proxy /api+/ws 通后端。"}
+{"file": "web/vite.config.ts", "reason": "chrome108 lightningcss 降级配置对照：新 frontend/vite.config.ts 是否照搬 cssTargets/cssInclude/build.target，保证 lab()/oklch()/color-mix() 降级到 rgb 不在 Chrome108 破损。"}

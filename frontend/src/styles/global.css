@@ -1,0 +1,176 @@
+@import "tailwindcss";
+
+@import "@fontsource-variable/hanken-grotesk";
+@import "@fontsource-variable/jetbrains-mono";
+
+/* =========================================================================
+ * 智行卫士 — Monochrome Precision Design System
+ *
+ * Strict 9-level luminance scale (DESIGN.md / docs/web-pages-design.md).
+ * No hue anywhere. State, risk, and progress map to luminance + weight only.
+ * Ink scale names map to the design doc's 9-level palette:
+ *   ink-900 #000000  纯黑 — primary actions, headers, strongest emphasis
+ *   ink-800 #1f1f1f  深灰 — body text primary
+ *   ink-700 #595959  中灰 — secondary text
+ *   ink-600 #8c8c8c  浅中灰 — captions, placeholders
+ *   ink-500 #bfbfbf  浅灰 — separators, disabled
+ *   ink-400 #e5e5e5  极浅灰 — card borders, table row lines
+ *   ink-300 #f0f0f0  画布灰 — secondary background / hover
+ *   ink-200 #f7f7f8  画布底 — main content canvas
+ *   ink-100 #ffffff  纯白 — card background
+ * ======================================================================= */
+
+@theme {
+  /* 9-level luminance scale — the ONLY palette allowed site-wide. */
+  --color-ink-900: #000000;
+  --color-ink-800: #1f1f1f;
+  --color-ink-700: #595959;
+  --color-ink-600: #8c8c8c;
+  --color-ink-500: #bfbfbf;
+  --color-ink-400: #e5e5e5;
+  --color-ink-300: #f0f0f0;
+  --color-ink-200: #f7f7f8;
+  --color-ink-100: #ffffff;
+
+  /* Semantic aliases (still luminance-only) for shadcn-style utility names. */
+  --color-background: var(--color-ink-200);
+  --color-foreground: var(--color-ink-800);
+  --color-surface: var(--color-ink-100);
+  --color-surface-foreground: var(--color-ink-800);
+  --color-muted: var(--color-ink-300);
+  --color-muted-foreground: var(--color-ink-700);
+  --color-border: var(--color-ink-400);
+  --color-input: var(--color-ink-500);
+  --color-ring: var(--color-ink-800);
+
+  --color-primary: var(--color-ink-900);
+  --color-primary-foreground: var(--color-ink-100);
+  --color-secondary: var(--color-ink-300);
+  --color-secondary-foreground: var(--color-ink-800);
+  --color-accent: var(--color-ink-300);
+  --color-accent-foreground: var(--color-ink-900);
+
+  /* Error / high-risk: black bg + white text + 2px black border.
+     Never red. */
+  --color-destructive: var(--color-ink-900);
+  --color-destructive-foreground: var(--color-ink-100);
+
+  --color-sidebar: var(--color-ink-100);
+  --color-sidebar-foreground: var(--color-ink-800);
+  --color-sidebar-border: var(--color-ink-400);
+  --color-sidebar-accent: var(--color-ink-300);
+  --color-sidebar-accent-foreground: var(--color-ink-900);
+  --color-sidebar-ring: var(--color-ink-800);
+
+  /* Fonts: Hanken Grotesk sans + JetBrains Mono for figures/IDs/timestamps. */
+  --font-sans: "Hanken Grotesk Variable", -apple-system, "PingFang SC",
+    "Microsoft YaHei", "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono Variable", "SF Mono", "Roboto Mono", ui-monospace,
+    monospace;
+
+  /* 4px baseline spacing tokens (DESIGN.md spacing.unit). */
+  --spacing-unit: 4px;
+
+  /* Radii: 4px default for buttons/inputs/small containers, 8px for cards,
+     full pill for status capsules only. */
+  --radius-sm: 2px;
+  --radius-DEFAULT: 4px;
+  --radius-md: 4px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --radius-full: 9999px;
+
+  /* Card elevation: 1px border + subtle shadow (DESIGN.md Elevation Level 1).
+     Hover: 0 4px 12px rgba(0,0,0,0.08). Popover: 0 8px 24px rgba(0,0,0,0.12). */
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-hover: 0 4px 12px rgba(0, 0, 0, 0.08);
+  --shadow-popover: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  html {
+    font-family: var(--font-sans);
+    color-scheme: light;
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Figures, transaction IDs, timestamps: monospaced + tabular alignment. */
+  code,
+  pre,
+  kbd,
+  .font-mono {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Focus: 1px dark outer ring + 2px light halo (DESIGN.md — no blue ring). */
+  :focus-visible {
+    outline: 2px solid var(--color-ink-400);
+    outline-offset: 1px;
+  }
+
+  /* Thin grayscale scrollbar. */
+  .scroll-thin::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .scroll-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .scroll-thin::-webkit-scrollbar-thumb {
+    background: var(--color-ink-500);
+    border-radius: 9999px;
+  }
+  .scroll-thin::-webkit-scrollbar-thumb:hover {
+    background: var(--color-ink-700);
+  }
+}
+
+@layer utilities {
+  /* Card surface: white bg + 1px border + soft shadow. */
+  .card-surface {
+    background-color: var(--color-surface);
+    border: 1px solid var(--color-ink-400);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-card);
+  }
+
+  /* Fine-border-bottom form field (DESIGN.md Form Fields):
+     1px #bfbfbf bottom border, thickens to 2px #000 on focus. */
+  .field-fine-border {
+    border-bottom: 1px solid var(--color-ink-500);
+    transition: border-width 0.12s ease, border-color 0.12s ease;
+  }
+  .field-fine-border:focus {
+    border-bottom: 2px solid var(--color-ink-900);
+    outline: none;
+  }
+
+  /* Active nav indicator: 3px black vertical bar (DESIGN.md Active Indicators). */
+  .nav-active-bar {
+    position: relative;
+  }
+  .nav-active-bar::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    background-color: var(--color-ink-900);
+  }
+}

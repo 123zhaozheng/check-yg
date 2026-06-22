@@ -1,0 +1,12 @@
+node_modules
+dist
+*.tsbuildinfo
+.vite
+.DS_Store
+.env*
+!.env.example
+
+# tsc composite-build artifacts (should never be committed)
+vite.config.d.ts
+vite.config.js
+vite.config.tsbuildinfo
