@@ -1,0 +1,6 @@
+{"file": "stitch_/dashboard/code.html", "reason": "Dashboard 设计稿源码：顶部页头(概览标题+上次同步+REFRESH描边按钮+NEW AUDIT黑底主按钮)、4张KPI卡(进行中任务数/本月已完成审查数/待处理告警数/平均审查耗时，粗体大号数值+↑↓灰度同比+底部灰阶进度条)、进行中任务表、最近报告区、待办区。中文化与视觉对齐依据。注意设计稿彩色违规改单色。"}
+{"file": "docs/web-pages-design.md", "reason": "§B1 Dashboard 设计规范：KPI 卡(白底细边标题辅文灰+主数值粗体大号黑字+同比↑↓灰度不用红绿)、进行中任务表(阶段灰阶胶囊导入浅灰/清洗中灰/分析深灰/报告黑底白字)、最近报告区、待我处理区。英中对照表。"}
+{"file": "docs/zhixing-delivery-plan.md", "reason": "grill 决策 Q5(页面范围 Dashboard)、Q11(契约先行)、硬底线(Chrome108、单色原则、不污染主分支)。S2 验收项来源。"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "FastAPI Task Extraction Boundary scenario：Task 字段(id/title/status/config/owner_id/created_at/completed_at)、阶段状态、路由层薄业务进 services。S2 dashboard 聚合接口设计的后端规范依据。"}
+{"file": "frontend/src/routes/__authenticated/index.tsx", "reason": "B2 已建的 Dashboard 占位路由(当前是占位)。S2 要中文化对齐设计稿 + 接 /api/dashboard 聚合接口。现状参考。"}
+{"file": "frontend/src/components/ui/status-pill.tsx", "reason": "B2 已建的单色状态胶囊灰阶递进组件。S2 dashboard 阶段胶囊复用它。"}
