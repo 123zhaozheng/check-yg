@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 10
+- **Total Sessions**: 11
 - **Last Active**: 2026-06-22
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~342 | Active |
+| `journal-1.md` | ~375 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 11 | 2026-06-22 | S1 登录闭环：前端接通 cookie 鉴权 + 401 静默 refresh + 路由守卫 + 退出 | `8e51e6b` | `feat/web-split` |
 | 10 | 2026-06-22 | B1+B2 基建并行：pg迁移+pydantic-ai+cookie鉴权+静态挂载 / frontend栈+单色设计系统+布局壳 | `dec1993`, `a8c0f99`, `a48bc33`, `7bc3bcc` | `feat/web-split` |
 | 9 | 2026-06-16 | WebSocket notifications | `d2d7e36` | `feat/web-split` |
 | 8 | 2026-06-16 | Review export backend APIs | `c6ede60` | `feat/web-split` |

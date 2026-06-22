@@ -340,3 +340,36 @@ Implemented authenticated WebSocket notifications for review, report, and export
 ### Next Steps
 
 - None - task complete
+
+
+## Session 11: S1 登录闭环：前端接通 cookie 鉴权 + 401 静默 refresh + 路由守卫 + 退出
+
+**Date**: 2026-06-22
+**Task**: S1 登录闭环：前端接通 cookie 鉴权 + 401 静默 refresh + 路由守卫 + 退出
+**Branch**: `feat/web-split`
+
+### Summary
+
+S1 登录闭环切片完成。后端 cookie 鉴权 B1 已就绪，S1 纯前端接通：login.tsx 对接 POST /api/auth/login（credentials:include 带 cookie，成功跳 ?redirect 或 /，已登录访问 /login 自动跳 /，错误态改单色深灰底白字小条不用红色）；api.ts 加 401 静默 refresh——遇 401（非 login/refresh 自身）先 POST /auth/refresh，成功重试原请求一次，refresh 失败或仍 401 跳 /login?redirect，模块级 refreshPromise 去重并发 401，NO_REFRESH_ENDPOINTS 防递归；新建 hooks/use-current-user.ts（TanStack Query useCurrentUser + fetchCurrentUser 供 beforeLoad 预取）；__authenticated.tsx beforeLoad 真实守卫（fetchCurrentUser 失败 throw redirect /login?redirect）；__root.tsx RouterContext 加 user；app-shell.tsx 侧栏底部加退出登录按钮（调 /auth/logout → queryClient.clear → 跳 /login）。验收：pnpm typecheck/build 通过，单色 grep 无彩色，trellis-check 0 违规（静默 refresh 防递归/去重/单次重试/端点排除深度追踪通过），端到端 smoke 通过（后端 cookie 闭环 login/me/refresh/logout + 前端代理 5173→8000 + SPA 路由）。硬底线全过：Chrome108、单色、cookie HttpOnly+SameSite=Strict、不污染 master。umbrella 进度 3/10。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `8e51e6b` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
