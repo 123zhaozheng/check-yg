@@ -509,3 +509,38 @@ S6 AI 分析骨架切片闭环，agent tools 留接口+占位实现。后端：F
 ### Next Steps
 
 - None - task complete
+
+
+## Session 16: S7 审查报告闭环
+
+**Date**: 2026-06-22
+**Task**: S7 审查报告闭环
+**Branch**: `feat/web-split`
+
+### Summary
+
+S7 审查报告闭环完成 (umbrella 8/10→9/10)。后端：新建 ReportChapter/ReportAnnotation 模型 + migration(revises S6 1d08c3cec268) + report_chapter_builder 确定性 6 章拼装(概述/被审查对象/数据范围/异常发现汇总/风险评估/结论建议，聚合 S5 flow_records + S6 findings) + reports.py 章节化生成(幂等)/GET/PATCH章节/单章重生成/拖拽排序/全报告重生成/批注CRUD/定稿接口。定稿只改 Report.status draft→final 软态(不删减)，定稿后所有写操作 409。owner-only 复用 _load_owned_report。前端：report.tsx 三栏单色页(左大纲可拖拽HTML5/中正文行内编辑textarea细虚线框+轻量markdown渲染+异常卡片块/右批注左细灰竖线+浅灰底块禁彩色) + use-report hooks + api.ts 追加。trellis-check 自修2项：异常卡片builder格式与FindingCard触发对齐(原是死代码)+已定稿标签灰阶token对齐。验证：127后端测试绿(+17报告)+pnpm build通过(chrome108)。硬底线守住：Chrome108(9级ink token无裸oklch/lab/color-mix)、单色(批注禁彩色高亮)、不删减(定稿只改软态)、提示词保真未碰、不污染主分支(feat/web-split)。决策：数据源=S6findings+S5flow_records(不动legacy ReviewMatch链路)、独立ReportChapter表、纯文本textarea行内编辑、章节级批注、生成即建6章、重生成占位确定性模板。关键词词库+三层匹配+注入AI/AI聊天改造/富文本/@他人/PDF导出均不做(留后续切片)。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ebf5dfd9` | (see git log) |
+| `73cacc1e` | (see git log) |
+| `1bd06d26` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
