@@ -1,1 +1,15 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": "docs/research/pydantic-ai-conventions.md", "reason": "pydantic-ai v1.107.0 官方规范：deps_type=AuditDeps(db,task_id)、@agent.tool 工具签名、ModelMessagesTypeAdapter 存对话历史、message_history 多轮、Tool Output 模式、ReinjectSystemPrompt。S6 agent 骨架必须遵循。"}
+{"file": "backend/app/llm/agent_factory.py", "reason": "get_agent(output_type, instructions, *, base_url, api_key, model, timeout, max_tokens) 模块级单例工厂，S6 analysis_agent 复用此工厂建 agent。"}
+{"file": "backend/app/llm/portrait.py", "reason": "现有 portrait agent 实现模式参考：SYSTEM_PROMPT 常量 + get_agent + extract() 对外契约。S6 analysis_agent 骨架照此结构（instructions 占位，tools 留签名）。"}
+{"file": "backend/app/llm/types.py", "reason": "现有 output_type pydantic 模型模式。S6 新增 AnalysisResult + Finding output_type 按此模式定义。"}
+{"file": "backend/app/models/flow_record.py", "reason": "FlowRecordRow 表是 agent tools 的数据源（query_transactions 等查 standard 记录）。S6 agent tools 查此表。"}
+{"file": "backend/app/routers/tasks.py", "reason": "S5 已有 records/excluded 端点 + _load_owned_task owner-only 校验 + FlowRecordRow 查询模式。S6 在此加 analyze/findings/finding patch/chat 端点，复用 _load_owned_task。"}
+{"file": "backend/app/models/document.py", "reason": "模型模式参考（id/task_id/status/jsonb 字段）。S6 新 Finding 模型照此结构。"}
+{"file": "backend/app/models/task.py", "reason": "Task 模型参考（owner_id/status/config jsonb）。Finding 关联 task_id。"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "agent 在 app/llm/ 的目录结构规范 + Task Extraction Boundary。"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "新 Finding 表走 Alembic migration + jsonb() 规范。"}
+{"file": "docs/zhixing-delivery-plan.md", "reason": "硬底线：单色原则(风险等级灰阶+形状双编码禁红黄绿)、Chrome108、提示词保真(S6 是新agent非搬运,instructions占位但结构要对)。"}
+{"file": "docs/web-pages-design.md", "reason": "AI 分析页(Tab4)设计规范与文案，S6 中文化依据。"}
+{"file": "frontend/src/routes/__authenticated/tasks/$id/analyze.tsx", "reason": "S6 目标路由，当前 TabPlaceholder 占位，替换为完整 AI 分析页。"}
+{"file": "frontend/src/lib/api.ts", "reason": "apiFetch 稳定只追加；S6 加 Finding/AnalysisResult 类型 + startAnalysis/listFindings/patchFinding/chatAnalyze 函数。"}
+{"file": "frontend/src/hooks/use-records.ts", "reason": "TanStack Query hook 模式参考（useTaskRecords/useExcludedRecords + mutation）。S6 加 useFindings/useStartAnalysis/usePatchFinding/useChatAnalyze。"}
