@@ -644,3 +644,137 @@ export function chatAnalyze(
 ): Promise<ChatResponse> {
   return api.post<ChatResponse>(`/tasks/${taskId}/analyze/chat`, { message })
 }
+
+/* =========================================================================
+ * Report API — types + helpers (S7 审查报告闭环).
+ * Appended only; the apiFetch core above is unchanged.
+ * Mirrors `backend/app/routers/reports.py` + `app/schemas/review.py`.
+ * 章节化审查报告：6 章 ReportChapter + 章节级批注 ReportAnnotation +
+ * 定稿软态 status(draft|final). 单色原则 + 不删减精神（定稿只改软态）.
+ * ======================================================================= */
+
+/** 报告软态：draft（可编辑/重生成/批注）| final（整报告只读，写操作 409）. */
+export type ReportStatus = "draft" | "final"
+
+/** One chapter of a chaptered review report (S7). Mirrors ReportChapterResponse. */
+export interface ReportChapterItem {
+  id: number
+  report_id: number
+  title: string
+  content: string
+  order_index: number
+  generated_at: string
+}
+
+/** One review annotation on a report chapter (S7). Mirrors ReportAnnotationResponse. */
+export interface ReportAnnotationItem {
+  id: number
+  report_id: number
+  chapter_id?: number | null
+  author: string
+  content: string
+  resolved: boolean
+  created_at: string
+}
+
+/** 报告 + chapters（按 order_index 排序）+ annotations. Mirrors ReportResponse. */
+export interface ReportDetail {
+  id: number
+  task_id: number
+  review_id?: number | null
+  format: string
+  content_path: string
+  content: string
+  status: ReportStatus
+  chapters: ReportChapterItem[]
+  annotations: ReportAnnotationItem[]
+  created_at: string
+}
+
+/** PATCH /api/reports/{id}/chapters/{cid} 请求体（行内编辑 content）. */
+export interface ReportChapterPatchBody {
+  content: string
+}
+
+/** reorder 单项：chapter_id + 新 order_index. */
+export interface ReportChapterReorderItem {
+  chapter_id: number
+  order_index: number
+}
+
+/** POST /api/reports/{id}/annotations 请求体（章节级批注，chapter_id 可选）. */
+export interface ReportAnnotationCreateBody {
+  chapter_id?: number | null
+  content: string
+}
+
+/** POST /api/tasks/{taskId}/report — 章节化生成（幂等：已有则返已有）. */
+export function generateReport(taskId: number): Promise<ReportDetail> {
+  return api.post<ReportDetail>(`/tasks/${taskId}/report`)
+}
+
+/** GET /api/tasks/{taskId}/report — 取当前报告 + chapters + annotations. */
+export function getReport(taskId: number): Promise<ReportDetail> {
+  return api.get<ReportDetail>(`/tasks/${taskId}/report`)
+}
+
+/** PATCH /api/reports/{id}/chapters/{cid} — 编辑章节 content（定稿 409）. */
+export function patchChapter(
+  reportId: number,
+  chapterId: number,
+  body: ReportChapterPatchBody,
+): Promise<ReportChapterItem> {
+  return api.patch<ReportChapterItem>(
+    `/reports/${reportId}/chapters/${chapterId}`,
+    body,
+  )
+}
+
+/** POST /api/reports/{id}/chapters/{cid}/regenerate — 单章重生成（定稿 409）. */
+export function regenerateChapter(
+  reportId: number,
+  chapterId: number,
+): Promise<ReportChapterItem> {
+  return api.post<ReportChapterItem>(
+    `/reports/${reportId}/chapters/${chapterId}/regenerate`,
+  )
+}
+
+/** POST /api/reports/{id}/chapters/reorder — 拖拽排序（定稿 409）. */
+export function reorderChapters(
+  reportId: number,
+  items: ReportChapterReorderItem[],
+): Promise<ReportDetail> {
+  return api.post<ReportDetail>(`/reports/${reportId}/chapters/reorder`, items)
+}
+
+/** POST /api/reports/{id}/regenerate — 全报告重生成（定稿 409）. */
+export function regenerateReport(reportId: number): Promise<ReportDetail> {
+  return api.post<ReportDetail>(`/reports/${reportId}/regenerate`)
+}
+
+/** POST /api/reports/{id}/annotations — 新建批注（定稿 409）. */
+export function createAnnotation(
+  reportId: number,
+  body: ReportAnnotationCreateBody,
+): Promise<ReportAnnotationItem> {
+  return api.post<ReportAnnotationItem>(
+    `/reports/${reportId}/annotations`,
+    body,
+  )
+}
+
+/** PATCH /api/reports/{id}/annotations/{aid} — 切 resolved（定稿 409）. */
+export function toggleAnnotation(
+  reportId: number,
+  annotationId: number,
+): Promise<ReportAnnotationItem> {
+  return api.patch<ReportAnnotationItem>(
+    `/reports/${reportId}/annotations/${annotationId}`,
+  )
+}
+
+/** POST /api/reports/{id}/finalize — 定稿 status→final. */
+export function finalizeReport(reportId: number): Promise<ReportDetail> {
+  return api.post<ReportDetail>(`/reports/${reportId}/finalize`)
+}
