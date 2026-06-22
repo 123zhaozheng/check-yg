@@ -6,24 +6,44 @@
 
 ## Overview
 
-This project does **not use a traditional database** (no SQLite, PostgreSQL, or MySQL).
-Data persistence relies on:
+主持久化用 **PostgreSQL**（SQLAlchemy 2.x async + asyncpg 运行时驱动，
+psycopg 供 Alembic 同步迁移）。本地用 `docker-compose.yml` 起 `postgres:16`，
+生产对接客户内网 pg 实例（`DATABASE_URL` 切换）。schema 变更走 **Alembic** 迁移，
+不再用 `create_all` 管生产 schema。
 
-1. **YAML config** — `~/.check-yg/config.yaml` (application settings)
-2. **JSON checkpoint files** — `~/.check-yg/checkpoints/{task_id}/doc_*.json` and `task.json`
-3. **JSON review history** — `~/.check-yg/reviews/{review_id}.json`
-4. **Excel files** — source data and output reports via `openpyxl`
+抽取流程另有**文件级 checkpoint**（JSON，`backend/app/services/extraction/checkpoint.py`，
+存 `data/checkpoints/{task_id}/`）做断点续传——这是 DB 之外的辅助持久化，
+与 DB 主存储并行：任务/文档/审查/报告/导出等业务实体在 DB，抽取中间态在
+checkpoint 文件。
 
-All file I/O uses `pathlib.Path`, `json`, and `yaml` — no ORM.
+数据持久化分层：
+1. **PostgreSQL（主）** — 任务、用户、文档、审查、匹配、报告、导出、设置等业务实体（13 张表，SQLAlchemy 模型在 `backend/app/models/`）。
+2. **JSON checkpoint（辅助）** — 抽取断点续传（`data/checkpoints/{task_id}/doc_*.json`）。
+3. **上传/输出文件** — `data/uploads/tasks/{task_id}/run-{n}/`（源文件）、`data/outputs/{reports,exports}/`（产物）。
+4. **Excel** — 源数据读取与导出报告（`openpyxl`）。
 
 ---
 
 ## Query Patterns
 
-### JSON file reads
+### Async DB session（主持久化）
 
 ```python
-# From src/core/checkpoint_manager.py
+# backend/app/database.py
+async with async_session() as session:
+    result = await session.execute(select(User).where(User.id == uid))
+    user = result.scalar_one_or_none()
+    # ... 业务 ...
+    await session.commit()   # get_db 依赖会在 yield 后自动 commit/rollback
+```
+
+Pattern：**`get_db` 依赖自动 commit/rollback**；手动管理 session 时显式 commit。
+`expire_on_commit=False`，读后访问属性不触发刷新。
+
+### JSON checkpoint 读写（抽取断点续传）
+
+```python
+# backend/app/services/extraction/checkpoint.py
 @staticmethod
 def _read_json(path: Path) -> Optional[Dict]:
     try:
@@ -36,28 +56,47 @@ def _read_json(path: Path) -> Optional[Dict]:
 
 Pattern: **try/except with warning log, return None on failure**. Never crash on a bad checkpoint file.
 
-### JSON file writes
-
 ```python
 @staticmethod
 def _write_json(path: Path, data: Dict) -> None:
-    try:
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-    except Exception as exc:
-        logger.warning("Failed to write checkpoint %s: %s", path, exc)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
 ```
 
-Pattern: **`ensure_ascii=False` for Chinese text, `indent=2` for readability**, warning on failure.
+Pattern: **`ensure_ascii=False` for Chinese text, `indent=2` for readability**.
+
+### JSON 列（JSONB）
+
+```python
+# backend/app/models/_types.py
+from app.models._types import jsonb
+
+config: Mapped[dict | None] = mapped_column(jsonb(), nullable=True)
+```
+
+Pattern：**用 `jsonb()` 辅助**（`JSONB().with_variant(JSON(), "sqlite")`），
+pg 用 JSONB / sqlite 测试用 JSON。不要直接用 `JSON` 或 `JSONB`。
+
+### Alembic 迁移
+
+```bash
+# 生成迁移（改了模型后）
+cd backend && python -m alembic revision --autogenerate -m "描述"
+# 应用到 pg
+python -m alembic upgrade head
+```
+
+Pattern：**生产 schema 变更必须走 Alembic**；`init_db()` 生产路径调
+`alembic upgrade head`（线程池跑同步 alembic，避免嵌套事件循环），sqlite
+测试路径仍用 `create_all` + `_run_lightweight_migrations`。新模型必须在
+`migrations/env.py` 的 import 列表登记，否则 autogenerate 发现不了。
 
 ### Excel reads
 
 ```python
-# From src/core/reviewer.py
 wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
 ws = wb.active
 rows_iter = ws.iter_rows(values_only=True)
-# ... process rows ...
 wb.close()
 ```
 
@@ -66,11 +105,9 @@ Pattern: **`read_only=True, data_only=True`** for reading; always close the work
 ### Excel writes
 
 ```python
-# From src/core/reviewer.py
 wb = openpyxl.load_workbook(path)
 try:
     ws = wb.active
-    # ... write cells ...
     wb.save(path)
 finally:
     wb.close()
@@ -82,21 +119,23 @@ Pattern: **`try/finally` with `wb.close()`** for writes; save then close.
 
 ## Data Storage Structure
 
-### Config (`~/.check-yg/config.yaml`)
+### PostgreSQL（主）
 
-```yaml
-mineru:
-  mode: local
-  url: http://localhost:8000
-llm:
-  url: https://api.openai.com/v1
-  model: gpt-4
-flow_extraction:
-  batch_size: 20
-  checkpoint_interval: 50
-```
+13 张表（`backend/app/models/`）：`roles`, `users`, `customer_lists`,
+`customer_list_items`, `settings`, `tasks`, `collaborators`, `documents`,
+`reviews`, `review_matches`, `task_logs`, `exports`, `reports`。
 
-### Checkpoints (`~/.check-yg/checkpoints/{task_id}/`)
+JSONB 列（用 `jsonb()` 辅助）：
+- `roles.permissions`
+- `tasks.config`（含 `last_result`、`document_folder` 等）
+- `documents.extracted_tables`、`documents.flow_tables`
+- `reviews.match_config`
+- `review_matches.record_payload`
+
+任务状态（`tasks.status`）：`draft/running/paused/completed/failed/cancelled`。
+文档状态（`documents.status`）：`pending/processing/completed/failed`。
+
+### Checkpoints (`data/checkpoints/{task_id}/`)
 
 ```
 {task_id}/
@@ -104,14 +143,14 @@ flow_extraction:
 └── doc_{hash}.json     # Per-document state: stage, extracted data, progress
 ```
 
-- Document hash: `md5(name|path)[:16]` — see `CheckpointManager._doc_hash()`
-- Task statuses: `pending`, `extracting`, `normalizing`, `completed`, `canceled`, `failed`
-- Document statuses: `pending`, `stage1_done`, `stage2_running`, `normalizing`, `completed`, `failed`, `canceled`
-- `document_folder`: **`List[str]`** — list of all folder paths added to the task (was `str`, auto-converted on load via `_normalize_document_folder`)
+- Document hash: `md5(name|posix_path)` — 见 `CheckpointManager`，path-aware 身份。
+- 抽取中间态在此；最终结果入 `tasks.config.last_result`（JSONB）。
 
-### Review History (`~/.check-yg/reviews/{review_id}.json`)
+### Uploads / Outputs
 
-Serialized `ReviewResult` dataclass as JSON dict.
+- `data/uploads/tasks/{task_id}/run-{n}/` — 每次上传/append 独立子目录，同名文件跨 run 保持独立文档身份。
+- `data/outputs/reports/{task_id}/` — 报告 Markdown。
+- `data/outputs/exports/{task_id}/` — Excel/ZIP 导出。
 
 ---
 
@@ -119,23 +158,24 @@ Serialized `ReviewResult` dataclass as JSON dict.
 
 | Item | Convention | Example |
 |---|---|---|
-| Config file | `config.yaml` in `~/.check-yg/` | |
-| Checkpoint dir | `{task_id}/` under `checkpoints/` | `task_20240601/` |
-| Doc checkpoint | `doc_{md5_hash}.json` | `doc_a1b2c3d4e5f6g7h8.json` |
-| Task meta | `task.json` | |
-| Review file | `{timestamp}.json` | `20240601_143022.json` |
-| Excel output | `extract_{task_id}.json` in `data/reports/` | |
+| 表名 | 复数 snake_case | `review_matches`, `task_logs` |
+| 列名 | snake_case | `created_at`, `record_payload` |
+| 模型类 | PascalCase 单数 | `ReviewMatch`, `TaskLog` |
+| Alembic revision | `<date>_<rev>_<slug>.py` | `20260622_2db1..._baseline_initial_schema.py` |
+| JSONB 列 | 用 `jsonb()` 辅助 | `mapped_column(jsonb(), nullable=True)` |
 
 ---
 
 ## Common Mistakes
 
-1. **Forgetting `wb.close()` on Excel workbooks** — always use `try/finally` or context-style cleanup
-2. **Not using `encoding='utf-8'`** for JSON/YAML reads/writes — Chinese text will corrupt without it
-3. **Writing to checkpoints without `ensure_ascii=False`** — causes escaped Unicode in JSON files
-4. **Not handling missing checkpoint files gracefully** — `load_document_state()` must return `None`, not crash
-5. **Using `openpyxl.load_workbook()` without `read_only=True`** for read-only operations — wastes memory on large files
-6. **Treating `document_folder` as `str`** — it was changed to `List[str]` for append-folder support. Always use `_normalize_document_folder()` to handle backward compat (old data stores it as `str`)
+1. **直接用 `JSON` 或 `JSONB` 而非 `jsonb()`** — sqlite 测试库会不兼容。始终用 `app/models/_types.jsonb()`。
+2. **生产改 schema 不走 Alembic** — `init_db()` 生产路径只跑 `alembic upgrade head`，不 `create_all`。改模型后必须生成并应用迁移。
+3. **新模型不登记到 `migrations/env.py`** — Alembic autogenerate 发现不了未 import 的模型，迁移会漏表。
+4. **在 async 事件循环里嵌套 `asyncio.run`** — Alembic env.py 用同步 psycopg 驱动；`_run_alembic_upgrade` 用线程池跑同步 alembic 命令，不要在 async 里直接调同步 alembic。
+5. **Forgetting `wb.close()` on Excel workbooks** — always use `try/finally` or context-style cleanup.
+6. **Not using `encoding='utf-8'`** for JSON reads/writes — Chinese text will corrupt without it.
+7. **Writing checkpoints without `ensure_ascii=False`** — causes escaped Unicode in JSON files.
+8. **Not handling missing checkpoint files gracefully** — `load` must return `None`, not crash.
 
 ---
 

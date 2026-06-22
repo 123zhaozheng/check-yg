@@ -6,11 +6,16 @@
 
 ## Overview
 
-This is a **PyQt5 desktop application** (员工-客户金额往来审计系统), not a web service.
-The "backend" layer is a Python package under `src/` providing core logic, parsers, LLM clients,
-and export utilities — all consumed by the UI layer (`src/ui/`).
+员工-客户金额往来审计系统（智行卫士）的 **FastAPI 后端**，位于 `backend/`。
+提供 REST API + WebSocket + 多渠道流水文件的解析/清洗/标准化/AI 分析/报告能力，
+由 SPA 前端（`frontend/`，Vite+React+TanStack）消费。生产同源部署：FastAPI
+挂 `frontend/dist` 静态 + SPA fallback。
 
-Entry point: `main.py` at the repo root.
+入口：`backend/app/main.py`（FastAPI 应用装配 + lifespan init_db + 路由注册 +
+静态挂载）。运行：`uvicorn app.main:app`（从 `backend/` 启动）。
+
+技术栈：FastAPI + SQLAlchemy 2.x async + PostgreSQL（asyncpg 运行时 /
+psycopg 供 Alembic 同步迁移）+ Alembic + pydantic-ai（LLM）+ JWT cookie 鉴权。
 
 ---
 
@@ -18,51 +23,47 @@ Entry point: `main.py` at the repo root.
 
 ```
 check-yg/
-├── main.py                    # Application entry point (PyQt5 bootstrap)
-├── requirements.txt           # Dependencies
-├── AGENTS.md                  # Agent instructions (Trellis managed)
-├── src/                       # Main source package
-│   ├── __init__.py
-│   ├── config.py              # Config singleton (YAML-backed)
-│   ├── core/                  # Business logic (no UI, no I/O side-effects beyond checkpoint files)
-│   │   ├── checkpoint_manager.py   # Task checkpoint persistence
-│   │   ├── customer.py             # Customer list management
-│   │   ├── extraction_result.py    # Extraction result dataclass
-│   │   ├── extractor.py            # V1 extractor (legacy wrapper)
-│   │   ├── flow_extractor_v2.py    # V2 AI-powered two-stage extractor
-│   │   ├── matcher.py              # Name matching (exact/desensitized/fuzzy)
-│   │   ├── progress_manager.py     # Progress reporting interface
-│   │   ├── review_history.py       # Review result persistence
-│   │   ├── reviewer.py             # Simplified review (no LLM, pure matching)
-│   │   ├── scanner.py              # Document file scanner
-│   │   └── task_manager.py         # High-level task orchestration
-│   ├── export_flows/               # Export and skill bundle generation
-│   │   ├── skill_export.py             # Single-task skill export
-│   │   ├── board_skill_export.py       # Multi-task board skill export
-│   │   ├── skill_assets/scripts/       # Export script templates
-│   │   └── board_skill_assets/scripts/ # Board export script templates
-│   ├── llm/                  # LLM integration layer
-│   │   ├── audit_agent.py          # Report generation and QA via LLM
-│   │   ├── data_normalizer.py      # AI row normalization
-│   │   └── flow_table_classifier.py  # AI table classification
-│   ├── parsers/              # Document parsers
-│   │   ├── base.py                 # BaseParser ABC + FlowRecord/RawTable dataclasses
-│   │   ├── docx_parser.py          # DOCX parser
-│   │   ├── excel_parser.py         # Excel parser
-│   │   ├── html_parser.py          # HTML table parser
-│   │   └── pdf_parser.py           # MinerU-based PDF parser
-│   └── ui/                   # PyQt5 UI layer
-│       ├── __init__.py
-│       ├── main_window.py          # MainWindow + SettingsDialog
-│       ├── styles.py               # UI style constants
-│       ├── pages/                  # One file per navigation page
-│       └── widgets/                # Reusable UI widgets
-└── tests/                    # Unit tests
-    ├── test_checkpoint_and_task_manager.py
-    ├── test_extraction_result.py
-    ├── test_flow_extractor_v2_and_reviewer.py
-    ├── test_pdf_parser.py
-    └── test_review_history.py
+├── backend/                      # FastAPI 后端
+│   ├── pyproject.toml            # 依赖（uv 管理）
+│   ├── alembic.ini               # Alembic 配置（连接串由 env.py 从 settings 注入）
+│   ├── migrations/               # Alembic 迁移
+│   │   ├── env.py                # 同步 psycopg 驱动，target_metadata=Base.metadata
+│   │   ├── script.py.mako
+│   │   └── versions/             # baseline + 后续迁移
+│   └── app/
+│       ├── main.py               # FastAPI 应用：lifespan init_db、路由注册、
+│       │                         # CORS、frontend/dist 静态挂载 + SPA fallback
+│       ├── config.py             # pydantic-settings Settings（DATABASE_URL、
+│       │                         # JWT_*、LLM_*、MINERU_*、FRONTEND_DIST 等）
+│       ├── database.py           # async engine + session + init_db
+│       │                         # （pg 走 Alembic upgrade head，sqlite 测试走 create_all）
+│       ├── auth/                 # 鉴权：jwt、password、dependencies、permissions
+│       ├── llm/                  # LLM 集成（pydantic-ai）
+│       │   ├── agent_factory.py  # 模块级单例工厂（OpenAIChatModel+OpenAIProvider）
+│       │   ├── types.py          # pydantic output_type：FlowClassification/
+│       │   │                     # NormalizedRow+NormalizedRows/DocumentPortrait
+│       │   ├── classifier.py     # 流水表格识别（output_type=FlowClassification）
+│       │   ├── normalizer.py     # 行标准化（output_type=NormalizedRows + output_validator）
+│       │   └── portrait.py       # 文档画像（output_type=DocumentPortrait）
+│       ├── parsers/              # 文档解析：base（FlowRecord/RawTable）、pdf（MinerU）、
+│       │                         # excel、docx、html
+│       ├── models/               # SQLAlchemy 模型（13 表）+ _types.py（jsonb() 辅助：
+│       │                         # JSONB().with_variant(JSON(),"sqlite") 双方言）
+│       ├── routers/              # FastAPI 路由：auth、users、tasks、customers、
+│       │                         # settings、reviews、reports、exports
+│       ├── schemas/              # pydantic 请求/响应 schema
+│       ├── services/             # 业务服务（extraction 流水线、review、export 等）
+│       │   └── extraction/
+│       │       └── extractor.py  # FlowExtractor：parse→classify→normalize 三阶段
+│       ├── websocket/            # WebSocket 通知（任务进度推送）
+│       └── core/                 # 共享工具（如 matcher）
+├── frontend/                     # SPA 前端（Vite+React18+TanStack Router/Query+
+│                                 # Tailwind4+lightningcss(chrome108)+shadcn 风格）
+├── archive/web-legacy/           # 旧 web/ 归档（react-router 7 SSR，已弃用）
+├── stitch_/                      # 设计稿源文件（单色设计系统 + 7 页 code.html）
+├── docs/                         # 交付规划 + pydantic-ai 规范落地参考
+├── docker-compose.yml            # 本地 PostgreSQL（postgres:16）
+└── .trellis/                     # Trellis 任务管理
 ```
 
 ---
@@ -73,20 +74,23 @@ check-yg/
 
 | Feature type | Directory | Example |
 |---|---|---|
-| Core business logic (no UI) | `src/core/` | `reviewer.py`, `matcher.py` |
-| Document parsing | `src/parsers/` | `excel_parser.py` |
-| LLM/AI integration | `src/llm/` | `audit_agent.py` |
-| UI pages | `src/ui/pages/` | `home_page.py` |
-| UI widgets (reusable) | `src/ui/widgets/` | Custom PyQt5 widgets |
-| Export/bundle logic | `src/export_flows/` | `skill_export.py` |
-| Tests | `tests/` | `test_review_history.py` |
+| FastAPI 路由 | `backend/app/routers/` | `tasks.py`, `auth.py` |
+| 业务服务 | `backend/app/services/` | `extraction/extractor.py` |
+| 文档解析 | `backend/app/parsers/` | `excel_parser.py` |
+| LLM/AI（pydantic-ai） | `backend/app/llm/` | `normalizer.py` |
+| SQLAlchemy 模型 | `backend/app/models/` | `task.py`, `review.py` |
+| pydantic schema | `backend/app/schemas/` | `auth.py` |
+| 鉴权 | `backend/app/auth/` | `dependencies.py`, `jwt.py` |
+| DB 迁移 | `backend/migrations/versions/` | `20260622_..._baseline.py` |
+| 测试 | `backend/tests/` | `test_llm_parity.py` |
 
 ### Rules
 
-- **`src/core/` must not import from `src/ui/`**. Core is UI-independent.
-- **New parsers** subclass `BaseParser` (see `src/parsers/base.py`) and set `SUPPORTED_EXTENSIONS`.
-- **New UI pages** follow the pattern in `src/ui/pages/`: one file per page, each exporting a `*Page(QWidget)` class.
-- **LLM modules** access config via `get_config()`, never hardcode API URLs.
+- **路由层薄**：`routers/` 只做请求解析 + 调 service + 返 schema，业务逻辑进 `services/`。
+- **新模型**：在 `backend/app/models/` 加文件，`__init__.py` 导出，并在 `migrations/env.py` 的 import 列表里登记（确保 Alembic autogenerate 能发现）。
+- **JSON 列**：用 `app/models/_types.py` 的 `jsonb()`（pg=JSONB / sqlite=JSON），不要直接用 `JSON` 或 `JSONB`。
+- **LLM 模块**：通过 `agent_factory.get_agent()` 取模块级单例，复用 `settings.LLM_*`；提示词逐字搬进 `instructions`（硬底线：提示词保真），`output_type` 用 `app/llm/types.py` 的 pydantic 模型。
+- **鉴权**：token 优先从 httpOnly cookie 读（`get_current_user`），`Authorization: Bearer` header 仅过渡兼容。
 
 ---
 
@@ -94,22 +98,22 @@ check-yg/
 
 | Item | Convention | Example |
 |---|---|---|
-| Python files | `snake_case.py` | `flow_extractor_v2.py` |
-| Classes | `PascalCase` | `FlowExtractorV2`, `ReviewMatch` |
-| Dataclasses | `PascalCase`, noun phrase | `FlowRecord`, `RawTable`, `ReviewResult` |
-| Config keys | `snake_case`, dot-separated for access | `flow_extraction.batch_size` |
-| Config properties | `snake_case` with `@property` | `flow_batch_size` |
-| Test files | `test_<module_name>.py` | `test_pdf_parser.py` |
-| UI page files | `<name>_page.py` | `home_page.py`, `extract_page.py` |
+| Python files | `snake_case.py` | `flow_extractor.py` |
+| Classes | `PascalCase` | `FlowExtractor`, `ReviewMatch` |
+| Dataclasses / pydantic models | `PascalCase`, noun phrase | `FlowRecord`, `NormalizedRow` |
+| Config keys (env) | `UPPER_SNAKE` | `LLM_API_ENDPOINT`, `DATABASE_URL` |
+| Runtime settings keys (DB) | `lower.dot` | `llm.base_url`, `mineru.mode` |
+| Test files | `test_<module>.py` | `test_llm_parity.py` |
+| Alembic revisions | `<date>_<rev>_<slug>.py` | `20260622_2db1..._baseline_initial_schema.py` |
 | Chinese strings | Use Chinese directly in string literals | `"密码错误"`, `"精确匹配"` |
 
 ---
 
 ## Examples
 
-- Well-organized core module: `src/core/reviewer.py` — single responsibility (review logic only), uses dataclasses for results, delegates matching to `NameMatcher`
-- Clean parser pattern: `src/parsers/base.py` — ABC with `SUPPORTED_EXTENSIONS` class var and `extract_raw_tables()` abstract method
-- Config singleton: `src/config.py` — `get_config()` function returns global instance, dot-notation access, `@property` shortcuts
+- 模块级 LLM 单例：`backend/app/llm/agent_factory.py` — `get_agent(output_type, instructions, *, base_url, api_key, model, timeout, max_tokens)` 按 params 缓存，`OpenAIProvider(openai_client=AsyncOpenAI(max_retries=3, http_client=httpx.AsyncClient(trust_env=False)))`，`base_url` 强制 `/v1` 结尾。
+- 双方言 JSON 列：`backend/app/models/_types.py` — `jsonb()` 返回 `JSONB().with_variant(JSON(), "sqlite")`，pg 用 JSONB / sqlite 测试用 JSON。
+- cookie 鉴权：`backend/app/auth/dependencies.py` — `_extract_access_token` 先读 `request.cookies["access_token"]`，回退 `Authorization: Bearer`。
 
 ---
 
@@ -185,27 +189,29 @@ await runner.start(task_id=task.id, owner_id=current_user.id, document_folder=fo
 
 ---
 
-## Scenario: FastAPI Auth Token Refresh Boundary
+## Scenario: FastAPI Auth Cookie Boundary
 
 ### 1. Scope / Trigger
 
-- Trigger: React route guards and API retry logic depend on backend access/refresh token semantics.
-- Use this contract when changing `backend/app/auth/`, `backend/app/routers/auth.py`, `web/app/lib/api.ts`, or `web/app/hooks/use-auth.ts`.
+- Trigger: SPA 路由守卫与 API 重试依赖后端 access/refresh token 语义。
+- Use this contract when changing `backend/app/auth/`, `backend/app/routers/auth.py`,
+  `backend/app/schemas/auth.py`, or `frontend/src/lib/api.ts`.
 
 ### 2. Signatures
 
-- `POST /api/auth/login` accepts `username` and `password`.
-- `POST /api/auth/refresh` accepts `refresh_token`.
-- `GET /api/auth/me` requires a valid access token.
+- `POST /api/auth/login` accepts `username` and `password`; sets `access_token` + `refresh_token` httpOnly cookies.
+- `POST /api/auth/refresh` reads `refresh_token` from cookie first, falls back to body; rotates both cookies.
+- `POST /api/auth/logout` clears both cookies.
+- `GET /api/auth/me` requires a valid access token (cookie or `Authorization: Bearer` header).
 
 ### 3. Contracts
 
-- Login response includes `access_token`, `refresh_token`, and `token_type="bearer"`.
-- Access tokens carry `type="access"` and are accepted by normal API dependencies.
+- Cookies: `HttpOnly`, `SameSite=Strict`, `Path=/`（同源前提由 FastAPI 挂 `frontend/dist` 保证）。
+- Login/refresh response 仍含 `access_token`/`refresh_token`/`token_type="bearer"`（过渡期前端可读 JSON，但权威来源是 cookie）。
+- Access tokens carry `type="access"` and are accepted by `get_current_user` (cookie 优先，header 兼容).
 - Refresh tokens carry `type="refresh"` and are accepted only by `/api/auth/refresh`.
-- The frontend stores both tokens and may retry a 401 request once by calling `/api/auth/refresh`.
-- `/api/auth/login` and `/api/auth/refresh` must not trigger recursive refresh attempts in the frontend API client.
-- `/api/auth/me` must remain eligible for refresh retry so route guards can recover from an expired access token.
+- `get_current_user` 优先读 `request.cookies["access_token"]`，回退 `Authorization: Bearer`（API 测试与过渡兼容）。
+- 前端 `apiFetch` 发 `credentials: "include"`；401 跳 `/login?redirect=...`（login/refresh 端点自身不重试）。
 
 ### 4. Validation & Error Matrix
 
@@ -213,41 +219,23 @@ await runner.start(task_id=task.id, owner_id=current_user.id, document_folder=fo
 - Disabled user login -> HTTP 403.
 - Refresh endpoint receives access token -> HTTP 401.
 - Normal API dependency receives refresh token -> HTTP 401.
-- Expired access token -> HTTP 401; frontend may refresh and retry if a refresh token exists.
-- Missing refresh token in browser storage -> clear stored auth and surface the original 401.
+- Expired access token -> HTTP 401; frontend 跳 /login（cookie 模式下不再做客户端 refresh 重试，由用户重新登录；如需静默续期可在前端调 /refresh）。
+- Missing refresh token (cookie + body 都无) on /refresh -> HTTP 401.
 
 ### 5. Good/Base/Bad Cases
 
-- Good: login stores both tokens, `/auth/me` succeeds, later expired access token is refreshed and the original request is retried.
-- Base: no token in browser storage; route guard redirects to login.
-- Bad: frontend skips refresh for `/auth/me`; route guard logs the user out even though the refresh token is still valid.
+- Good: login Set-Cookie，`/auth/me` 读 cookie 成功，refresh 读 cookie 轮转，logout 清 cookie，后续 /me 401。
+- Base: 无 cookie；路由守卫跳 /login。
+- Bad: 前端 fetch 不带 `credentials: "include"`；浏览器不发 cookie，/me 永远 401。
 
 ### 6. Tests Required
 
-- API test asserts login returns both token types.
-- API test asserts refresh rotates tokens.
+- API test asserts login returns both token types AND sets both httpOnly+SameSite=Strict cookies.
+- API test asserts refresh rotates tokens (body + cookie 两种路径).
 - API test asserts refresh rejects access tokens.
 - API test asserts `/auth/me` rejects refresh tokens.
 - API test asserts expired access tokens are rejected.
-
-### 7. Wrong vs Correct
-
-#### Wrong
-
-```typescript
-if (response.status === 401 && !endpoint.includes("/api/auth/")) {
-  await refreshAccessToken()
-}
-```
-
-#### Correct
-
-```typescript
-const isRefreshEndpoint = endpoint === "/api/auth/login" || endpoint === "/api/auth/refresh"
-if (response.status === 401 && !isRefreshEndpoint) {
-  await refreshAccessToken()
-}
-```
+- API test asserts /me reads access_token from cookie; /refresh reads refresh_token from cookie; /logout clears cookies; /me after logout 401.
 
 ---
 
@@ -255,7 +243,7 @@ if (response.status === 401 && !isRefreshEndpoint) {
 
 ### 1. Scope / Trigger
 - Trigger: web extraction must parse heterogeneous PDFs (scanned, multi-column, encrypted) with the same production semantics as the desktop `src` pipeline, driven by runtime settings rather than hardcoded values.
-- Use this contract when changing `backend/app/parsers/pdf_parser.py`, `backend/app/services/settings_service.py`, `backend/app/services/extraction/extractor.py`, or `web/app/routes/settings.tsx`.
+- Use this contract when changing `backend/app/parsers/pdf_parser.py`, `backend/app/services/settings_service.py`, `backend/app/services/extraction/extractor.py`, or `frontend/src/routes/__authenticated/settings.tsx`.
 
 ### 2. Signatures
 - `PDFParser(mineru_mode, mineru_url, mineru_public_url, mineru_public_api_key, timeout)` — chooses `MinerUClient` (local) or `PublicMinerUClient` (public agent) from `mineru_mode`.
