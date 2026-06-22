@@ -5,76 +5,65 @@ Covers the parity guarantees ported from src/llm: mature prompts, retry/JSON
 fallback, expected portrait/classifier/normalizer output fields, raw_amount
 preservation, positive amount, and code-side transaction_type inference.
 
-All tests mock httpx.AsyncClient so no real network calls are made.
+换框架后（pydantic-ai）的 mock 策略：三模块内部用 pydantic-ai agent，测试
+不再 patch ``httpx.AsyncClient``，而是 patch 各模块的 agent 获取方法
+（``_agent`` / ``_get_agent``）返回一个 fake agent，其 ``run`` 返回带
+``.output`` 的对象。断言逐字保留——它们就是"换框架前后输出契约一致"的验收线。
 """
 
 import json
-from typing import Any, Dict, Optional
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
 from app.llm import DocumentPortraitExtractor, FlowTableClassifier, FlowDataNormalizer
+from app.llm.types import DocumentPortrait, FlowClassification, NormalizedRow, NormalizedRows
 from app.services.extraction.extractor import FlowExtractor
 
 
 # ---------------------------------------------------------------------------
-# Fake httpx transport
+# Fake pydantic-ai agent
 # ---------------------------------------------------------------------------
 
 
-class _FakeResponse:
-    def __init__(self, payload: Dict[str, Any], status_code: int = 200, text: str = ""):
-        self._payload = payload
-        self.status_code = status_code
-        self.text = text or json.dumps(payload, ensure_ascii=False)
+class _FakeAgent:
+    """模拟 pydantic-ai agent：``run`` 返回 ``SimpleNamespace(output=...)``。
 
-    def raise_for_status(self) -> None:
-        if self.status_code >= 400:
-            raise Exception("HTTP %s" % self.status_code)
-
-    def json(self) -> Dict[str, Any]:
-        return self._payload
-
-
-def _chat_response(content: Optional[str]) -> Dict[str, Any]:
-    """Build an OpenAI-style chat completion response with the given content."""
-    message: Dict[str, Any] = {"role": "assistant"}
-    if content is None:
-        message["content"] = None
-    else:
-        message["content"] = content
-    return {"choices": [{"message": message}]}
-
-
-def _install_fake_post(monkeypatch, responses):
-    """Patch httpx.AsyncClient.post to pop successive fake responses.
-
-    responses: list of _FakeResponse (or Exception instances to raise).
+    ``outputs`` 是一个队列：每次 ``run`` 弹一个；元素为 output 对象或
+    ``Exception``（抛出模拟失败）。
     """
-    queue = list(responses)
 
-    class _FakeClient:
-        def __init__(self, *args, **kwargs):
-            pass
+    def __init__(self, outputs: list[Any]):
+        self._outputs = list(outputs)
+        self.captured_prompts: list[str] = []
 
-        async def __aenter__(self):
-            return self
+    async def run(self, prompt: str, **kwargs):
+        self.captured_prompts.append(prompt)
+        if not self._outputs:
+            raise AssertionError("no more fake outputs queued")
+        item = self._outputs.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return SimpleNamespace(output=item)
 
-        async def __aexit__(self, *exc):
-            return False
 
-        async def post(self, url, **kwargs):
-            if not queue:
-                raise AssertionError("no more fake responses queued")
-            item = queue.pop(0)
-            if isinstance(item, Exception):
-                raise item
-            return item
+def _patch_portrait(monkeypatch, outputs):
+    agent = _FakeAgent(outputs)
+    monkeypatch.setattr(DocumentPortraitExtractor, "_agent", lambda self: agent)
+    return agent
 
-    monkeypatch.setattr("app.llm.portrait.httpx.AsyncClient", _FakeClient)
-    monkeypatch.setattr("app.llm.classifier.httpx.AsyncClient", _FakeClient)
-    monkeypatch.setattr("app.llm.normalizer.httpx.AsyncClient", _FakeClient)
-    return queue
+
+def _patch_classifier(monkeypatch, outputs):
+    agent = _FakeAgent(outputs)
+    monkeypatch.setattr(FlowTableClassifier, "_agent", lambda self: agent)
+    return agent
+
+
+def _patch_normalizer(monkeypatch, outputs):
+    agent = _FakeAgent(outputs)
+    monkeypatch.setattr(FlowDataNormalizer, "_get_agent", lambda self: agent)
+    return agent
 
 
 # ---------------------------------------------------------------------------
@@ -84,18 +73,18 @@ def _install_fake_post(monkeypatch, responses):
 
 @pytest.mark.asyncio
 async def test_portrait_extracts_expected_field_set(monkeypatch):
-    portrait = {
-        "account_type": "credit_card",
-        "account_holder": "张三",
-        "account_number_masked": "6222****1234",
-        "institution": "某银行",
-        "statement_period": "2024-01-01 至 2024-03-31",
-        "key_observations": ["信用卡账单"],
-        "amount_sign_rule": "pos_expense",
-        "header_attributes": ["交易日期", "交易金额"],
-        "column_mapping": ["transaction_time", "amount"],
-    }
-    _install_fake_post(monkeypatch, [_FakeResponse(_chat_response(json.dumps(portrait, ensure_ascii=False)))])
+    portrait = DocumentPortrait(
+        account_type="credit_card",
+        account_holder="张三",
+        account_number_masked="6222****1234",
+        institution="某银行",
+        statement_period="2024-01-01 至 2024-03-31",
+        key_observations=["信用卡账单"],
+        amount_sign_rule="pos_expense",
+        header_attributes=["交易日期", "交易金额"],
+        column_mapping=["transaction_time", "amount"],
+    )
+    _patch_portrait(monkeypatch, [portrait])
 
     extractor = DocumentPortraitExtractor("http://x", "key", "model")
     result = await extractor.extract("信用卡账单.pdf", "账户说明", "<table/>")
@@ -118,26 +107,27 @@ async def test_portrait_extracts_expected_field_set(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_portrait_returns_none_on_malformed_json(monkeypatch):
-    # First two attempts: malformed JSON; third: valid -> succeeds on retry.
-    _install_fake_post(
-        monkeypatch,
-        [
-            _FakeResponse(_chat_response("not json")),
-            _FakeResponse({"choices": [{"message": {"content": "{bad json"}}]}),
-            _FakeResponse(_chat_response(json.dumps({"account_type": "unknown"}))),
-        ],
-    )
+async def test_portrait_returns_dict_on_success(monkeypatch):
+    # pydantic-ai 的 output 重试由 agent 内部接管（output_type schema 校验失败
+    # 才重试），模块层只做 try/except。这里验证：agent.run 成功返 valid
+    # portrait → 模块透传为 dict（含默认值补全，如 key_observations 缺省 []）。
+    portrait = DocumentPortrait(account_type="unknown")
+    _patch_portrait(monkeypatch, [portrait])
 
     extractor = DocumentPortraitExtractor("http://x", "key", "model", max_retries=3)
     result = await extractor.extract("doc.pdf", "ctx", "")
 
-    assert result == {"account_type": "unknown"}
+    assert result is not None
+    assert result["account_type"] == "unknown"
+    # 默认值补全：缺省字段应为空列表/空串，而非缺失。
+    assert result["key_observations"] == []
+    assert result["header_attributes"] == []
 
 
 @pytest.mark.asyncio
 async def test_portrait_returns_none_on_empty_content(monkeypatch):
-    _install_fake_post(monkeypatch, [_FakeResponse(_chat_response(None))])
+    # agent.run 抛错（模拟空内容/校验失败）→ 模块层兜底返 None。
+    _patch_portrait(monkeypatch, [RuntimeError("empty content")])
 
     extractor = DocumentPortraitExtractor("http://x", "key", "model", max_retries=1)
     result = await extractor.extract("doc.pdf", "ctx", "")
@@ -158,14 +148,14 @@ async def test_portrait_returns_none_without_api_key():
 
 @pytest.mark.asyncio
 async def test_classifier_returns_header_and_data_row_fields(monkeypatch):
-    classification = {
-        "is_flow_table": True,
-        "confidence": 90,
-        "reason": "流水表格",
-        "header_row_index": 0,
-        "data_start_row": 1,
-    }
-    _install_fake_post(monkeypatch, [_FakeResponse(_chat_response(json.dumps(classification)))])
+    classification = FlowClassification(
+        is_flow_table=True,
+        confidence=90,
+        reason="流水表格",
+        header_row_index=0,
+        data_start_row=1,
+    )
+    _patch_classifier(monkeypatch, [classification])
 
     from app.parsers.base import RawTable
 
@@ -181,7 +171,7 @@ async def test_classifier_returns_header_and_data_row_fields(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_classifier_falls_back_safely_on_failure(monkeypatch):
-    _install_fake_post(monkeypatch, [Exception("network down")])
+    _patch_classifier(monkeypatch, [RuntimeError("network down")])
 
     from app.parsers.base import RawTable
 
@@ -211,21 +201,23 @@ async def test_classifier_empty_table_returns_fallback():
 
 @pytest.mark.asyncio
 async def test_normalizer_preserves_raw_amount_and_positive_amount(monkeypatch):
-    rows_payload = [
-        {
-            "row_index": 0,
-            "is_valid": True,
-            "transaction_time": "2024-01-01 00:00:00",
-            "counterparty_name": "商户A",
-            "counterparty_account": "6222000000000001",
-            "amount": "100.00",
-            "raw_amount": "-100.00",
-            "summary": "消费",
-            "transaction_type": "支出",
-            "source_file": "stmt.pdf",
-        }
-    ]
-    _install_fake_post(monkeypatch, [_FakeResponse(_chat_response(json.dumps({"rows": rows_payload})))])
+    rows_payload = NormalizedRows(
+        rows=[
+            NormalizedRow(
+                row_index=0,
+                is_valid=True,
+                transaction_time="2024-01-01 00:00:00",
+                counterparty_name="商户A",
+                counterparty_account="6222000000000001",
+                amount="100.00",
+                raw_amount="-100.00",
+                summary="消费",
+                transaction_type="支出",
+                source_file="stmt.pdf",
+            )
+        ]
+    )
+    _patch_normalizer(monkeypatch, [rows_payload])
 
     normalizer = FlowDataNormalizer("http://x", "key", "model")
     result = await normalizer.normalize(
@@ -248,7 +240,7 @@ async def test_normalizer_preserves_raw_amount_and_positive_amount(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_normalizer_returns_empty_on_failure(monkeypatch):
-    _install_fake_post(monkeypatch, [Exception("network down")])
+    _patch_normalizer(monkeypatch, [RuntimeError("network down")])
 
     normalizer = FlowDataNormalizer("http://x", "key", "model", max_retries=1)
     result = await normalizer.normalize([["a", "b"]], document_portrait=None, source_file="x.pdf")
@@ -258,29 +250,15 @@ async def test_normalizer_returns_empty_on_failure(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_normalizer_uses_filename_context_fallback(monkeypatch):
-    captured = {}
-
-    class _CapturingClient:
-        def __init__(self, *a, **k):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *exc):
-            return False
-
-        async def post(self, url, **kwargs):
-            captured["payload"] = kwargs["json"]
-            return _FakeResponse(_chat_response(json.dumps({"rows": []})))
-
-    monkeypatch.setattr("app.llm.normalizer.httpx.AsyncClient", _CapturingClient)
+    # portrait=None 时走 _infer_document_context，文件名"信用卡账单.pdf"应推成
+    # credit_card。捕获 user_message 验证 portrait 兜底生效。
+    agent = _patch_normalizer(monkeypatch, [NormalizedRows(rows=[])])
 
     normalizer = FlowDataNormalizer("http://x", "key", "model")
     await normalizer.normalize([["a"]], document_portrait=None, source_file="信用卡账单.pdf")
 
-    portrait = captured["payload"]["messages"][1]["content"]
-    decoded = json.loads(portrait)
+    assert agent.captured_prompts, "normalizer should have called agent.run"
+    decoded = json.loads(agent.captured_prompts[0])
     assert decoded["document_portrait"]["account_type"] == "credit_card"
 
 

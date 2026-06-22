@@ -1,16 +1,18 @@
 # -*- coding: utf-8 -*-
-"""Document portrait extractor using LLM.
+"""Document portrait extractor using pydantic-ai.
 
-Ports the mature ``src/llm/document_portrait.py`` prompt and fallback behavior
-into the FastAPI backend while keeping the backend's async ``httpx`` transport
-and the ``extract()`` contract consumed by the extraction pipeline.
+提示词逐字搬运自 legacy ``src/llm/document_portrait.py``（硬底线：提示词
+保真），只把调用层从自写 httpx 换成 pydantic-ai agent（output_type=
+DocumentPortrait）。``extract()`` 对外契约不变：成功返 dict，失败返 None。
+落地遵循 ``docs/research/pydantic-ai-conventions.md`` (v1.107.0)。
 """
 
 import json
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
-import httpx
+from app.llm.agent_factory import get_agent
+from app.llm.types import DocumentPortrait
 
 logger = logging.getLogger(__name__)
 
@@ -90,93 +92,40 @@ PORTRAIT_FIELDS = (
     "column_mapping",
 )
 
+_MAX_TOKENS_PORTRAIT = 1500
+
 
 class DocumentPortraitExtractor:
-    """Extract a structured document portrait using an OpenAI-compatible LLM.
+    """Extract a structured document portrait using a pydantic-ai agent.
 
     Output contract: a dict with the keys in :data:`PORTRAIT_FIELDS`, or ``None``
-    when extraction fails (network error, malformed JSON, or empty content).
+    when extraction fails (network error, invalid output, or empty content).
     """
 
     def __init__(self, api_url: str, api_key: str, model: str, timeout: int = 60, max_retries: int = 3):
-        self.api_url = api_url.rstrip("/")
+        self.api_url = api_url
         self.api_key = api_key
         self.model = model
         self.timeout = timeout
         self.max_retries = max_retries
 
-    async def _post(
-        self,
-        system_prompt: str,
-        user_message: str,
-    ) -> Optional[Dict[str, Any]]:
-        """POST a chat completion and parse JSON content with retry + fallback."""
-        if not self.api_key:
-            logger.warning("No API key configured for portrait extractor")
-            return None
-
-        url = f"{self.api_url}/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
-        payload = {
-            "model": self.model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message},
-            ],
-            "temperature": 0.1,
-            "max_tokens": 1500,
-            "response_format": {"type": "json_object"},
-        }
-
-        response = None
-        for attempt in range(self.max_retries):
-            try:
-                async with httpx.AsyncClient(timeout=self.timeout, trust_env=False) as client:
-                    response = await client.post(url, headers=headers, json=payload)
-                response.raise_for_status()
-                data = response.json()
-                message = data["choices"][0]["message"]
-                content = (
-                    message.get("content")
-                    or message.get("reasoning_content")
-                    or message.get("reasoning")
-                )
-                if not content:
-                    raise ValueError(
-                        "Empty message content: %s"
-                        % json.dumps(message, ensure_ascii=False)[:500]
-                    )
-                return json.loads(content)
-            except json.JSONDecodeError as exc:
-                text = ""
-                try:
-                    text = response.text if response is not None else ""
-                except Exception:
-                    text = ""
-                logger.warning(
-                    "Portrait JSON decode failed: %s; response=%s",
-                    exc,
-                    text[:500],
-                )
-            except Exception as exc:
-                logger.warning(
-                    "Portrait request failed (attempt %d/%d): %s",
-                    attempt + 1,
-                    self.max_retries,
-                    exc,
-                )
-
-        return None
+    def _agent(self):
+        return get_agent(
+            DocumentPortrait,
+            SYSTEM_PROMPT_DOCUMENT_PORTRAIT,
+            base_url=self.api_url,
+            api_key=self.api_key,
+            model=self.model,
+            timeout=self.timeout,
+            max_tokens=_MAX_TOKENS_PORTRAIT,
+        )
 
     async def extract(
         self,
         document_name: str,
         non_table_context: str,
         content_preview: str = "",
-    ) -> Optional[Dict[str, Any]]:
+    ) -> Optional[dict[str, Any]]:
         """
         提取文档结构化画像
 
@@ -206,14 +155,20 @@ class DocumentPortraitExtractor:
             ensure_ascii=False,
         )
 
-        result = await self._post(SYSTEM_PROMPT_DOCUMENT_PORTRAIT, user_message)
-        if result is not None:
-            logger.info(
-                "文档画像提取成功: document_name=%s, 画像结果=%s",
-                document_name,
-                json.dumps(result, ensure_ascii=False),
-            )
-        return result
+        try:
+            result = await self._agent().run(user_message)
+        except Exception as exc:
+            logger.warning("Portrait agent.run 失败: document_name=%s, %s", document_name, exc)
+            return None
+
+        portrait: DocumentPortrait = result.output
+        data = portrait.model_dump()
+        logger.info(
+            "文档画像提取成功: document_name=%s, 画像结果=%s",
+            document_name,
+            json.dumps(data, ensure_ascii=False),
+        )
+        return data
 
     def is_available(self) -> bool:
         return bool(self.api_key)

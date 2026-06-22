@@ -1,0 +1,21 @@
+# 本地联调用 PostgreSQL。生产对接客户内网 pg 实例（B1 范围内配好连接字符串可切换）。
+services:
+  postgres:
+    image: postgres:16
+    container_name: check-yg-pg
+    environment:
+      POSTGRES_USER: check_yg
+      POSTGRES_PASSWORD: check_yg
+      POSTGRES_DB: check_yg
+    ports:
+      - "5432:5432"
+    volumes:
+      - check-yg-pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U check_yg -d check_yg"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  check-yg-pg-data:

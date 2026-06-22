@@ -1,0 +1,66 @@
+"""pydantic-ai ``output_type`` 模型 —— 三模块的结构化输出契约。
+
+为什么不复用 ``app.parsers.base.FlowRecord``：那个是 ``@dataclass``，且缺
+``raw_amount`` / ``is_valid`` / ``row_index`` 三个 LLM 实际输出的字段。硬塞会
+丢字段，违反"清洗不删减"底线。这里用 pydantic ``BaseModel`` 作为
+``output_type``，agent 返回后再由 extractor 映射成 ``FlowRecord``。
+
+字段定义逐字对齐三模块旧提示词的"返回JSON格式"段，提示词本身不动。
+"""
+
+from typing import Literal
+
+from pydantic import BaseModel, Field
+
+
+class FlowClassification(BaseModel):
+    """classifier 输出：是否流水表格。对齐 classifier 提示词返回格式。"""
+
+    is_flow_table: bool
+    confidence: int = Field(ge=0, le=100)
+    reason: str = ""
+    header_row_index: int = -1
+    data_start_row: int = 0
+
+
+class NormalizedRow(BaseModel):
+    """normalizer 单行输出。对齐 normalizer 提示词返回格式里的单行结构。"""
+
+    row_index: int
+    is_valid: bool
+    transaction_time: str = ""
+    counterparty_name: str = ""
+    counterparty_account: str = ""
+    amount: str = ""
+    raw_amount: str = ""
+    summary: str = ""
+    transaction_type: str = ""
+    source_file: str = ""
+
+
+class NormalizedRows(BaseModel):
+    """normalizer 输出：行列表。对齐提示词 ``{"rows": [...]}`` 外层结构。"""
+
+    rows: list[NormalizedRow]
+
+
+AccountType = Literal[
+    "credit_card", "debit_card", "alipay", "wechat", "bank_general", "unknown"
+]
+AmountSignRule = Literal[
+    "pos_income", "pos_expense", "no_sign", "split_cols", "unknown"
+]
+
+
+class DocumentPortrait(BaseModel):
+    """portrait 输出：文档画像 + 列映射。对齐 portrait 提示词返回格式。"""
+
+    account_type: AccountType = "unknown"
+    account_holder: str = ""
+    account_number_masked: str = ""
+    institution: str = ""
+    statement_period: str = ""
+    key_observations: list[str] = Field(default_factory=list)
+    amount_sign_rule: AmountSignRule = "unknown"
+    header_attributes: list[str] = Field(default_factory=list)
+    column_mapping: list[str | list[str] | None] = Field(default_factory=list)

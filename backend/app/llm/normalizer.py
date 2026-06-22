@@ -1,11 +1,13 @@
 # -*- coding: utf-8 -*-
-"""Flow data normalizer using LLM.
+"""Flow data normalizer using pydantic-ai.
 
-Ports the mature ``src/llm/data_normalizer.py`` prompt and fallback behavior
-into the FastAPI backend while keeping the backend's async ``httpx`` transport
-and the ``normalize()`` contract consumed by the extraction pipeline.
+提示词逐字搬运自 legacy ``src/llm/data_normalizer.py``（硬底线：提示词
+保真），只把调用层从自写 httpx 换成 pydantic-ai agent（output_type=
+NormalizedRows）。``normalize()`` 对外契约不变：成功返 list[row dict]（含
+raw_amount/is_valid），失败返 []。保留 ``_infer_document_context`` 文件名
+兜底。落地遵循 ``docs/research/pydantic-ai-conventions.md`` (v1.107.0)。
 
-Key parity guarantees versus the original prompt:
+Parity guarantees versus the original prompt:
 
 * ``amount`` is always positive (no sign); ``raw_amount`` preserves the source sign.
 * ``transaction_type`` is restricted to "收入" / "支出".
@@ -16,9 +18,12 @@ Key parity guarantees versus the original prompt:
 
 import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
-import httpx
+from pydantic_ai import ModelRetry
+
+from app.llm.agent_factory import get_agent
+from app.llm.types import NormalizedRow, NormalizedRows
 
 logger = logging.getLogger(__name__)
 
@@ -93,9 +98,32 @@ SYSTEM_PROMPT_DATA_NORMALIZER = """你是一个银行/支付流水数据标准�
 }
 """
 
+_MAX_TOKENS_NORMALIZER = 4000
+
+_VALID_TRANSACTION_TYPES = {"收入", "支出"}
+
+
+def _validate_normalized_rows(output: NormalizedRows) -> NormalizedRows:
+    """output_validator：兜底字段完整性 + 铁规则（呼应"清洗不删减"底线）。
+
+    校验失败抛 ``ModelRetry``，反馈给模型重试（消耗 1 次 output 重试预算）。
+    字段完整性由 pydantic schema 保证（缺字段直接校验失败），这里补铁规则：
+    transaction_type 只允许"收入"/"支出"、amount 不含负号。
+    """
+    for row in output.rows:
+        if row.transaction_type and row.transaction_type not in _VALID_TRANSACTION_TYPES:
+            raise ModelRetry(
+                f"transaction_type 只允许'收入'或'支出'，收到: {row.transaction_type!r} (row_index={row.row_index})"
+            )
+        if row.amount and "-" in row.amount:
+            raise ModelRetry(
+                f"amount 必须为正数不含负号，收到: {row.amount!r} (row_index={row.row_index})"
+            )
+    return output
+
 
 class FlowDataNormalizer:
-    """Normalize raw flow table rows into standardized records via an LLM.
+    """Normalize raw flow table rows into standardized records via a pydantic-ai agent.
 
     Output contract: a list of row dicts, each with ``is_valid`` and the standard
     fields including ``raw_amount`` (preserving the source sign) and positive
@@ -103,84 +131,38 @@ class FlowDataNormalizer:
     """
 
     def __init__(self, api_url: str, api_key: str, model: str, timeout: int = 60, max_retries: int = 3):
-        self.api_url = api_url.rstrip("/")
+        self.api_url = api_url
         self.api_key = api_key
         self.model = model
         self.timeout = timeout
         self.max_retries = max_retries
+        self._agent = None  # lazy-build，注册 output_validator
 
-    async def _post(
-        self,
-        system_prompt: str,
-        user_message: str,
-    ) -> Optional[Dict[str, Any]]:
-        """POST a chat completion and parse JSON content with retry + fallback."""
-        if not self.api_key:
-            logger.warning("No API key configured for normalizer")
-            return None
+    def _get_agent(self):
+        if self._agent is None:
+            agent = get_agent(
+                NormalizedRows,
+                SYSTEM_PROMPT_DATA_NORMALIZER,
+                base_url=self.api_url,
+                api_key=self.api_key,
+                model=self.model,
+                timeout=self.timeout,
+                max_tokens=_MAX_TOKENS_NORMALIZER,
+            )
 
-        url = f"{self.api_url}/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
-        payload = {
-            "model": self.model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message},
-            ],
-            "temperature": 0.1,
-            "max_tokens": 4000,
-            "response_format": {"type": "json_object"},
-        }
+            @agent.output_validator
+            async def _validator(_ctx, output: NormalizedRows) -> NormalizedRows:
+                return _validate_normalized_rows(output)
 
-        response = None
-        for attempt in range(self.max_retries):
-            try:
-                async with httpx.AsyncClient(timeout=self.timeout, trust_env=False) as client:
-                    response = await client.post(url, headers=headers, json=payload)
-                response.raise_for_status()
-                data = response.json()
-                message = data["choices"][0]["message"]
-                content = (
-                    message.get("content")
-                    or message.get("reasoning_content")
-                    or message.get("reasoning")
-                )
-                if not content:
-                    raise ValueError(
-                        "Empty message content: %s"
-                        % json.dumps(message, ensure_ascii=False)[:500]
-                    )
-                return json.loads(content)
-            except json.JSONDecodeError as exc:
-                text = ""
-                try:
-                    text = response.text if response is not None else ""
-                except Exception:
-                    text = ""
-                logger.warning(
-                    "Normalizer JSON decode failed: %s; response=%s",
-                    exc,
-                    text[:500],
-                )
-            except Exception as exc:
-                logger.warning(
-                    "Normalizer request failed (attempt %d/%d): %s",
-                    attempt + 1,
-                    self.max_retries,
-                    exc,
-                )
-
-        return None
+            self._agent = agent
+        return self._agent
 
     async def normalize(
         self,
-        rows: List[List[str]],
-        document_portrait: Optional[Dict[str, Any]] = None,
+        rows: list[list[str]],
+        document_portrait: Optional[dict[str, Any]] = None,
         source_file: str = "",
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         将原始表格行标准化为统一流水记录
 
@@ -216,14 +198,17 @@ class FlowDataNormalizer:
             ensure_ascii=False,
         )
 
-        result = await self._post(SYSTEM_PROMPT_DATA_NORMALIZER, user_message)
-        if not result:
+        try:
+            result = await self._get_agent().run(user_message)
+        except Exception as exc:
+            logger.warning("Normalizer agent.run 失败: source_file=%s, %s", source_file, exc)
             return []
 
-        return result.get("rows", []) or []
+        normalized: NormalizedRows = result.output
+        return [row.model_dump() for row in normalized.rows]
 
     @staticmethod
-    def _infer_document_context(document_name: str) -> Dict[str, Any]:
+    def _infer_document_context(document_name: str) -> dict[str, Any]:
         """
         从文件名推断文档上下文（画像提取失败时的兜底）
 

@@ -2,9 +2,10 @@
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, JSON, String, Text, func
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from app.models._types import jsonb
 from app.models.base import Base
 
 
@@ -16,7 +17,7 @@ class Review(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     task_id: Mapped[int] = mapped_column(Integer, ForeignKey("tasks.id"), nullable=False)
     customer_list_id: Mapped[int] = mapped_column(Integer, ForeignKey("customer_lists.id"), nullable=False)
-    match_config: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    match_config: Mapped[dict | None] = mapped_column(jsonb(), nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="pending", nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -48,7 +49,7 @@ class ReviewMatch(Base):
     transaction_time: Mapped[str | None] = mapped_column(String(100), nullable=True)
     amount: Mapped[str | None] = mapped_column(String(100), nullable=True)
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
-    record_payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    record_payload: Mapped[dict | None] = mapped_column(jsonb(), nullable=True)
 
     # Relationships
     review: Mapped["Review"] = relationship("Review", back_populates="matches")

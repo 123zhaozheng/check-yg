@@ -9,19 +9,23 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
     # Database
-    DATABASE_URL: str = "sqlite+aiosqlite:///./data/check_yg.db"
+    DATABASE_URL: str = "postgresql+asyncpg://check_yg:check_yg@localhost:5432/check_yg"
 
     # JWT
     JWT_SECRET: str = "change-me-in-production"
     JWT_ALGORITHM: str = "HS256"
     JWT_EXPIRE_MINUTES: int = 1440
+    JWT_REFRESH_EXPIRE_MINUTES: int = 10080  # 7 days
 
     # File storage
     UPLOAD_DIR: str = "data/uploads"
     OUTPUT_DIR: str = "data/outputs"
 
-    # CORS
+    # CORS (同源部署后可置空；开发分离代理时仍需)
     CORS_ORIGINS: list[str] = ["http://localhost:5173"]
+
+    # Frontend dist (生产 FastAPI 同源挂静态)
+    FRONTEND_DIST: str = "../frontend/dist"
 
     # LLM
     LLM_API_ENDPOINT: str = "http://localhost:11434/v1"

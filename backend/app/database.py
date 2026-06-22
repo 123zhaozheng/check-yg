@@ -6,7 +6,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from app.config import settings
 
-engine = create_async_engine(settings.DATABASE_URL, echo=False)
+engine = create_async_engine(
+    settings.DATABASE_URL,
+    echo=False,
+    pool_pre_ping=not settings.DATABASE_URL.startswith("sqlite"),
+)
 
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
@@ -23,7 +27,12 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 
 
 async def init_db() -> None:
-    """Initialize database tables and seed default data."""
+    """Initialize database tables and seed default data.
+
+    生产/本地 pg：走 Alembic ``upgrade head``（schema 由迁移管理，不再用
+    ``create_all``）。测试用 SQLite 内存库：保留 ``create_all`` + 轻量迁移，
+    不依赖 Alembic。
+    """
     from app.models import (  # noqa: F401
         Collaborator,
         CustomerList,
@@ -42,9 +51,12 @@ async def init_db() -> None:
     from app.models.base import Base
     from app.auth.password import hash_password
 
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-        await _run_lightweight_migrations(conn)
+    if settings.DATABASE_URL.startswith("sqlite"):
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+            await _run_lightweight_migrations(conn)
+    else:
+        await _run_alembic_upgrade()
 
     # Seed default roles and admin user
     from sqlalchemy import select
@@ -74,6 +86,25 @@ async def init_db() -> None:
                 is_active=True,
             ))
             await session.commit()
+
+
+async def _run_alembic_upgrade() -> None:
+    """Run Alembic migrations to head against the configured (non-sqlite) DB.
+
+    Alembic 的迁移走同步路径（env.py 用 psycopg 同步驱动），所以在独立
+    线程里执行同步 ``command.upgrade``，避免阻塞 async 事件循环，也避免在
+    运行中的事件循环里嵌套 ``asyncio.run``。
+    """
+    import asyncio
+    import pathlib
+
+    from alembic import command
+    from alembic.config import Config
+
+    cfg = Config(str(pathlib.Path(__file__).resolve().parent.parent / "alembic.ini"))
+    # env.py 会从 settings 读连接串并切到 psycopg 同步驱动，这里不覆盖。
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, lambda: command.upgrade(cfg, "head"))
 
 
 async def _run_lightweight_migrations(conn) -> None:

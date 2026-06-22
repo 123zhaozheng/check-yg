@@ -2,9 +2,10 @@
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, JSON, String, Text, func
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from app.models._types import jsonb
 from app.models.base import Base
 
 
@@ -22,8 +23,8 @@ class Document(Base):
         default="pending",
         nullable=False,
     )  # noqa: E501  # pending/processing/completed/failed
-    extracted_tables: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    flow_tables: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    extracted_tables: Mapped[dict | None] = mapped_column(jsonb(), nullable=True)
+    flow_tables: Mapped[dict | None] = mapped_column(jsonb(), nullable=True)
     error_log: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

@@ -2,9 +2,10 @@
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, JSON, String, Text, func
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from app.models._types import jsonb
 from app.models.base import Base, TimestampMixin
 
 
@@ -22,7 +23,7 @@ class Task(Base, TimestampMixin):
         default="draft",
         nullable=False,
     )  # noqa: E501  # draft/running/paused/completed/failed/cancelled
-    config: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    config: Mapped[dict | None] = mapped_column(jsonb(), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # Relationships
