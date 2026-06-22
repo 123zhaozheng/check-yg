@@ -39,6 +39,7 @@ async def init_db() -> None:
         CustomerListItem,
         Document,
         ExportFile,
+        Finding,
         FlowRecordRow,
         Report,
         Review,

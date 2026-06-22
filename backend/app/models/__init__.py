@@ -4,6 +4,7 @@ from app.models.collaborator import Collaborator
 from app.models.customer_list import CustomerList, CustomerListItem
 from app.models.document import Document
 from app.models.export import ExportFile
+from app.models.finding import Finding
 from app.models.flow_record import FlowRecordRow
 from app.models.report import Report
 from app.models.review import Review, ReviewMatch
@@ -19,6 +20,7 @@ __all__ = [
     "CustomerListItem",
     "Document",
     "ExportFile",
+    "Finding",
     "FlowRecordRow",
     "Report",
     "Review",

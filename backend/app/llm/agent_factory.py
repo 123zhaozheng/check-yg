@@ -52,6 +52,7 @@ def _build_agent(
     timeout: int,
     max_tokens: int,
     retries: int = 3,
+    deps_type: type | None = None,
 ) -> Agent:
     """构造一个 pydantic-ai agent（模块级单例，按调用方参数缓存）。"""
     # AsyncOpenAI(max_retries=3) 处理瞬时 HTTP 429/5xx 重试，与旧 httpx 实现的
@@ -76,12 +77,14 @@ def _build_agent(
         provider=provider,
         settings=ModelSettings(timeout=timeout, max_tokens=max_tokens),
     )
+    # deps_type 传类型（conventions.md），None 时 agent 无 deps（与旧三模块一致）。
     return Agent(
         chat_model,
         output_type=output_type,
         instructions=instructions,
         retries={"tools": retries, "output": retries},
         model_settings=ModelSettings(temperature=0.1, max_tokens=max_tokens, timeout=timeout),
+        deps_type=deps_type,
     )
 
 
@@ -94,11 +97,16 @@ def get_agent(
     model: str | None = None,
     timeout: int | None = None,
     max_tokens: int,
+    deps_type: type | None = None,
 ) -> Agent:
     """按连接参数取/建缓存 agent。
 
     传入 ``None`` 的参数回退到 ``settings`` 默认值（与 extractor 的
     ``runtime_settings.get(...) or settings.*`` 行为一致）。
+
+    ``deps_type`` 传类型（conventions.md：deps_type=AuditDeps 传类型，deps=
+    传实例）；为 None 时 agent 无 deps（与旧三模块 classifier/normalizer/portrait
+    一致）。``deps_type`` 计入缓存 key，不同 deps_type 得到不同 agent 实例。
     """
     base_url = base_url or settings.LLM_API_ENDPOINT
     api_key = api_key or settings.LLM_API_KEY
@@ -113,6 +121,7 @@ def get_agent(
         int(max_tokens),
         output_type,
         instructions,
+        deps_type,
     )
     with _lock:
         agent = _agent_cache.get(key)
@@ -125,6 +134,7 @@ def get_agent(
                 model=model,
                 timeout=timeout,
                 max_tokens=max_tokens,
+                deps_type=deps_type,
             )
             _agent_cache[key] = agent
         return agent

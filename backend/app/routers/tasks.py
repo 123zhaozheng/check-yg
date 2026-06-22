@@ -17,11 +17,18 @@ from sqlalchemy.orm import selectinload
 from ..auth.dependencies import get_current_user
 from ..config import settings
 from ..database import get_db
-from ..models import Document, FlowRecordRow, Task, TaskLog, User
+from ..llm.analysis import AuditDeps, chat as analysis_chat, run_analysis
+from ..models import Document, Finding, FlowRecordRow, Task, TaskLog, User
 from ..services.extraction.runner import runner
 from ..services.extraction.scanner import DocumentScanner
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
+
+# Top-level findings router (no /tasks prefix) — mirrors PRD 决策4 path
+# ``PATCH /api/findings/{id}``. Kept in tasks.py per the "4 接口（tasks.py）"
+# directive; mounted separately in main.py under prefix="/api" so the effective
+# path is /api/findings/{finding_id}.
+findings_router = APIRouter(tags=["findings"])
 
 # Shared scanner so upload endpoints validate the same supported extensions
 # as the extraction pipeline.
@@ -1086,4 +1093,277 @@ async def export_cleaning_log(
             "Content-Disposition": f'attachment; filename="cleaning_log_{task_id}.csv"'
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# S6 AI 分析骨架 — findings CRUD + analyze + analyze/chat.
+# Owner-only, reuses _load_owned_task. agent 接入点结构遵循
+# docs/research/pydantic-ai-conventions.md (v1.107.0)：deps_type=AuditDeps 传
+# 类型、deps= 传实例、@agent.tool 工具签名、ModelMessagesTypeAdapter 序列化
+# 对话、message_history 多轮（见 app/llm/analysis.py）。本切片 agent.run /
+# chat 走占位实现（真实 prompt/tools 用户后续接）。
+# 对话历史存 Task.config.analysis_chat_history（决策3，不另建表）。
+# ---------------------------------------------------------------------------
+
+
+# severity 排序权重：high > medium > low（前端按风险降序展示）。
+_SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2}
+
+
+class FindingResponse(BaseModel):
+    """One findings row — AI-surfaced anomaly + 人工复核状态."""
+
+    id: int
+    task_id: int
+    type: str
+    severity: str
+    description: str
+    counterparty: Optional[str] = None
+    amount: Optional[str] = None
+    confidence: float
+    status: str
+    comment: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class FindingListResponse(BaseModel):
+    items: List[FindingResponse]
+    total: int
+
+
+class AnalysisFindingItem(BaseModel):
+    """AnalysisResult.findings 项的响应视图（对齐 app.llm.types.FindingItem）."""
+
+    type: str
+    severity: str
+    description: str
+    counterparty: Optional[str] = None
+    amount: Optional[str] = None
+    confidence: float
+
+
+class AnalysisResultResponse(BaseModel):
+    """POST /analyze 响应：摘要 + findings 列表."""
+
+    summary: str
+    findings: List[AnalysisFindingItem]
+
+
+class AnalyzeRequest(BaseModel):
+    """POST /tasks/{id}/analyze 请求体."""
+
+    mode: Optional[str] = None  # "quick" | "deep"（占位，本切片不区分行为）
+
+
+class ChatRequest(BaseModel):
+    """POST /tasks/{id}/analyze/chat 请求体."""
+
+    message: str
+
+
+class ChatResponse(BaseModel):
+    """POST /tasks/{id}/analyze/chat 响应."""
+
+    reply: str
+
+
+class PatchFindingRequest(BaseModel):
+    """PATCH /api/findings/{id} 请求体（status / comment，均可选）."""
+
+    status: Optional[str] = None  # accepted | ignored
+    comment: Optional[str] = None
+
+
+def _finding_response(f: Finding) -> FindingResponse:
+    return FindingResponse(
+        id=f.id,
+        task_id=f.task_id,
+        type=f.type,
+        severity=f.severity,
+        description=f.description,
+        counterparty=f.counterparty,
+        amount=f.amount,
+        confidence=f.confidence,
+        status=f.status,
+        comment=f.comment,
+        created_at=f.created_at,
+        updated_at=f.updated_at,
+    )
+
+
+def _sorted_findings(rows: list[Finding]) -> list[Finding]:
+    """按 severity 降序（high>medium>low）排序，同 severity 按 confidence 降序。"""
+    return sorted(
+        rows,
+        key=lambda r: (_SEVERITY_ORDER.get(r.severity, 99), -float(r.confidence)),
+    )
+
+
+@router.post("/{task_id}/analyze", response_model=AnalysisResultResponse)
+async def analyze_task(
+    task_id: int,
+    request: AnalyzeRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """触发 AI 分析（占位）。建占位 Finding 行 + 写 task.config.last_analysis_at。
+
+    占位实现：调 ``run_analysis`` 返占位 AnalysisResult（不调真实 LLM），把
+    findings 落库成 Finding 行（status=pending），并在 task.config 记录
+    last_analysis_at 时间戳。返 {summary, findings}。
+
+    TODO 用户后续接真实 agent.run 后，findings 来自 agent 输出而非占位。
+    """
+    task = await _load_owned_task(db, task_id, current_user)
+    deps = AuditDeps(db=db, task_id=task.id)
+    result = await run_analysis(deps)
+
+    # 落库 findings（占位：来自 run_analysis 的占位输出；真实接入后来自 agent）。
+    new_rows: list[Finding] = []
+    for item in result.findings:
+        row = Finding(
+            task_id=task.id,
+            type=item.type,
+            severity=item.severity,
+            description=item.description,
+            counterparty=item.counterparty,
+            amount=item.amount,
+            confidence=item.confidence,
+            status="pending",
+        )
+        db.add(row)
+        new_rows.append(row)
+    await db.flush()
+
+    # 记录上次分析时间（task.config jsonb）。
+    config = dict(task.config or {})
+    config["last_analysis_at"] = datetime.now(timezone.utc).isoformat()
+    task.config = config
+    db.add(
+        TaskLog(
+            task_id=task.id,
+            level="info",
+            message=f"AI analysis run (mode={request.mode or 'quick'}): {len(new_rows)} findings",
+        )
+    )
+    await db.commit()
+
+    return AnalysisResultResponse(
+        summary=result.summary,
+        findings=[
+            AnalysisFindingItem(
+                type=f.type,
+                severity=f.severity,
+                description=f.description,
+                counterparty=f.counterparty,
+                amount=f.amount,
+                confidence=f.confidence,
+            )
+            for f in new_rows
+        ],
+    )
+
+
+@router.get("/{task_id}/findings", response_model=FindingListResponse)
+async def list_findings(
+    task_id: int,
+    severity: Optional[str] = Query(None, description="high | medium | low"),
+    status: Optional[str] = Query(None, description="pending | accepted | ignored"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """列出任务的 findings，按 severity 降序 + confidence 降序排序。
+
+    可选 severity / status 过滤。
+    """
+    await _load_owned_task(db, task_id, current_user)
+
+    query = select(Finding).where(Finding.task_id == task_id)
+    if severity:
+        query = query.where(Finding.severity == severity)
+    if status:
+        query = query.where(Finding.status == status)
+
+    count_query = select(func.count()).select_from(query.subquery())
+    total = (await db.execute(count_query)).scalar() or 0
+
+    result = await db.execute(query)
+    rows = result.scalars().all()
+    ordered = _sorted_findings(rows)
+    return FindingListResponse(
+        items=[_finding_response(f) for f in ordered],
+        total=total,
+    )
+
+
+@findings_router.patch("/findings/{finding_id}", response_model=FindingResponse)
+async def patch_finding(
+    finding_id: int,
+    request: PatchFindingRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """更新 finding 的 status / comment。
+
+    校验 finding 所属 task 的 owner（复用 _load_owned_task 的 owner 校验逻辑）。
+    路径 ``PATCH /api/findings/{id}``（PRD 决策4），无 /tasks 前缀。
+    """
+    result = await db.execute(select(Finding).where(Finding.id == finding_id))
+    finding = result.scalar_one_or_none()
+    if not finding:
+        raise HTTPException(status_code=404, detail="Finding not found")
+
+    # owner-only：finding 所属 task 必须归当前用户。
+    task_result = await db.execute(select(Task).where(Task.id == finding.task_id))
+    task = task_result.scalar_one_or_none()
+    if not task or task.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Finding does not belong to current user")
+
+    if request.status is not None:
+        if request.status not in ("accepted", "ignored"):
+            raise HTTPException(status_code=422, detail="status must be 'accepted' or 'ignored'")
+        finding.status = request.status
+    if request.comment is not None:
+        finding.comment = request.comment
+
+    db.add(
+        TaskLog(
+            task_id=finding.task_id,
+            level="info",
+            message=f"Finding {finding.id} updated: status={finding.status}",
+        )
+    )
+    await db.commit()
+    await db.refresh(finding)
+    return _finding_response(finding)
+
+
+@router.post("/{task_id}/analyze/chat", response_model=ChatResponse)
+async def analyze_chat(
+    task_id: int,
+    request: ChatRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """多轮对话：读 Task.config.analysis_chat_history → chat() → 存回 + 返回复。
+
+    占位实现：chat() 返占位回复 + 用 ModelMessagesTypeAdapter 序列化占位
+    message_history 存回（结构通了即可，不调真实 LLM）。
+    """
+    task = await _load_owned_task(db, task_id, current_user)
+    config = dict(task.config or {})
+    history_json = config.get("analysis_chat_history") or None
+
+    deps = AuditDeps(db=db, task_id=task.id)
+    reply, new_history_json = await analysis_chat(deps, history_json, request.message)
+
+    config["analysis_chat_history"] = new_history_json
+    task.config = config
+    await db.commit()
+
+    return ChatResponse(reply=reply)
 

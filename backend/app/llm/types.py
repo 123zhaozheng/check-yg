@@ -64,3 +64,36 @@ class DocumentPortrait(BaseModel):
     amount_sign_rule: AmountSignRule = "unknown"
     header_attributes: list[str] = Field(default_factory=list)
     column_mapping: list[str | list[str] | None] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# S6 AI 分析 agent output_type (analysis.py).
+# 新 agent（非 legacy 搬运），instructions 占位但结构要对。findings 是 agent
+# 产出的异常发现列表，summary 是整体推理摘要。落地后由 tasks.py 端点落库成
+# Finding 行（含 status/comment 等复核字段，这些不属于 agent 输出）。
+# ---------------------------------------------------------------------------
+
+Severity = Literal["high", "medium", "low"]
+
+
+class FindingItem(BaseModel):
+    """analysis agent 输出的单条异常发现（对齐 AnalysisResult.findings 项）。
+
+    字段是 agent 推理产物（type/severity/description/counterparty/amount/
+    confidence）；复核状态（status/comment）由人工在 Finding 表里维护，不属
+    于 agent 输出。
+    """
+
+    type: str = Field(description="异常类型，如 大额/高频/对手异常")
+    severity: Severity
+    description: str = Field(description="异常说明，含推理依据")
+    counterparty: str | None = None
+    amount: str | None = None
+    confidence: float = Field(ge=0.0, le=1.0)
+
+
+class AnalysisResult(BaseModel):
+    """analysis agent 输出：异常发现列表 + 整体摘要。"""
+
+    findings: list[FindingItem] = Field(default_factory=list)
+    summary: str = Field(description="整体推理摘要，供前端右侧详情区展示")

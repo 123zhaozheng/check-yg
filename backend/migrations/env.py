@@ -19,6 +19,7 @@ from app.models import (  # noqa: F401
     CustomerListItem,
     Document,
     ExportFile,
+    Finding,
     FlowRecordRow,
     Report,
     Review,
