@@ -11,7 +11,7 @@
   "creator": "zhaozheng",
   "assignee": "zhaozheng",
   "createdAt": "2026-06-17",
-  "completedAt": "2026-06-17",
+  "completedAt": "2026-06-22",
   "branch": null,
   "base_branch": "feat/web-split",
   "worktree_path": null,
@@ -19,7 +19,7 @@
   "pr_url": null,
   "subtasks": [],
   "children": [],
-  "parent": "06-17-06-17-web-split-production-parity",
+  "parent": null,
   "relatedFiles": [],
   "notes": "",
   "meta": {}
