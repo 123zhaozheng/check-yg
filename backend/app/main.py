@@ -37,6 +37,7 @@ app.add_middleware(
 
 # Register routers
 from app.routers import auth_router, users_router
+from app.routers.dashboard import router as dashboard_router
 from app.routers.tasks import router as tasks_router
 from app.routers.customers import router as customers_router
 from app.routers.settings import router as settings_router
@@ -47,6 +48,7 @@ from app.websocket.router import router as websocket_router
 
 app.include_router(auth_router, prefix="/api")
 app.include_router(users_router, prefix="/api")
+app.include_router(dashboard_router, prefix="/api")
 app.include_router(tasks_router, prefix="/api")
 app.include_router(customers_router, prefix="/api")
 app.include_router(settings_router, prefix="/api")
