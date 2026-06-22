@@ -1,0 +1,5 @@
+{"file": "stitch_/task_list/code.html", "reason": "任务列表视觉对齐验收：筛选条、任务表列、阶段胶囊、分页当前页黑底白字是否与设计稿一致；彩色改单色。"}
+{"file": "docs/web-pages-design.md", "reason": "§B2/§B3 单色验收：表格行分隔线1px浅灰不用斑马纹彩色、状态灰阶胶囊、分页当前页黑底白字、新建任务表单下划线/细边框 + 描边取消/黑底创建主按钮。"}
+{"file": "docs/zhixing-delivery-plan.md", "reason": "硬底线核对：Chrome108、单色、清洗不删减、不污染主分支。S3 验收(筛选生效、新建弹窗提交后任务带新字段入库、归档/删除可用、分页正确)。"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Alembic 迁移验收：Task 加字段后迁移生成 + upgrade head；jsonb() 双方言；archived 软删不丢数据(呼应不删减底线)。"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "Task 端点契约验收：create/list 扩筛选 + 分页、archive/unarchive、软删、validation error matrix。"}

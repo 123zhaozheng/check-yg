@@ -1,0 +1,5 @@
+{"file": "stitch_/task_list/code.html", "reason": "任务列表设计稿源码：筛选条(全部/进行中/已完成/已归档Tab+日期范围+搜索+filter_list)、任务表(任务名/员工工号/渠道/创建人/阶段胶囊/状态点+文字/创建时间/操作View+Archive)、分页(当前页黑底白字方块)。中文化与视觉对齐依据。彩色违规改单色。"}
+{"file": "docs/web-pages-design.md", "reason": "§B2 任务列表 + §B3 新建任务设计规范：筛选条、任务表列、灰阶胶囊、行hover、批量操作、分页当前页黑底白字；新建任务单列表单(基础信息+审查范围+取消描边/创建并进入黑底主按钮)。英中对照表。"}
+{"file": "docs/zhixing-delivery-plan.md", "reason": "grill 决策 Q5(新建任务弹窗)、Q11(契约先行)、硬底线(Chrome108、单色、不删减、不污染主分支)。S3 验收项来源。"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "FastAPI Task Extraction Boundary scenario：Task 字段契约、create/list 端点、config.document_folder 后端本地路径、append 合并、status 状态机、validation error matrix(空title422/running时start 409/owner 403/unknown 404)。S3 扩 tasks 路由的规范依据。"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Alembic 迁移规范：改 Task 模型加字段后必须生成迁移并 upgrade head；新模型/字段登记；jsonb() 双方言辅助。S3 Task 模型加 employee_name/employee_id/department/audit_start/audit_end/expected_channels(JSONB)/archived 的迁移落点。"}
