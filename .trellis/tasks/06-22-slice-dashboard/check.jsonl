@@ -1,4 +1,0 @@
-{"file": "stitch_/dashboard/code.html", "reason": "Dashboard 视觉对齐验收：4 KPI 卡布局、进行中任务表、最近报告区、待办区是否与设计稿一致；彩色是否已改单色。"}
-{"file": "docs/web-pages-design.md", "reason": "§B1 单色要点验收：KPI 数值靠字号字重不靠颜色、同比↑↓灰度不用红绿、阶段灰阶胶囊递进、进度用灰阶梯度代替彩色进度条。"}
-{"file": "docs/zhixing-delivery-plan.md", "reason": "硬底线核对：Chrome108、单色原则、不污染主分支。S2 验收项(4KPI正确聚合、阶段胶囊灰阶、点击任务行跳详情、点击NEW AUDIT弹新建任务弹窗)。"}
-{"file": ".trellis/spec/backend/directory-structure.md", "reason": "FastAPI 路由层薄 + 业务进 services 规范核对；Task 字段契约；dashboard 聚合接口设计。"}
