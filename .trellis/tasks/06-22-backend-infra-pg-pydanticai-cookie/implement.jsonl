@@ -1,6 +1,0 @@
-{"file": "docs/research/pydantic-ai-conventions.md", "reason": "pydantic-ai v1.107.0 官方规范落地参考：OpenAIChatModel+OpenAIProvider 配置、output_type/output_validator、await agent.run、模块级单例+per-request deps、ModelMessagesTypeAdapter 多轮历史。替换 classifier/normalizer/portrait 的权威依据，硬底线之一。"}
-{"file": "docs/zhixing-delivery-plan.md", "reason": "全流程交付总索引：grill 决策总表(Q6/Q7/Q8/Q9清洗不删减+pg+pydantic-ai+提示词保真)、硬底线、B1 任务范围。pg 迁移+cookie 鉴权+pydantic-ai 基建的总体约束来源。"}
-{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "后端持久化与 checkpoint 规范。pg 迁移(JSONB 存 config/raw_payload/extracted_tables)、空库重新 seed、Alembic baseline 的落点参考。"}
-{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "后端代码标准与禁用模式、测试要求。pydantic-ai agent 工厂与回归 diff 测试需遵循。"}
-{"file": ".trellis/spec/backend/error-handling.md", "reason": "后端错误类型与处理策略。LLM 调用失败重试(OpenAIProvider AsyncOpenAI max_retries)、cookie 鉴权异常的统一处理参考。"}
-{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "结构化日志与中文消息规范。agent.run/迁移/cookie 流程的日志落点。"}

@@ -1,4 +1,0 @@
-{"file": "docs/research/pydantic-ai-conventions.md", "reason": "验收三个 LLM 模块输出与换框架前一致、output_type schema 校验、output_validator 兜底字段完整时的规范核对依据。易错点速查(result.usage 属性、run_sync 禁用、base_url /v1 结尾)用于 check。"}
-{"file": "docs/zhixing-delivery-plan.md", "reason": "硬底线核对：清洗不删减(记录1:1+raw_payload JSONB+非流水表保留标记excluded)、提示词保真(逐字搬进 instructions)、Chrome108、pydantic-ai 按官方规范。B1 验收项来源。"}
-{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "代码标准与禁用模式、测试要求的核对依据。回归 diff 测试是否达标。"}
-{"file": ".trellis/spec/backend/error-handling.md", "reason": "错误处理策略核对：LLM 重试、cookie 鉴权异常是否按规范落地。"}
