@@ -1,0 +1,7 @@
+{"file": "docs/research/pydantic-ai-conventions.md", "reason": "核对 analysis_agent 骨架是否遵循 v1.107.0 规范：deps_type=AuditDeps(db,task_id)传类型、@agent.tool 工具签名、ModelMessagesTypeAdapter 存对话、message_history 多轮、Tool Output 模式。"}
+{"file": "docs/zhixing-delivery-plan.md", "reason": "硬底线核对：单色原则(风险等级灰阶+形状双编码 高=黑底白字方块/中=深灰/低=浅灰 禁红黄绿)、Chrome108渲染(禁裸color-mix/oklch)、agent接入点结构正确便于后续接tools。"}
+{"file": "docs/web-pages-design.md", "reason": "AI 分析页文案与布局验收对照。"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "核对 agent 在 app/llm/ 目录结构 + 接入点结构。"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "核对 Finding 表是否走 Alembic + jsonb() 规范。"}
+{"file": "backend/tests/test_llm_parity.py", "reason": "回归提示词保真测试——S6 是新 agent 骨架(instructions 占位)，不应改动现有 normalizer/classifier/portrait 提示词。"}
+{"file": "backend/tests/test_cleaning_no_drop.py", "reason": "回归不删减测试不破——S6 agent tools 查 flow_records 应只读不改。"}
