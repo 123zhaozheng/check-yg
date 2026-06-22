@@ -1,6 +1,7 @@
 import { createRootRouteWithContext, Outlet } from "@tanstack/react-router"
 import type { QueryClient } from "@tanstack/react-query"
 
+import type { CurrentUser } from "@/hooks/use-current-user"
 import "@/styles/global.css"
 
 /**
@@ -8,9 +9,13 @@ import "@/styles/global.css"
  * `context.queryClient.ensureQueryData(...)` / `preload`. The document shell is
  * rendered here so login (outside the app shell) and the authenticated shell
  * both share the same <html>/<body>.
+ *
+ * `user` is filled in by the `__authenticated` route's `beforeLoad` guard and
+ * made available to every authenticated child route via `context.user`.
  */
 interface RouterContext {
   queryClient: QueryClient
+  user?: CurrentUser
 }
 
 function RootDocument({ children }: { children: React.ReactNode }) {

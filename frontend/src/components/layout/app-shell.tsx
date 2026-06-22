@@ -1,5 +1,5 @@
 import * as React from "react"
-import { Link, useLocation } from "@tanstack/react-router"
+import { Link, useLocation, useNavigate } from "@tanstack/react-router"
 import {
   LayoutDashboard,
   ClipboardList,
@@ -10,10 +10,14 @@ import {
   HelpCircle,
   PanelLeftClose,
   PanelLeftOpen,
+  LogOut,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
+import { api } from "@/lib/api"
+import { queryClient } from "@/lib/query-client"
+import { useCurrentUser } from "@/hooks/use-current-user"
 
 /**
  * Application shell (docs/web-pages-design.md §A2):
@@ -75,6 +79,9 @@ function NavLink({
 export function AppShell({ children }: { children: React.ReactNode }) {
   const [collapsed, setCollapsed] = React.useState(false)
   const location = useLocation()
+  const navigate = useNavigate()
+  const { user } = useCurrentUser()
+  const [loggingOut, setLoggingOut] = React.useState(false)
 
   const sidebarWidth = collapsed ? "w-16" : "w-60"
 
@@ -83,6 +90,20 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     .split("/")
     .filter(Boolean)
     .map((seg) => decodeURIComponent(seg))
+
+  async function handleLogout() {
+    if (loggingOut) return
+    setLoggingOut(true)
+    try {
+      await api.post("/auth/logout")
+    } catch {
+      // Even if the network call fails, drop local state and bounce to /login.
+    } finally {
+      queryClient.clear()
+      setLoggingOut(false)
+      void navigate({ to: "/login", search: { redirect: undefined } })
+    }
+  }
 
   return (
     <div className="flex h-screen overflow-hidden bg-ink-200 text-ink-800">
@@ -163,17 +184,30 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           )}
         >
           <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-ink-300 font-mono text-xs font-semibold text-ink-900">
-            管
+            {(user?.username ?? "?").slice(0, 1).toUpperCase()}
           </div>
           {!collapsed && (
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <div className="truncate text-sm font-semibold text-ink-900">
-                系统管理员
+                {user?.username ?? "未登录"}
               </div>
               <div className="truncate font-mono text-[11px] text-ink-600">
-                ID: ZX-9921
+                {user?.role ?? "—"}
               </div>
             </div>
+          )}
+          {!collapsed && (
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={handleLogout}
+              disabled={loggingOut}
+              aria-label="退出登录"
+              title="退出登录"
+              className="text-ink-700 hover:text-ink-900"
+            >
+              <LogOut className="size-4" />
+            </Button>
           )}
         </div>
       </aside>

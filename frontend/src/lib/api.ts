@@ -8,9 +8,22 @@
  *
  * `credentials: "include"` is mandatory for the browser to attach cookies on
  * cross-origin dev (vite:5173 → api:8000 via proxy, same effective origin).
+ *
+ * 401 handling: instead of bouncing straight to /login, the client first tries
+ * a silent `POST /api/auth/refresh` (cookie-driven) and replays the original
+ * request once. Concurrent 401s share a single in-flight refresh promise so we
+ * don't fan out N refreshes. The login and refresh endpoints themselves never
+ * trigger a refresh-retry — their 401 propagates as an error (caller decides).
  */
 
 const API_BASE = "/api"
+
+/** Endpoints that must NOT trigger a silent refresh-retry on 401. */
+const NO_REFRESH_ENDPOINTS = ["/auth/login", "/auth/refresh"]
+
+function isNoRefreshEndpoint(endpoint: string): boolean {
+  return NO_REFRESH_ENDPOINTS.some((p) => endpoint === p || endpoint.startsWith(`${p}/`))
+}
 
 export class ApiError extends Error {
   status: number
@@ -46,9 +59,55 @@ function buildUrl(
   return qs ? `${url}?${qs}` : url
 }
 
+/** Extract a human-readable detail string from a FastAPI error body. */
+function extractErrorDetail(data: unknown): string | undefined {
+  if (data && typeof data === "object" && "detail" in data) {
+    const detail = (data as { detail?: unknown }).detail
+    if (typeof detail === "string" && detail.length > 0) return detail
+  }
+  return undefined
+}
+
+/** Redirect to /login with a redirect back to the current path. SSR-safe. */
+function redirectToLogin(): void {
+  if (typeof window === "undefined") return
+  const current = window.location.pathname + window.location.search
+  if (current.startsWith("/login")) return
+  window.location.replace(`/login?redirect=${encodeURIComponent(current)}`)
+}
+
+let refreshPromise: Promise<boolean> | null = null
+
 /**
- * Core fetch wrapper. Sends cookies, handles JSON, throws ApiError on non-2xx,
- * and redirects to /login on 401 (auth cookie missing or expired).
+ * Trigger one silent token refresh. Concurrent callers share the same promise
+ * (dedup) so N simultaneous 401s produce a single `/auth/refresh` round-trip.
+ * Resolves true on success, false on any failure.
+ */
+function silentRefresh(): Promise<boolean> {
+  if (refreshPromise) return refreshPromise
+  refreshPromise = (async () => {
+    try {
+      const res = await fetch(`${API_BASE}/auth/refresh`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+        credentials: "include",
+      })
+      return res.ok
+    } catch {
+      return false
+    } finally {
+      refreshPromise = null
+    }
+  })()
+  return refreshPromise
+}
+
+/**
+ * Core fetch wrapper. Sends cookies, handles JSON, throws ApiError on non-2xx.
+ * On 401 (excluding /auth/login & /auth/refresh) it silently refreshes once and
+ * replays the original request; a second 401 or a failed refresh redirects to
+ * /login with a `?redirect=` back to the current path.
  */
 export async function apiFetch<T>(
   endpoint: string,
@@ -64,19 +123,42 @@ export async function apiFetch<T>(
     finalHeaders["Content-Type"] = "application/json"
   }
 
-  const response = await fetch(buildUrl(endpoint, params), {
-    ...rest,
-    body: isFormData ? body : body !== undefined ? JSON.stringify(body) : undefined,
-    headers: finalHeaders,
-    credentials: "include",
-  })
+  const doFetch = (): Promise<Response> =>
+    fetch(buildUrl(endpoint, params), {
+      ...rest,
+      body: isFormData ? body : body !== undefined ? JSON.stringify(body) : undefined,
+      headers: finalHeaders,
+      credentials: "include",
+    })
 
-  if (response.status === 401 && typeof window !== "undefined") {
-    const current = window.location.pathname + window.location.search
-    if (!current.startsWith("/login")) {
-      window.location.replace(`/login?redirect=${encodeURIComponent(current)}`)
+  let response = await doFetch()
+
+  if (response.status === 401 && !isNoRefreshEndpoint(endpoint)) {
+    const refreshed = await silentRefresh()
+    if (refreshed) {
+      // Replay the original request exactly once with the fresh access cookie.
+      response = await doFetch()
     }
-    throw new ApiError(401, "Unauthorized")
+    if (response.status === 401) {
+      redirectToLogin()
+      let data: unknown
+      try {
+        data = await response.json()
+      } catch {
+        // non-JSON error body
+      }
+      throw new ApiError(401, "Unauthorized", data)
+    }
+  } else if (response.status === 401) {
+    // /auth/login or /auth/refresh themselves returned 401 — surface the error,
+    // don't bounce. Login page reads ApiError.data.detail for the message.
+    let data: unknown
+    try {
+      data = await response.json()
+    } catch {
+      // non-JSON error body
+    }
+    throw new ApiError(401, "Unauthorized", data)
   }
 
   if (!response.ok) {
@@ -113,3 +195,5 @@ export const api = {
     apiFetch<T>(endpoint, { method: "PATCH", body, ...options }),
   delete: <T>(endpoint: string) => apiFetch<T>(endpoint, { method: "DELETE" }),
 }
+
+export { extractErrorDetail }

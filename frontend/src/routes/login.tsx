@@ -1,21 +1,44 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router"
+import { createFileRoute, isRedirect, redirect, useNavigate } from "@tanstack/react-router"
 import * as React from "react"
 import { Shield, ArrowRight } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { api, extractErrorDetail, ApiError } from "@/lib/api"
+import { fetchCurrentUser } from "@/hooks/use-current-user"
 
 /**
  * 登录页 /login (docs/web-pages-design.md §A1).
  * Left 60% brand area (light gray canvas + minimal shield/grid geometry),
- * right 40% login card on white. No color anywhere — errors use bold dark text.
- * Placeholder only — S1 login slice wires the real /api/auth/login call.
+ * right 40% login card on white. No color anywhere — errors use a dark
+ * background + light text strip (never red, per the monochrome hard line).
+ *
+ * Wires the real backend: `POST /api/auth/login` sets the httpOnly access +
+ * refresh cookies (backend B1), then we navigate to `?redirect=` or `/`.
+ * Already-authenticated visitors are bounced to `/` in `beforeLoad`.
  */
 export const Route = createFileRoute("/login")({
+  validateSearch: (search: Record<string, unknown>) => ({
+    redirect: typeof search.redirect === "string" ? search.redirect : undefined,
+  }),
+  beforeLoad: async ({ context }) => {
+    // If a valid access cookie is already present, skip the login page. Using
+    // fetchCurrentUser (shared QueryClient) pre-warms the cache so the
+    // __authenticated guard below doesn't re-hit /auth/me.
+    if (!context.queryClient) return
+    try {
+      await fetchCurrentUser(context.queryClient)
+      throw redirect({ to: "/" })
+    } catch (e) {
+      if (isRedirect(e)) throw e
+      // 401 (or any error) → stay on /login and render the form.
+    }
+  },
   component: LoginPage,
 })
 
 function LoginPage() {
   const navigate = useNavigate()
+  const { redirect: redirectTo } = Route.useSearch()
   const [username, setUsername] = React.useState("")
   const [password, setPassword] = React.useState("")
   const [remember, setRemember] = React.useState(true)
@@ -27,11 +50,17 @@ function LoginPage() {
     setError(null)
     setSubmitting(true)
     try {
-      // Placeholder: real auth wired in S1 (POST /api/auth/login with cookie).
-      await new Promise((r) => setTimeout(r, 300))
-      void navigate({ to: "/" })
-    } catch {
-      setError("登录失败，请检查账号与密码。")
+      await api.post("/auth/login", { username, password })
+      const target = redirectTo && redirectTo.startsWith("/") ? redirectTo : "/"
+      void navigate({ to: target })
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        setError(extractErrorDetail(err.data) ?? "登录失败，请检查账号与密码。")
+      } else if (err instanceof ApiError && err.status === 403) {
+        setError(extractErrorDetail(err.data) ?? "该账号已被禁用，请联系管理员。")
+      } else {
+        setError("登录失败，请稍后重试。")
+      }
     } finally {
       setSubmitting(false)
     }
@@ -112,8 +141,11 @@ function LoginPage() {
                 autoComplete="current-password"
               />
               {error && (
-                <p className="mt-2 font-mono text-xs font-semibold text-ink-900">
-                  错误：{error}
+                <p
+                  role="alert"
+                  className="mt-2 rounded-[var(--radius-DEFAULT)] bg-ink-800 px-3 py-2 font-mono text-xs font-semibold text-ink-100"
+                >
+                  {error}
                 </p>
               )}
             </div>
@@ -142,8 +174,8 @@ function LoginPage() {
               className="mt-2 w-full"
               disabled={submitting}
             >
-              登录
-              <ArrowRight className="size-4" />
+              {submitting ? "登录中…" : "登录"}
+              {!submitting && <ArrowRight className="size-4" />}
             </Button>
           </form>
 
