@@ -304,3 +304,39 @@ Implemented authenticated WebSocket notifications for review, report, and export
 ### Next Steps
 
 - None - task complete
+
+
+## Session 10: B1+B2 基建并行：pg迁移+pydantic-ai+cookie鉴权+静态挂载 / frontend栈+单色设计系统+布局壳
+
+**Date**: 2026-06-22
+**Task**: B1+B2 基建并行：pg迁移+pydantic-ai+cookie鉴权+静态挂载 / frontend栈+单色设计系统+布局壳
+**Branch**: `feat/web-split`
+
+### Summary
+
+智行卫士全流程交付的 B1(后端基建) + B2(前端基建) 两个 P0 任务并行完成。B1：SQLite→PostgreSQL(docker pg16)+Alembic baseline(13表,JSONB+with_variant双方言)+鉴权cookie化(httpOnly+SameSite=Strict,login/refresh/me/logout,header兼容过渡)+pydantic-ai v1.107.0替换三LLM模块(agent_factory模块级单例/OpenAIChatModel+OpenAIProvider/max_retries=3/trust_env=False/base_url强制/v1,三模块提示词逐字搬进instructions且difflib逐字节验证IDENTICAL,types.py三个pydantic output_type保留raw_amount/is_valid/row_index呼应不删减底线,normalizer加output_validator兜底铁规则)+回归parity测试(mock重写断言逐字保留,69测试全过)+FastAPI挂frontend/dist+SPA fallback。B2：新建frontend/纯SPA(Vite+React18+TanStack Router/Query+Tailwind4+lightningcss(chrome108降级oklch/lab/color-mix→rgb)+shadcn风格)+单色设计系统(9级灰阶零彩色双字体)+布局壳(240px侧栏+56px顶栏+#f7f7f8画布)+6Tab路由骨架+Vite proxy /api+/ws+TanStack Query credentials:include+全站中文化；旧web/归档archive/web-legacy(68 git rename)。硬底线全过：Chrome108渲染验证、单色grep验证、提示词逐字保真、清洗不删减、pydantic-ai按官方规范。trellis-check两任务各0违规。另：stitch_设计资产入库、旧sqlite db移除跟踪、backend spec三份从PyQt5/no-database更新到FastAPI+pg+pydantic-ai现状。真实模型回归(ollama qwen2.5:7b normalizer新旧diff)用户明确推迟。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `dec1993` | (see git log) |
+| `a8c0f99` | (see git log) |
+| `a48bc33` | (see git log) |
+| `7bc3bcc` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
