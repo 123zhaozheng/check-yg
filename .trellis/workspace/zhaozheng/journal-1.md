@@ -407,3 +407,37 @@ S2+S3 两个垂直切片并行完成。S3 任务列表+新建任务弹窗：后�
 ### Next Steps
 
 - None - task complete
+
+
+## Session 13: S4 数据导入闭环
+
+**Date**: 2026-06-22
+**Task**: S4 数据导入闭环
+**Branch**: `feat/web-split`
+
+### Summary
+
+S4 数据导入切片闭环。后端：Document 加 channel+size_bytes 字段（Alembic migration a1c3e5f7b9d2）；upload/append-upload 端点加 channel Form 参数 + 预建 pending Document 行；runner._persist_result_documents 改为按 filename 匹配 update（不再 delete+rebuild）+ 无记录文档最终扫为 completed + _mark_failed 把 pending 行翻 failed——修复前端轮询卡死（成功/失败两路）。新增 GET /documents?channel=&include_deleted= 与 DELETE /documents/{id} 软删（status=deleted，不删行，保留不删减硬底线）。前端：import.tsx 完整数据导入页（渠道列表黑竖条+角标/虚线拖拽框/文件表灰阶状态胶囊 Pending/Parsing 转圈/Done/Failed 黑底白字粗体）/TanStack Query 动态 refetchInterval 轮询/失败重试（缓存 File 重传）/api.ts 追加 Document 类型与函数。81 后端测试绿，前端 build+类型检查通过，Chrome108 CSS 复核无裸 color-mix/oklch。check 复核发现并自修 2 个轮询卡死 bug。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c458c5a` | (see git log) |
+| `2955902` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
