@@ -428,3 +428,104 @@ export function createTaskFromUpload(
 export function deleteDocument(taskId: number, docId: number): Promise<void> {
   return api.delete<void>(`/tasks/${taskId}/documents/${docId}`)
 }
+
+/* =========================================================================
+ * Cleaning / Standardization API — types + helpers (S5).
+ * Appended only; the apiFetch core above is unchanged.
+ * Mirrors `backend/app/routers/tasks.py::RecordResponse`.
+ * 清洗不删减: standard + unparsed + excluded all persisted with raw_payload.
+ * ======================================================================= */
+
+/** record_type drives the cleaning page's tabs/filters. */
+export type RecordType = "standard" | "unparsed" | "excluded"
+
+/** status: active (default) | restored (捞回过 — row stays, 不删减). */
+export type RecordStatus = "active" | "restored"
+
+/** One flow_records row. raw_payload holds the original cells verbatim. */
+export interface FlowRecordItem {
+  id: number
+  task_id: number
+  document_id?: number | null
+  channel?: string | null
+  record_type: RecordType
+  row_index: number
+  is_valid: boolean
+  transaction_time?: string | null
+  counterparty_name?: string | null
+  counterparty_account?: string | null
+  amount?: string | null
+  raw_amount?: string | null
+  summary?: string | null
+  transaction_type?: string | null
+  raw_payload?: { cells?: string[] } | null
+  status: RecordStatus
+  exclude_reason?: string | null
+  created_at: string
+}
+
+export interface RecordListResponse {
+  items: FlowRecordItem[]
+  total: number
+  page: number
+  page_size: number
+}
+
+/** Query params for GET /api/tasks/{id}/records. */
+export interface RecordListParams {
+  channel?: string
+  /** standard | unparsed | excluded | all. Defaults to standard on the backend. */
+  record_type?: RecordType | "all"
+  page?: number
+  page_size?: number
+}
+
+/** GET /api/tasks/{taskId}/records — paginated flow_records. */
+export function listTaskRecords(
+  taskId: number,
+  params?: RecordListParams,
+): Promise<RecordListResponse> {
+  return api.get<RecordListResponse>(
+    `/tasks/${taskId}/records`,
+    params as ApiRequestOptions["params"],
+  )
+}
+
+/** GET /api/tasks/{taskId}/excluded — excluded + unparsed, active only (可捞回).
+ * `record_type` narrows to one type so the sub-tabs paginate independently. */
+export function listExcluded(
+  taskId: number,
+  params?: { page?: number; page_size?: number; record_type?: RecordType },
+): Promise<RecordListResponse> {
+  return api.get<RecordListResponse>(
+    `/tasks/${taskId}/excluded`,
+    params as ApiRequestOptions["params"],
+  )
+}
+
+/** POST /api/tasks/{taskId}/records/{recordId}/restore — mark a row restored (捞回). */
+export function restoreRecord(
+  taskId: number,
+  recordId: number,
+): Promise<FlowRecordItem> {
+  return api.post<FlowRecordItem>(`/tasks/${taskId}/records/${recordId}/restore`)
+}
+
+/** POST /api/tasks/{taskId}/cleaning/commit — lock the standard snapshot. */
+export function commitCleaning(taskId: number): Promise<TaskItem> {
+  return api.post<TaskItem>(`/tasks/${taskId}/cleaning/commit`)
+}
+
+/**
+ * GET /api/tasks/{taskId}/cleaning/export — download the unparsed/excluded log.
+ * Returns the raw Response (file stream); the caller triggers a browser download.
+ */
+export function exportCleaningLog(
+  taskId: number,
+  format: "csv" | "json" = "csv",
+): Promise<Response> {
+  return apiFetch<Response>(
+    `/tasks/${taskId}/cleaning/export`,
+    { method: "GET", params: { format } },
+  )
+}
