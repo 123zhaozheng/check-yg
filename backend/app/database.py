@@ -42,6 +42,8 @@ async def init_db() -> None:
         Finding,
         FlowRecordRow,
         Report,
+        ReportAnnotation,
+        ReportChapter,
         Review,
         ReviewMatch,
         Role,
@@ -143,3 +145,12 @@ async def _run_lightweight_migrations(conn) -> None:
             await conn.exec_driver_sql(
                 f"ALTER TABLE documents ADD COLUMN {column} {column_type}"
             )
+
+    # reports: status (S7 软态 draft|final). Additive only — new tables
+    # (report_chapters / report_annotations) are created by create_all above.
+    reports_result = await conn.exec_driver_sql("PRAGMA table_info(reports)")
+    reports_existing = {row[1] for row in reports_result.fetchall()}
+    if "status" not in reports_existing:
+        await conn.exec_driver_sql(
+            "ALTER TABLE reports ADD COLUMN status VARCHAR(20) NOT NULL DEFAULT 'draft'"
+        )

@@ -48,6 +48,29 @@ class ReportRunRequest(BaseModel):
     review_id: Optional[int] = None
 
 
+class ReportChapterResponse(BaseModel):
+    """One chapter of a chaptered review report (S7)."""
+
+    id: int
+    report_id: int
+    title: str
+    content: str
+    order_index: int
+    generated_at: datetime
+
+
+class ReportAnnotationResponse(BaseModel):
+    """One review annotation on a report chapter (S7)."""
+
+    id: int
+    report_id: int
+    chapter_id: Optional[int] = None
+    author: str
+    content: str
+    resolved: bool
+    created_at: datetime
+
+
 class ReportResponse(BaseModel):
     id: int
     task_id: int
@@ -55,7 +78,31 @@ class ReportResponse(BaseModel):
     format: str
     content_path: str
     content: str = ""
+    # S7 软态 draft|final + 章节化 + 批注列表。
+    status: str = "draft"
+    chapters: list[ReportChapterResponse] = []
+    annotations: list[ReportAnnotationResponse] = []
     created_at: datetime
+
+
+class ReportChapterPatchRequest(BaseModel):
+    """行内编辑章节 content（纯文本 Markdown，定稿 409）."""
+
+    content: str
+
+
+class ReportChapterReorderItem(BaseModel):
+    """拖拽排序单项：chapter_id + 新 order_index."""
+
+    chapter_id: int
+    order_index: int
+
+
+class ReportAnnotationCreateRequest(BaseModel):
+    """新建章节级批注（定稿 409）."""
+
+    chapter_id: Optional[int] = None
+    content: str
 
 
 class ExportRunRequest(BaseModel):

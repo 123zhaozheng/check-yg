@@ -7,6 +7,8 @@ from app.models.export import ExportFile
 from app.models.finding import Finding
 from app.models.flow_record import FlowRecordRow
 from app.models.report import Report
+from app.models.report_annotation import ReportAnnotation
+from app.models.report_chapter import ReportChapter
 from app.models.review import Review, ReviewMatch
 from app.models.role import Role
 from app.models.setting import Setting
@@ -23,6 +25,8 @@ __all__ = [
     "Finding",
     "FlowRecordRow",
     "Report",
+    "ReportAnnotation",
+    "ReportChapter",
     "Review",
     "ReviewMatch",
     "Role",

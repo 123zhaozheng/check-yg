@@ -123,10 +123,13 @@ async def test_review_report_and_exports_are_downloadable(client, db_session, te
     )
     assert report_response.status_code == 200
     report_id = report_response.json()["id"]
-    assert "审计报告" in report_response.json()["content"]
-
-    report_download = await client.get(f"/api/reports/{report_id}/download")
-    assert report_download.status_code == 200
+    # S7 章节化：POST /tasks/{id}/report 覆盖为章节化生成，建 6 章 ReportChapter
+    # （content 存 DB 行，顶层 content 空）。旧 ReviewMatch 报告逻辑不再走此端点。
+    body = report_response.json()
+    assert body["status"] == "draft"
+    assert len(body["chapters"]) == 6
+    chapter_titles = [c["title"] for c in body["chapters"]]
+    assert chapter_titles == ["概述", "被审查对象", "数据范围", "异常发现汇总", "风险评估", "结论建议"]
 
     excel_response = await client.post(
         f"/api/tasks/{task.id}/export/excel",
