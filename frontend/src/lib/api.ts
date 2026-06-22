@@ -331,3 +331,100 @@ export interface DashboardData {
 export function getDashboard(): Promise<DashboardData> {
   return api.get<DashboardData>("/dashboard/")
 }
+
+/* =========================================================================
+ * Document API — types + helpers (S4 data import).
+ * Appended only; the apiFetch core above is unchanged.
+ * Mirrors `backend/app/routers/tasks.py::DocumentResponse`.
+ * ======================================================================= */
+
+/**
+ * Document status (backend documents.status).
+ * pending / processing / completed / failed / deleted.
+ */
+export type DocumentStatus =
+  | "pending"
+  | "processing"
+  | "completed"
+  | "failed"
+  | "deleted"
+
+/** One document row in the import page's file table. */
+export interface DocumentItem {
+  id: number
+  filename: string
+  original_path: string
+  channel?: string | null
+  status: DocumentStatus
+  size_bytes?: number | null
+  created_at: string
+  error_log?: string | null
+}
+
+export interface DocumentListResponse {
+  items: DocumentItem[]
+  total: number
+}
+
+/** Query params for GET /api/tasks/{id}/documents. */
+export interface DocumentListParams {
+  channel?: string
+  include_deleted?: boolean
+}
+
+/** GET /api/tasks/{taskId}/documents — list files + parse status, optional channel filter. */
+export function listDocuments(
+  taskId: number,
+  params?: DocumentListParams,
+): Promise<DocumentListResponse> {
+  return api.get<DocumentListResponse>(
+    `/tasks/${taskId}/documents`,
+    params as ApiRequestOptions["params"],
+  )
+}
+
+/**
+ * POST /api/tasks/{taskId}/append-upload (multipart) — append files to an
+ * existing task with a channel label. `apiFetch` detects FormData and sends
+ * multipart without a Content-Type header (browser sets the boundary).
+ */
+export function uploadTaskDocuments(
+  taskId: number,
+  files: File[],
+  channel?: string,
+): Promise<TaskItem> {
+  const form = new FormData()
+  for (const f of files) {
+    form.append("files", f, f.name)
+  }
+  if (channel) {
+    form.append("channel", channel)
+  }
+  return api.post<TaskItem>(`/tasks/${taskId}/append-upload`, form)
+}
+
+/**
+ * POST /api/tasks/upload (multipart) — create a new task from uploaded files.
+ * Used only when the import page needs to bootstrap a draft task; the common
+ * path is `uploadTaskDocuments` against an existing task.
+ */
+export function createTaskFromUpload(
+  title: string,
+  files: File[],
+  channel?: string,
+): Promise<TaskItem> {
+  const form = new FormData()
+  form.append("title", title)
+  for (const f of files) {
+    form.append("files", f, f.name)
+  }
+  if (channel) {
+    form.append("channel", channel)
+  }
+  return api.post<TaskItem>("/tasks/upload", form)
+}
+
+/** DELETE /api/tasks/{taskId}/documents/{docId} — soft-delete (status → deleted). */
+export function deleteDocument(taskId: number, docId: number): Promise<void> {
+  return api.delete<void>(`/tasks/${taskId}/documents/${docId}`)
+}
