@@ -37,6 +37,13 @@ class ExtractionResult:
         # Full paths of documents that reached stage 1, for path-aware append
         # dedup (same-named files in different folders are distinct).
         self.processed_document_paths: List[str] = []
+        # S5 清洗不删减: every raw table row persisted 1:1. Unified list of
+        # record dicts (standard / unparsed / excluded) with raw_payload. The
+        # runner writes these into the ``flow_records`` table; ``flow_records``
+        # (FlowRecord list above) is kept for backward compatibility with
+        # downstream review/report/export services that still read
+        # Document.flow_tables["records"].
+        self.extracted_records: List[Dict[str, Any]] = []
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
@@ -54,6 +61,7 @@ class ExtractionResult:
             "errors": self.errors,
             "per_document_stats": self.per_document_stats,
             "processed_document_paths": self.processed_document_paths,
+            "extracted_records": self.extracted_records,
         }
 
 
@@ -187,6 +195,54 @@ class FlowExtractor:
             return self.excel_parser
         return None
 
+    @staticmethod
+    def _raw_payload_from_row(row: List[str]) -> Dict[str, Any]:
+        """Capture a raw table row as a JSONB-safe payload (清洗不删减).
+
+        Cells are stringified so JSONB stores them verbatim; the column count
+        is preserved so the original row can be reconstructed exactly.
+        """
+        return {"cells": [str(c) if c is not None else "" for c in row]}
+
+    @staticmethod
+    def _build_record(
+        *,
+        record_type: str,
+        source_file: str,
+        row_index: int,
+        raw_row: List[str],
+        is_valid: bool = True,
+        transaction_time: str = "",
+        counterparty_name: str = "",
+        counterparty_account: str = "",
+        amount: str = "",
+        raw_amount: str = "",
+        summary: str = "",
+        transaction_type: str = "",
+        exclude_reason: str = "",
+    ) -> Dict[str, Any]:
+        """Build one unified record dict for the ``extracted_records`` list.
+
+        ``record_type`` ∈ {standard, unparsed, excluded}. ``raw_row`` is the
+        original cell list — always captured into ``raw_payload`` so any
+        filtered row can be restored verbatim (清洗不删减).
+        """
+        return {
+            "record_type": record_type,
+            "source_file": source_file,
+            "row_index": int(row_index),
+            "is_valid": bool(is_valid),
+            "transaction_time": transaction_time or "",
+            "counterparty_name": counterparty_name or "",
+            "counterparty_account": counterparty_account or "",
+            "amount": amount or "",
+            "raw_amount": raw_amount or "",
+            "summary": summary or "",
+            "transaction_type": transaction_type or "",
+            "raw_payload": FlowExtractor._raw_payload_from_row(raw_row),
+            "exclude_reason": exclude_reason or "",
+        }
+
     async def extract_flows(
         self,
         document_folder: str,
@@ -258,6 +314,12 @@ class FlowExtractor:
                         }
                     else:
                         stage2_docs.append(doc_result)
+                    # S5 不删减: carry excluded rows (classifier-rejected tables)
+                    # into the unified record list even at stage 1, so they are
+                    # persisted regardless of whether stage 2 runs.
+                    excluded_records = doc_result.get("excluded_records") or []
+                    if excluded_records:
+                        result.extracted_records.extend(excluded_records)
                     result.processed_documents += 1
                     result.processed_document_paths.append(str(doc_path))
                     result.total_tables += int(doc_result.get("total_tables", 0) or 0)
@@ -296,6 +358,9 @@ class FlowExtractor:
             elif res:
                 result.flow_records.extend(res["records"])
                 result.per_document_stats.update(res.get("stats", {}))
+                # S5 不删减: stage 2 emits the unified record list (standard +
+                # unparsed) with raw_payload — extend the result's canonical list.
+                result.extracted_records.extend(res.get("extracted_records", []))
 
         result.total_records = len(result.flow_records)
 
@@ -400,6 +465,7 @@ class FlowExtractor:
 
         # Classify tables
         flow_tables = []
+        excluded_records: List[Dict[str, Any]] = []
         for table in raw_tables:
             await self._check_pause()
             if self._cancel_requested:
@@ -426,6 +492,26 @@ class FlowExtractor:
                         "data_start_row": data_start_row,
                     }
                 )
+            else:
+                # S5 不删减: classifier rejected this table (not flow, or
+                # confidence below threshold) — keep every original row as an
+                # ``excluded`` record with raw_payload so it can be restored
+                # verbatim. Never drop the rows.
+                if not is_flow:
+                    reason = "classifier: not flow table"
+                else:
+                    reason = f"classifier: confidence {confidence} below threshold {confidence_threshold}"
+                for row_idx, row in enumerate(table.rows):
+                    excluded_records.append(
+                        self._build_record(
+                            record_type="excluded",
+                            source_file=doc_path.name,
+                            row_index=row_idx + 1,
+                            raw_row=row,
+                            is_valid=False,
+                            exclude_reason=reason,
+                        )
+                    )
 
         if not flow_tables:
             self.checkpoint_manager.save_checkpoint(
@@ -444,7 +530,16 @@ class FlowExtractor:
                 },
                 document_path=str(doc_path),
             )
-            return None
+            # S5 不删减: even with no flow tables, return the excluded records
+            # so the runner persists them. ``flow_tables=[]`` tells extract_flows
+            # not to schedule stage 2 for this doc.
+            return {
+                "doc_path": doc_path,
+                "flow_tables": [],
+                "portrait": portrait,
+                "total_tables": len(raw_tables),
+                "excluded_records": excluded_records,
+            }
 
         checkpoint_tables = []
         total_flow_rows = 0
@@ -482,6 +577,7 @@ class FlowExtractor:
             "flow_tables": flow_tables,
             "portrait": portrait,
             "total_tables": len(raw_tables),
+            "excluded_records": excluded_records,
         }
 
     async def _process_document_stage2(
@@ -490,12 +586,18 @@ class FlowExtractor:
         task_id: str,
         batch_size: int,
     ) -> Optional[Dict[str, Any]]:
-        """Process document stage 2: normalize flow tables."""
+        """Process document stage 2: normalize flow tables.
+
+        S5 不删减: normalizer 输出的每一行都保留。is_valid=true → standard
+        记录（+ FlowRecord 兼容下游）；is_valid=false → unparsed 记录（带
+        raw_payload + exclude_reason）。两者都不丢。
+        """
         doc_path = doc_result["doc_path"]
         flow_tables = doc_result["flow_tables"]
         portrait = doc_result["portrait"]
 
-        records = []
+        records: List[FlowRecord] = []
+        extracted_records: List[Dict[str, Any]] = []
         for ft in flow_tables:
             await self._check_pause()
             if self._cancel_requested:
@@ -513,9 +615,9 @@ class FlowExtractor:
                 )
 
                 # Post-processing: code-based transaction_type inference.
-                # The LLM may misjudge 收支 direction; raw_amount sign +
-                # amount_sign_rule give a deterministic correction for
-                # non-credit-card accounts (credit cards stay LLM-judged).
+                # Applied to standard (is_valid=true) rows only — unparsed rows
+                # are noise (totals/balances/headers) and stay as-is. Logic is
+                # faithful to legacy src/core/flow_extractor_v2.py.
                 amount_sign_rule = (portrait or {}).get("amount_sign_rule", "unknown")
                 for item in normalized:
                     if not item.get("is_valid", True):
@@ -536,10 +638,17 @@ class FlowExtractor:
                         item["transaction_type"] = inferred_type
 
                 for batch_offset, item in enumerate(normalized):
-                    if item.get("is_valid", True):
+                    row_index = data_start_row + i + batch_offset
+                    raw_row = (
+                        rows[i + batch_offset]
+                        if 0 <= i + batch_offset < len(rows)
+                        else []
+                    )
+                    is_valid = bool(item.get("is_valid", True))
+                    if is_valid:
                         record = FlowRecord(
                             source_file=doc_path.name,
-                            original_row=data_start_row + i + batch_offset,
+                            original_row=row_index,
                             transaction_time=item.get("transaction_time", ""),
                             counterparty_name=item.get("counterparty_name", ""),
                             counterparty_account=item.get("counterparty_account", ""),
@@ -548,6 +657,42 @@ class FlowExtractor:
                             transaction_type=item.get("transaction_type", ""),
                         )
                         records.append(record)
+                        extracted_records.append(
+                            self._build_record(
+                                record_type="standard",
+                                source_file=doc_path.name,
+                                row_index=row_index,
+                                raw_row=raw_row,
+                                is_valid=True,
+                                transaction_time=item.get("transaction_time", ""),
+                                counterparty_name=item.get("counterparty_name", ""),
+                                counterparty_account=item.get("counterparty_account", ""),
+                                amount=item.get("amount", ""),
+                                raw_amount=str(item.get("raw_amount", "") or ""),
+                                summary=item.get("summary", ""),
+                                transaction_type=item.get("transaction_type", ""),
+                            )
+                        )
+                    else:
+                        # S5 不删减: noise row (合计/小计/余额/页脚/页眉/空行)
+                        # → unparsed, kept with raw_payload + normalizer fields.
+                        extracted_records.append(
+                            self._build_record(
+                                record_type="unparsed",
+                                source_file=doc_path.name,
+                                row_index=row_index,
+                                raw_row=raw_row,
+                                is_valid=False,
+                                transaction_time=item.get("transaction_time", ""),
+                                counterparty_name=item.get("counterparty_name", ""),
+                                counterparty_account=item.get("counterparty_account", ""),
+                                amount=item.get("amount", ""),
+                                raw_amount=str(item.get("raw_amount", "") or ""),
+                                summary=item.get("summary", ""),
+                                transaction_type=item.get("transaction_type", ""),
+                                exclude_reason="normalizer: noise row (is_valid=false)",
+                            )
+                        )
 
         checkpoint = self.checkpoint_manager.load_checkpoint(
             task_id, doc_path.name, document_path=str(doc_path)
@@ -565,6 +710,7 @@ class FlowExtractor:
         return {
             "doc_path": doc_path,
             "records": records,
+            "extracted_records": extracted_records,
             "stats": {doc_path.name: {"record_count": len(records)}},
         }
 

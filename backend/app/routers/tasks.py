@@ -1,19 +1,23 @@
 # -*- coding: utf-8 -*-
 """Task management router."""
 
-from datetime import datetime
+import csv
+import io
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from ..auth.dependencies import get_current_user
 from ..config import settings
 from ..database import get_db
-from ..models import Document, Task, TaskLog, User
+from ..models import Document, FlowRecordRow, Task, TaskLog, User
 from ..services.extraction.runner import runner
 from ..services.extraction.scanner import DocumentScanner
 
@@ -765,3 +769,321 @@ async def delete_task_document(
     )
     await db.commit()
     return None
+
+
+# ---------------------------------------------------------------------------
+# S5 清洗标准化 — flow_records (record-of-truth), excluded view, restore,
+# cleaning commit + export log. Owner-only, reuses _load_owned_task.
+# 清洗不删减: every raw table row is persisted 1:1 (standard / unparsed /
+# excluded) with raw_payload; restore marks rows restored but never deletes.
+# ---------------------------------------------------------------------------
+
+
+class RecordResponse(BaseModel):
+    """One flow_records row — standard / unparsed / excluded."""
+
+    id: int
+    task_id: int
+    document_id: Optional[int] = None
+    channel: Optional[str] = None
+    record_type: str
+    row_index: int
+    is_valid: bool
+    transaction_time: Optional[str] = None
+    counterparty_name: Optional[str] = None
+    counterparty_account: Optional[str] = None
+    amount: Optional[str] = None
+    raw_amount: Optional[str] = None
+    summary: Optional[str] = None
+    transaction_type: Optional[str] = None
+    raw_payload: Optional[dict[str, Any]] = None
+    status: str
+    exclude_reason: Optional[str] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class RecordListResponse(BaseModel):
+    items: List[RecordResponse]
+    total: int
+    page: int
+    page_size: int
+
+
+def _record_response(row: FlowRecordRow) -> RecordResponse:
+    return RecordResponse(
+        id=row.id,
+        task_id=row.task_id,
+        document_id=row.document_id,
+        channel=row.channel,
+        record_type=row.record_type,
+        row_index=row.row_index,
+        is_valid=bool(row.is_valid),
+        transaction_time=row.transaction_time,
+        counterparty_name=row.counterparty_name,
+        counterparty_account=row.counterparty_account,
+        amount=row.amount,
+        raw_amount=row.raw_amount,
+        summary=row.summary,
+        transaction_type=row.transaction_type,
+        raw_payload=row.raw_payload,
+        status=row.status,
+        exclude_reason=row.exclude_reason,
+        created_at=row.created_at,
+    )
+
+
+@router.get("/{task_id}/records", response_model=RecordListResponse)
+async def list_task_records(
+    task_id: int,
+    channel: Optional[str] = Query(None),
+    record_type: Optional[str] = Query(
+        None,
+        description="standard | unparsed | excluded | all (default standard)",
+    ),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """List flow_records for a task, filtered by channel and record_type.
+
+    Defaults to ``record_type=standard`` (the cleaned, downstream-usable rows).
+    Pass ``record_type=all`` to surface every type, or ``unparsed``/``excluded``
+    to inspect the 不删减保留的排除项.
+    """
+    await _load_owned_task(db, task_id, current_user)
+
+    query = select(FlowRecordRow).where(FlowRecordRow.task_id == task_id)
+    if channel:
+        query = query.where(FlowRecordRow.channel == channel)
+    if record_type == "all":
+        pass  # no record_type filter — surface every type
+    elif record_type:
+        query = query.where(FlowRecordRow.record_type == record_type)
+    else:
+        query = query.where(FlowRecordRow.record_type == "standard")
+
+    count_query = select(func.count()).select_from(query.subquery())
+    total = (await db.execute(count_query)).scalar() or 0
+
+    query = query.order_by(FlowRecordRow.id.asc())
+    query = query.offset((page - 1) * page_size).limit(page_size)
+    result = await db.execute(query)
+    rows = result.scalars().all()
+
+    return RecordListResponse(
+        items=[_record_response(r) for r in rows],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@router.get("/{task_id}/excluded", response_model=RecordListResponse)
+async def list_task_excluded(
+    task_id: int,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=200),
+    record_type: Optional[str] = Query(
+        None,
+        description="excluded | unparsed (default both). Filters the 可捞回 view to one type so pagination composes per sub-tab.",
+    ),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """List excluded + unparsed rows that are still active (not yet restored).
+
+    These are the 不删减保留的可捞回项 — classifier-rejected table rows
+    (excluded) and normalizer noise rows (unparsed). Restored rows drop out of
+    this view but stay in the table.
+
+    ``record_type`` optionally narrows to one type so the frontend's
+    非流水表 / 噪音行 sub-tabs paginate independently (a mixed page filtered
+    client-side would show empty slots when one type is sparse on a page).
+    """
+    await _load_owned_task(db, task_id, current_user)
+
+    types = [record_type] if record_type in ("excluded", "unparsed") else ["excluded", "unparsed"]
+    query = select(FlowRecordRow).where(
+        FlowRecordRow.task_id == task_id,
+        FlowRecordRow.record_type.in_(types),
+        FlowRecordRow.status == "active",
+    )
+    count_query = select(func.count()).select_from(query.subquery())
+    total = (await db.execute(count_query)).scalar() or 0
+
+    query = query.order_by(FlowRecordRow.id.asc())
+    query = query.offset((page - 1) * page_size).limit(page_size)
+    result = await db.execute(query)
+    rows = result.scalars().all()
+
+    return RecordListResponse(
+        items=[_record_response(r) for r in rows],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@router.post(
+    "/{task_id}/records/{record_id}/restore",
+    response_model=RecordResponse,
+)
+async def restore_task_record(
+    task_id: int,
+    record_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Mark an excluded/unparsed row as restored (捞回).
+
+    Honors 不删减: the row is never deleted — only ``status`` flips to
+    ``restored`` so it drops out of the excluded view. This slice does NOT
+    promote the row back to ``standard``; that workflow is deferred to a later
+    slice. Returns the updated record.
+    """
+    await _load_owned_task(db, task_id, current_user)
+
+    result = await db.execute(
+        select(FlowRecordRow).where(
+            FlowRecordRow.id == record_id,
+            FlowRecordRow.task_id == task_id,
+        )
+    )
+    row = result.scalar_one_or_none()
+    if not row:
+        raise HTTPException(status_code=404, detail="Record not found")
+
+    row.status = "restored"
+    db.add(
+        TaskLog(
+            task_id=task_id,
+            level="info",
+            message=f"Record restored: id={record_id} type={row.record_type}",
+        )
+    )
+    await db.commit()
+    await db.refresh(row)
+    return _record_response(row)
+
+
+@router.post("/{task_id}/cleaning/commit", response_model=TaskResponse)
+async def commit_cleaning(
+    task_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Lock the current standard records as the downstream-usable snapshot.
+
+    Writes a ``cleaning_committed`` ISO timestamp into ``task.config`` so the
+    task can advance to the AI analysis stage. Does NOT re-run cleaning — the
+    rule set is fixed (决策4), this only marks the snapshot.
+    """
+    task = await _load_owned_task(db, task_id, current_user)
+    config = dict(task.config or {})
+    config["cleaning_committed"] = datetime.now(timezone.utc).isoformat()
+    task.config = config
+    db.add(
+        TaskLog(
+            task_id=task_id,
+            level="info",
+            message="Cleaning committed (snapshot locked)",
+        )
+    )
+    await db.commit()
+    await db.refresh(task)
+    return _task_response(task)
+
+
+@router.get("/{task_id}/cleaning/export")
+async def export_cleaning_log(
+    task_id: int,
+    format: str = Query("csv", pattern="^(csv|json)$"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Export the unparsed + excluded cleaning log (with raw_payload + reason).
+
+    Returns a downloadable CSV or JSON file. Every row carries its raw_payload
+    (original cells) and exclude_reason so the cleaning decision is traceable
+    and reversible (不删减).
+    """
+    await _load_owned_task(db, task_id, current_user)
+
+    # selectinload Document so source_file (filename) is available without lazy
+    # IO in the async loop. FlowRecordRow has no source_file column — the source
+    # file name lives on the related Document.filename.
+    result = await db.execute(
+        select(FlowRecordRow)
+        .options(selectinload(FlowRecordRow.document))
+        .where(
+            FlowRecordRow.task_id == task_id,
+            FlowRecordRow.record_type.in_(["excluded", "unparsed"]),
+        )
+        .order_by(FlowRecordRow.id.asc())
+    )
+    rows = result.scalars().all()
+
+    import json as _json
+
+    if format == "json":
+        payload = [_record_response(r).model_dump(mode="json") for r in rows]
+        body = _json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
+        return StreamingResponse(
+            io.BytesIO(body),
+            media_type="application/json",
+            headers={
+                "Content-Disposition": f'attachment; filename="cleaning_log_{task_id}.json"'
+            },
+        )
+
+    # CSV: one row per excluded/unparsed record, raw_payload serialized as JSON.
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(
+        [
+            "id",
+            "record_type",
+            "status",
+            "row_index",
+            "source_file",
+            "channel",
+            "exclude_reason",
+            "transaction_time",
+            "counterparty_name",
+            "amount",
+            "raw_amount",
+            "summary",
+            "raw_payload",
+        ]
+    )
+    for r in rows:
+        writer.writerow(
+            [
+                r.id,
+                r.record_type,
+                r.status,
+                r.row_index,
+                r.document.filename if r.document else "",
+                r.channel or "",
+                r.exclude_reason or "",
+                r.transaction_time or "",
+                r.counterparty_name or "",
+                r.amount or "",
+                r.raw_amount or "",
+                r.summary or "",
+                _json.dumps(r.raw_payload or {}, ensure_ascii=False),
+            ]
+        )
+    body = buf.getvalue().encode("utf-8-sig")  # UTF-8 BOM so Excel reads CJK.
+    return StreamingResponse(
+        io.BytesIO(body),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": f'attachment; filename="cleaning_log_{task_id}.csv"'
+        },
+    )
+

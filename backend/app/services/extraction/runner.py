@@ -6,10 +6,10 @@ import logging
 from datetime import datetime, timezone
 from typing import Dict
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from app.database import async_session
-from app.models import Document, Task, TaskLog
+from app.models import Document, FlowRecordRow, Task, TaskLog
 from app.services.settings_service import load_runtime_settings
 from app.websocket.notifications import notify_user
 
@@ -155,6 +155,12 @@ class ExtractionTaskRunner:
 
     async def _mark_finished(self, task_id: int, owner_id: int, result: dict, append: bool = False) -> None:
         status = "failed" if result.get("failed_documents") or result.get("errors") else "completed"
+        # Current-run extracted_records (standard + unparsed + excluded) with
+        # raw_payload. Persisted separately from the merged final_result so
+        # append runs only insert new documents' records (path-aware filter in
+        # the extractor already excluded already-processed docs), never
+        # re-inserting previous runs' rows.
+        current_extracted_records = list(result.get("extracted_records", []) or [])
         async with async_session() as session:
             db_result = await session.execute(select(Task).where(Task.id == task_id))
             task = db_result.scalar_one_or_none()
@@ -172,7 +178,10 @@ class ExtractionTaskRunner:
                 **(task.config or {}),
                 "last_result": final_result,
             }
-            await self._persist_result_documents(session, task_id, final_result)
+            await self._persist_result_documents(
+                session, task_id, final_result, append=append,
+                extracted_records=current_extracted_records,
+            )
             session.add(
                 TaskLog(
                     task_id=task_id,
@@ -191,7 +200,13 @@ class ExtractionTaskRunner:
         )
 
     @staticmethod
-    async def _persist_result_documents(session, task_id: int, result: dict) -> None:
+    async def _persist_result_documents(
+        session,
+        task_id: int,
+        result: dict,
+        append: bool = False,
+        extracted_records: list | None = None,
+    ) -> None:
         """Persist normalized records into Document rows for review/report services.
 
         Rows pre-created at upload time (with channel/size_bytes, status="pending")
@@ -201,6 +216,13 @@ class ExtractionTaskRunner:
 
         Soft-deleted rows (status="deleted") are never touched, honoring the
         不删减 hard line — we do not delete any Document row here.
+
+        S5 不删减: ``extracted_records`` (standard + unparsed + excluded, each
+        with ``raw_payload``) are persisted into the ``flow_records`` table as
+        the record-of-truth. Non-append runs clear prior non-restored rows for
+        this task first (restored rows are never touched — 不删减). Append runs
+        only insert the current run's records (never delete), mirroring the
+        path-aware append dedup in the extractor.
         """
         records_by_source = {}
         for record in result.get("flow_records", []) or []:
@@ -281,6 +303,84 @@ class ExtractionTaskRunner:
                     doc.status = "completed"
                     doc.flow_tables = {"records": []}
                     consumed_ids.add(doc.id)
+
+        # S5 不删减: persist every extracted row (standard + unparsed + excluded)
+        # into the flow_records table with raw_payload. The task's documents are
+        # keyed by filename; records carry source_file so we can map back to the
+        # document_id. Restored rows are never touched (不删减).
+        await ExtractionTaskRunner._persist_flow_records(
+            session,
+            task_id,
+            extracted_records or [],
+            append=append,
+            existing_by_name=existing_by_name,
+            consumed_ids=consumed_ids,
+        )
+
+    @staticmethod
+    async def _persist_flow_records(
+        session,
+        task_id: int,
+        extracted_records: list,
+        *,
+        append: bool,
+        existing_by_name: dict[str, list[Document]],
+        consumed_ids: set[int],
+    ) -> None:
+        """Write the unified record list into the ``flow_records`` table.
+
+        Non-append: delete this task's prior ``flow_records`` rows whose status
+        is not ``restored`` (restored rows are never touched — 不删减), then
+        insert the current run's rows. This rebuilds the table per run while
+        preserving user-restored rows.
+
+        Append: only insert the current run's rows (the extractor already
+        filtered out already-processed documents by full path, so these are
+        genuinely new). Never delete on append — 不删减.
+        """
+        if not append:
+            await session.execute(
+                delete(FlowRecordRow).where(
+                    FlowRecordRow.task_id == task_id,
+                    FlowRecordRow.status != "restored",
+                )
+            )
+
+        for record in extracted_records:
+            if not isinstance(record, dict):
+                continue
+            source_file = str(record.get("source_file") or "").strip()
+            doc_id: int | None = None
+            channel: str | None = None
+            if source_file:
+                candidates = existing_by_name.get(source_file) or []
+                target = next((d for d in candidates if d.id in consumed_ids), None)
+                if target is not None:
+                    doc_id = target.id
+                    channel = target.channel
+            raw_payload = record.get("raw_payload")
+            if raw_payload is not None and not isinstance(raw_payload, dict):
+                raw_payload = None
+            session.add(
+                FlowRecordRow(
+                    task_id=task_id,
+                    document_id=doc_id,
+                    channel=channel,
+                    record_type=str(record.get("record_type") or "standard"),
+                    row_index=int(record.get("row_index") or 0),
+                    is_valid=bool(record.get("is_valid", True)),
+                    transaction_time=record.get("transaction_time") or None,
+                    counterparty_name=record.get("counterparty_name") or None,
+                    counterparty_account=record.get("counterparty_account") or None,
+                    amount=record.get("amount") or None,
+                    raw_amount=record.get("raw_amount") or None,
+                    summary=record.get("summary") or None,
+                    transaction_type=record.get("transaction_type") or None,
+                    raw_payload=raw_payload,
+                    status="active",
+                    exclude_reason=record.get("exclude_reason") or None,
+                )
+            )
 
     async def _mark_failed(self, task_id: int, owner_id: int, error: str) -> None:
         async with async_session() as session:
@@ -366,6 +466,14 @@ class ExtractionTaskRunner:
         ]
 
         merged["errors"] = (previous.get("errors", []) or []) + (current.get("errors", []) or [])
+
+        # S5 不删减: extracted_records (standard + unparsed + excluded with
+        # raw_payload) accumulate across runs — append never overwrites prior
+        # rows. The flow_records table is the record-of-truth; this merged list
+        # mirrors it in task.config.last_result for traceability.
+        prev_extracted = previous.get("extracted_records", []) or []
+        curr_extracted = current.get("extracted_records", []) or []
+        merged["extracted_records"] = prev_extracted + curr_extracted
 
         # Preserve previous per-document stats; only add stats for new documents.
         prev_stats = dict(previous.get("per_document_stats", {}) or {})
