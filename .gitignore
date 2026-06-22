@@ -74,6 +74,16 @@ data/reports/
 tests/*
 !tests/test_pdf_parser.py
 
+# Backend runtime data (pg 迁移后不再用 sqlite，uploads/checkpoints/outputs 为运行时产物)
+backend/data/*.db
+backend/data/uploads/
+backend/data/checkpoints/
+backend/data/outputs/
+
+# Vite cache (frontend dev)
+.vite/
+web/.vite/
+
 # Logs
 *.log
 
