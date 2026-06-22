@@ -373,3 +373,37 @@ S1 登录闭环切片完成。后端 cookie 鉴权 B1 已就绪，S1 纯前端�
 ### Next Steps
 
 - None - task complete
+
+
+## Session 12: S2 Dashboard + S3 任务列表新建弹窗 并行闭环
+
+**Date**: 2026-06-22
+**Task**: S2 Dashboard + S3 任务列表新建弹窗 并行闭环
+**Branch**: `feat/web-split`
+
+### Summary
+
+S2+S3 两个垂直切片并行完成。S3 任务列表+新建任务弹窗：后端 Task 模型加 7 字段(employee_name/employee_id/department/audit_start/audit_end/expected_channels JSONB/archived 布尔)+Alembic 迁移 79b320f02b84+tasks 路由扩筛选(stage/created_after/before/employee_id/archived/search)+分页+archive/unarchive+DELETE 软删(archived=True 呼应不删减底线)+3 新测试；前端任务列表页中文化对齐 stitch(筛选 Tab+日期+防抖搜索+任务表+阶段胶囊灰阶+分页当前页黑底白字)+新建任务弹窗(基础信息+审查范围渠道勾选+取消描边/创建并进入黑底主按钮，提交后跳 /tasks/{id}/import)+单色 Dialog。expected_channels 类型主 agent 从 dict 改 list[str](弹窗传中文渠道名数组，dict 语义不匹配)。S2 Dashboard：后端新建 GET /api/dashboard 聚合接口(4 KPI: active_tasks/monthly_completed/pending_alerts/avg_audit_hours，avg 用 Python 算保证 sqlite/pg 可移植；权限 admin 全看/非 admin 只看 owner；只用现有 Task 字段 employee_id 占位 None)+main.py 仅 +2 行注册；前端 dashboard 页中文化对齐 stitch(4 KPI 卡数值靠字号字重不靠颜色+同比 ↑↓ 灰度不用红绿+灰阶进度条+进行中任务表阶段胶囊+最近报告区+待办区+REFRESH 描边+新建审查黑底主按钮)+useDashboard hook。验收：72 测试过、alembic head、typecheck/build 过、单色 grep 过、E2E smoke 全通(dashboard 4 KPI + create 带新字段 + list 筛选 + archive/unarchive + 软删 204)。trellis-check 两任务各 0 硬底线违规。Chrome108 复核：构建 CSS color-mix 均在 @supports 守护块内且有 hex-alpha/currentColor fallback，108 安全。硬底线全过。umbrella 进度 5/10。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ad21c6e` | (see git log) |
+| `55e0762` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
