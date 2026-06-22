@@ -1,0 +1,16 @@
+{"file": "src/core/flow_extractor_v2.py", "reason": "legacy 清洗链路保真基准：stage1 classifier 判非流水表如何处理(line411-420)、stage2 normalizer is_valid=false 行如何处理(line591/604)、_infer_transaction_type 收支修正逻辑、append 合并语义。S5 不删减改造的对照源。"}
+{"file": "backend/app/llm/normalizer.py", "reason": "SYSTEM_PROMPT_DATA_NORMALIZER 提示词逐字搬自 legacy(硬底线保真,禁改)。output_validator 校验铁规则。normalize() 对外契约不变返 list[row dict 含 raw_amount/is_valid]。"}
+{"file": "backend/app/llm/classifier.py", "reason": "SYSTEM_PROMPT_FLOW_TABLE_CLASSIFIER 提示词逐字搬自 legacy(禁改)。classify() 返 is_flow_table/confidence/reason。S5 非流水表改 excluded 保留而非丢弃。"}
+{"file": "backend/app/llm/types.py", "reason": "NormalizedRow 含 row_index/is_valid/raw_amount 等字段——S5 持久化要保留这些 + 原始行 raw_payload，不能丢字段(不删减底线)。"}
+{"file": "backend/app/parsers/base.py", "reason": "FlowRecord dataclass 现有8字段无 raw_payload/is_valid/excluded。S5 要扩或新建持久化结构存标记与原始字段。"}
+{"file": "backend/app/services/extraction/extractor.py", "reason": "extractor stage1(line403-420)非流水表 continue 丢弃+stage2(line521-522)is_valid=false 行 continue 丢弃=删减点，S5 要改 1:1 保留(标 excluded/unparsed)。_infer_transaction_type 收支修正逻辑保留。"}
+{"file": "backend/app/services/extraction/runner.py", "reason": "_persist_result_documents 落地 Document.flow_tables={'records':...}，S5 要把 is_valid=false/excluded 行 + raw_payload 也存进去(不删减)。_merge_results append 合并语义。"}
+{"file": "backend/app/models/document.py", "reason": "Document.flow_tables(jsonb) 是标准化记录落地点；S5 可能需扩字段或复用 records 结构存 raw_payload+status 标记。"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "Task Extraction Boundary + 清洗 3 阶段 pipeline + checkpoint 双层持久化 + path-aware identity 规范。"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "jsonb() 辅助 + Alembic 规范，raw_payload(JSONB) 落地要遵循。"}
+{"file": "backend/tests/test_llm_parity.py", "reason": "现有提示词保真 + 框架 parity 测试，S5 不删减回归 diff 测试要参照此文件模式。"}
+{"file": "stitch_/cleaning_standardization/code.html", "reason": "S5 前端视觉源稿：顶部页头+4卡统计(异常数黑底白字)+左规则/字段导航+右标准化结果表+行展开原始↔标准对照(不用彩色diff)+排除项视图。彩色违规需改单色。"}
+{"file": "docs/web-pages-design.md", "reason": "清洗标准化页设计规范与文案(S5 中文化依据)。"}
+{"file": "docs/zhixing-delivery-plan.md", "reason": "硬底线：清洗不删减(1:1保留+raw_payload+excluded标记+软删)+提示词保真+单色原则(禁红色#ba1a1a)+Chrome108。"}
+{"file": "frontend/src/routes/__authenticated/tasks/$id/cleaning.tsx", "reason": "S5 目标路由(占位待确认)，中文化对齐 stitch cleaning_standardization。"}
+{"file": "frontend/src/lib/api.ts", "reason": "apiFetch 稳定只追加；S5 加 listRecords/listExcluded/restoreRecord 类型与函数。"}
