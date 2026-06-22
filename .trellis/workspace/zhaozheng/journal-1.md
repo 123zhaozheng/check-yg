@@ -441,3 +441,37 @@ S4 数据导入切片闭环。后端：Document 加 channel+size_bytes 字段（
 ### Next Steps
 
 - None - task complete
+
+
+## Session 14: S5 清洗标准化闭环（P0 核心底线）
+
+**Date**: 2026-06-22
+**Task**: S5 清洗标准化闭环（P0 核心底线）
+**Branch**: `feat/web-split`
+
+### Summary
+
+S5 清洗标准化切片闭环，守住两条 P0 硬底线。①不删减：新建 flow_records 表（record_type standard|unparsed|excluded + raw_payload JSONB 原始全部单元格 + status active|restored + exclude_reason）；extractor stage1 classifier 拒绝的表不再 continue 丢弃→整表产出 excluded 记录，stage2 normalizer is_valid=false 行不再丢弃→产出 unparsed 记录（对照 legacy flow_extractor_v2.py L591/604 确认旧行为是丢弃）；runner _persist_flow_records non-append 删 status!=restored 行重写（restored 永不删）append 只插不删，全库唯一 delete 带 status 守护；收支修正 _infer_transaction_type 只对 standard 应用忠实 legacy 六分支；5 接口 records/excluded/restore(标restored不删行)/commit/export(CSV UTF-8 BOM)。②提示词保真：normalizer/classifier/portrait SYSTEM_PROMPT git diff 0 行未动，test_llm_parity 20 项全绿。前端 clean.tsx 完整清洗页单色改造（异常数卡黑底白字粗体禁 #ba1a1a 红，行展开原始↔标准对照 bg-ink-200 浅灰高亮禁彩色diff，左规则面板静态6规则命中数不造，排除项视图 tab 切+捞回+服务端分页）。95 后端测试绿，前端 build+类型检查通过，Chrome108 CSS 复核无裸 color-mix/oklch。check 复核自修 2 bug（CSV source_file 列写 document_id→改 filename；排除项客户端过滤破坏服务端分页→加 record_type query 独立分页）。固定输入+fake LLM 单测验证不删减+字段无丢。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `6d54d30` | (see git log) |
+| `cf6d025` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
