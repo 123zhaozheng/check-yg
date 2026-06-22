@@ -6,7 +6,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Dict
 
-from sqlalchemy import delete, select
+from sqlalchemy import select
 
 from app.database import async_session
 from app.models import Document, Task, TaskLog
@@ -192,7 +192,16 @@ class ExtractionTaskRunner:
 
     @staticmethod
     async def _persist_result_documents(session, task_id: int, result: dict) -> None:
-        """Persist normalized records into Document rows for review/report services."""
+        """Persist normalized records into Document rows for review/report services.
+
+        Rows pre-created at upload time (with channel/size_bytes, status="pending")
+        are matched by filename and **updated** in place — their channel and
+        size_bytes are preserved. Rows without a pre-created match (e.g. legacy
+        rows, fallback from a checkpoint-only run) are created with channel=None.
+
+        Soft-deleted rows (status="deleted") are never touched, honoring the
+        不删减 hard line — we do not delete any Document row here.
+        """
         records_by_source = {}
         for record in result.get("flow_records", []) or []:
             if not isinstance(record, dict):
@@ -200,18 +209,78 @@ class ExtractionTaskRunner:
             source_file = str(record.get("source_file") or "unknown").strip() or "unknown"
             records_by_source.setdefault(source_file, []).append(record)
 
-        await session.execute(delete(Document).where(Document.task_id == task_id))
-
-        for source_file, records in records_by_source.items():
-            session.add(
-                Document(
-                    task_id=task_id,
-                    filename=source_file,
-                    original_path=source_file,
-                    status="completed",
-                    flow_tables={"records": records},
-                )
+        # Load existing non-deleted documents for this task, keyed by filename so
+        # we can update the pre-created row instead of deleting + recreating.
+        existing_result = await session.execute(
+            select(Document).where(
+                Document.task_id == task_id,
+                Document.status != "deleted",
             )
+        )
+        existing_by_name: dict[str, list[Document]] = {}
+        for doc in existing_result.scalars().all():
+            existing_by_name.setdefault(doc.filename, []).append(doc)
+
+        consumed_ids: set[int] = set()
+        for source_file, records in records_by_source.items():
+            candidates = existing_by_name.get(source_file) or []
+            target = next((d for d in candidates if d.id not in consumed_ids), None)
+            if target is not None:
+                # Update the pre-created row in place; preserve channel/size_bytes.
+                target.flow_tables = {"records": records}
+                target.status = "completed"
+                target.error_log = None
+                consumed_ids.add(target.id)
+            else:
+                # No pre-created row (legacy / fallback) — create one with no channel.
+                session.add(
+                    Document(
+                        task_id=task_id,
+                        filename=source_file,
+                        original_path=source_file,
+                        status="completed",
+                        flow_tables={"records": records},
+                    )
+                )
+
+        # Mark pre-created rows whose extraction failed (filename in
+        # failed_documents) as "failed" with the first matching error message,
+        # so the frontend's polling can stop and surface a Retry affordance.
+        failed_documents = result.get("failed_documents", []) or []
+        errors = result.get("errors", []) or []
+        if failed_documents:
+            error_by_doc: dict[str, str] = {}
+            for err in errors:
+                if not isinstance(err, dict):
+                    continue
+                doc_name = str(err.get("document") or "").strip()
+                if doc_name:
+                    error_by_doc.setdefault(doc_name, str(err.get("error") or ""))
+            for failed_name in failed_documents:
+                name = str(failed_name).strip()
+                if not name:
+                    continue
+                candidates = existing_by_name.get(name) or []
+                target = next((d for d in candidates if d.id not in consumed_ids), None)
+                if target is not None:
+                    target.status = "failed"
+                    target.error_log = error_by_doc.get(name)
+                    consumed_ids.add(target.id)
+
+        # Documents that were processed but produced no flow records (e.g. a PDF
+        # with no extractable tables, or a portrait-only document) have no entry
+        # in flow_records or failed_documents. Mark their pre-created rows as
+        # completed with empty flow_tables so the frontend's polling stops —
+        # otherwise those rows stay "pending" forever and the import page polls
+        # indefinitely. This run finished, so any still-pending row is settled.
+        for candidates in existing_by_name.values():
+            for doc in candidates:
+                if doc.id in consumed_ids:
+                    continue
+                if doc.status == "pending":
+                    doc.status = "completed"
+                    doc.flow_tables = {"records": []}
+                    consumed_ids.add(doc.id)
 
     async def _mark_failed(self, task_id: int, owner_id: int, error: str) -> None:
         async with async_session() as session:
@@ -225,6 +294,19 @@ class ExtractionTaskRunner:
                 **(task.config or {}),
                 "last_error": error,
             }
+            # Flip any still-pending pre-created Document rows to "failed" so the
+            # import page's polling stops — otherwise a crashed extraction leaves
+            # rows pending forever and the UI polls indefinitely. Soft-deleted
+            # rows are never touched (不删减 hard line).
+            docs_result = await session.execute(
+                select(Document).where(
+                    Document.task_id == task_id,
+                    Document.status == "pending",
+                )
+            )
+            for doc in docs_result.scalars().all():
+                doc.status = "failed"
+                doc.error_log = error
             session.add(TaskLog(task_id=task_id, level="error", message=error))
             await session.commit()
 

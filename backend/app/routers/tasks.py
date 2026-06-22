@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..auth.dependencies import get_current_user
 from ..config import settings
 from ..database import get_db
-from ..models import Task, TaskLog, User
+from ..models import Document, Task, TaskLog, User
 from ..services.extraction.runner import runner
 from ..services.extraction.scanner import DocumentScanner
 
@@ -136,12 +136,15 @@ def _ensure_supported_files(files: List[UploadFile]) -> None:
         )
 
 
-async def _save_uploads(files: List[UploadFile], dest_dir: Path) -> Path:
+async def _save_uploads(files: List[UploadFile], dest_dir: Path) -> tuple[Path, list[dict]]:
     """Persist uploaded files to dest_dir, keeping only supported extensions.
 
-    Returns dest_dir if at least one supported file was saved, else raises 422.
+    Returns ``(dest_dir, saved_meta)`` where ``saved_meta`` is a list of
+    ``{"filename", "original_path", "size_bytes"}`` for each saved file — used
+    to pre-create Document rows with channel + size at upload time. Raises 422
+    if no supported file was saved.
     """
-    saved = 0
+    saved_meta: list[dict] = []
     for upload in files:
         filename = upload.filename or ""
         if not is_supported_upload_name(filename):
@@ -150,19 +153,50 @@ async def _save_uploads(files: List[UploadFile], dest_dir: Path) -> Path:
         if not safe_name:
             continue
         dest = dest_dir / safe_name
+        size = 0
         with open(dest, "wb") as out:
             while True:
                 chunk = await upload.read(1024 * 1024)
                 if not chunk:
                     break
                 out.write(chunk)
-        saved += 1
-    if saved == 0:
+                size += len(chunk)
+        saved_meta.append(
+            {
+                "filename": safe_name,
+                "original_path": str(dest),
+                "size_bytes": size,
+            }
+        )
+    if not saved_meta:
         raise HTTPException(
             status_code=422,
             detail="No supported files uploaded (expected .pdf/.docx/.xlsx/.xls)",
         )
-    return dest_dir
+    return dest_dir, saved_meta
+
+
+def _precreate_documents(
+    db: AsyncSession, task_id: int, saved_meta: list[dict], channel: Optional[str]
+) -> None:
+    """Pre-create pending Document rows for uploaded files.
+
+    Each row carries the channel label and file size so the documents list can
+    show parsing status immediately (before extraction completes) and group by
+    channel. The runner later updates these rows in place with flow_tables +
+    completed/failed status; channel and size_bytes are preserved.
+    """
+    for meta in saved_meta:
+        db.add(
+            Document(
+                task_id=task_id,
+                filename=meta["filename"],
+                original_path=meta["original_path"],
+                status="pending",
+                channel=channel,
+                size_bytes=meta["size_bytes"],
+            )
+        )
 
 
 @router.get("/", response_model=TaskListResponse)
@@ -266,6 +300,7 @@ async def create_task_from_upload(
     description: Optional[str] = Form(None),
     batch_size: int = Form(20),
     confidence_threshold: int = Form(70),
+    channel: Optional[str] = Form(None),
     files: List[UploadFile] = File(...),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -274,7 +309,8 @@ async def create_task_from_upload(
 
     Files are saved under a per-task upload subfolder, which becomes the
     extraction ``document_folder`` — no backend-local directory path is typed
-    by the user.
+    by the user. ``channel`` labels the uploaded files (e.g. 银行流水) and is
+    persisted on each pre-created Document row.
     """
     clean_title = title.strip()
     if not clean_title:
@@ -299,7 +335,8 @@ async def create_task_from_upload(
     await db.refresh(task)
 
     upload_dir = _next_upload_run_dir(task.id, config)
-    await _save_uploads(files, upload_dir)
+    _, saved_meta = await _save_uploads(files, upload_dir)
+    _precreate_documents(db, task.id, saved_meta, channel)
     config["document_folder"] = str(upload_dir)
     task.config = config
     task.status = "running"
@@ -330,6 +367,7 @@ async def append_task_from_upload(
     task_id: int,
     batch_size: Optional[int] = Form(None),
     confidence_threshold: Optional[int] = Form(None),
+    channel: Optional[str] = Form(None),
     files: List[UploadFile] = File(...),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -337,7 +375,8 @@ async def append_task_from_upload(
     """Append uploaded documents to an existing task and start append extraction.
 
     Files land in a fresh per-run subfolder so same-named files from different
-    append runs stay distinct (path-aware document identity).
+    append runs stay distinct (path-aware document identity). ``channel`` labels
+    the appended files and is persisted on each pre-created Document row.
     """
     task = await _load_owned_task(db, task_id, current_user)
     if task.status == "running" or runner.is_running(task.id):
@@ -346,7 +385,8 @@ async def append_task_from_upload(
 
     config = dict(task.config or {})
     upload_dir = _next_upload_run_dir(task.id, config)
-    await _save_uploads(files, upload_dir)
+    _, saved_meta = await _save_uploads(files, upload_dir)
+    _precreate_documents(db, task.id, saved_meta, channel)
 
     bs = batch_size or int(config.get("batch_size") or 20)
     ct = confidence_threshold or int(config.get("confidence_threshold") or 70)
@@ -610,3 +650,118 @@ async def _load_owned_task(db: AsyncSession, task_id: int, current_user: User) -
     if task.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="Task does not belong to current user")
     return task
+
+
+# ---------------------------------------------------------------------------
+# Document list / delete (S4 data import).
+# Documents are pre-created at upload time (status="pending") and updated by
+# the extraction runner. Soft-delete flips status to "deleted" — the row and
+# raw files are never removed (不删减 hard line).
+# ---------------------------------------------------------------------------
+
+
+class DocumentResponse(BaseModel):
+    """One document row in the import page's file table."""
+
+    id: int
+    filename: str
+    original_path: str
+    channel: Optional[str] = None
+    status: str
+    size_bytes: Optional[int] = None
+    created_at: datetime
+    error_log: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class DocumentListResponse(BaseModel):
+    items: List[DocumentResponse]
+    total: int
+
+
+def _document_response(doc: Document) -> DocumentResponse:
+    return DocumentResponse(
+        id=doc.id,
+        filename=doc.filename,
+        original_path=doc.original_path,
+        channel=doc.channel,
+        status=doc.status,
+        size_bytes=doc.size_bytes,
+        created_at=doc.created_at,
+        error_log=doc.error_log,
+    )
+
+
+@router.get("/{task_id}/documents", response_model=DocumentListResponse)
+async def list_task_documents(
+    task_id: int,
+    channel: Optional[str] = Query(None),
+    include_deleted: bool = Query(
+        False, description="true=含软删行, omitted/false=默认隐藏 status=deleted"
+    ),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """List documents for a task, optionally filtered by channel.
+
+    Soft-deleted rows (status="deleted") are hidden by default, mirroring the
+    task list's default-hide behavior for archived rows. Pass
+    ``include_deleted=true`` to surface them.
+    """
+    await _load_owned_task(db, task_id, current_user)
+
+    query = select(Document).where(Document.task_id == task_id)
+    if channel:
+        query = query.where(Document.channel == channel)
+    if not include_deleted:
+        query = query.where(Document.status != "deleted")
+
+    count_query = select(func.count()).select_from(query.subquery())
+    total = (await db.execute(count_query)).scalar() or 0
+
+    query = query.order_by(Document.created_at.desc())
+    result = await db.execute(query)
+    docs = result.scalars().all()
+
+    return DocumentListResponse(
+        items=[_document_response(d) for d in docs], total=total
+    )
+
+
+@router.delete(
+    "/{task_id}/documents/{doc_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_task_document(
+    task_id: int,
+    doc_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Soft-delete a document (status -> "deleted"). Row and raw files stay.
+
+    Honors the 不删减 hard line — never removes the DB row or the uploaded file.
+    The document drops out of the default list (which hides status="deleted")
+    but can be restored later or surfaced via include_deleted=true.
+    """
+    await _load_owned_task(db, task_id, current_user)
+
+    result = await db.execute(
+        select(Document).where(Document.id == doc_id, Document.task_id == task_id)
+    )
+    doc = result.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    doc.status = "deleted"
+    db.add(
+        TaskLog(
+            task_id=task_id,
+            level="warning",
+            message=f"Document soft-deleted: {doc.filename}",
+        )
+    )
+    await db.commit()
+    return None

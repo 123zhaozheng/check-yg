@@ -22,7 +22,13 @@ class Document(Base):
         String(20),
         default="pending",
         nullable=False,
-    )  # noqa: E501  # pending/processing/completed/failed
+    )  # noqa: E501  # pending/processing/completed/failed/deleted
+    # Channel label (e.g. 银行流水/支付渠道/证券交易/票据凭证/其他). Nullable so
+    # legacy rows and fallback-created documents still work. Set at upload time.
+    channel: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    # File size in bytes, captured at upload so the documents list can show it
+    # without a filesystem stat. Nullable for legacy / fallback-created rows.
+    size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     extracted_tables: Mapped[dict | None] = mapped_column(jsonb(), nullable=True)
     flow_tables: Mapped[dict | None] = mapped_column(jsonb(), nullable=True)
     error_log: Mapped[str | None] = mapped_column(Text, nullable=True)

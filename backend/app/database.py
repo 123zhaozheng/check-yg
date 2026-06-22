@@ -128,3 +128,16 @@ async def _run_lightweight_migrations(conn) -> None:
             await conn.exec_driver_sql(
                 f"ALTER TABLE review_matches ADD COLUMN {column} {column_type}"
             )
+
+    # documents: channel + size_bytes (S4 data import). Additive only.
+    docs_result = await conn.exec_driver_sql("PRAGMA table_info(documents)")
+    docs_existing = {row[1] for row in docs_result.fetchall()}
+    docs_additions = {
+        "channel": "VARCHAR(50)",
+        "size_bytes": "INTEGER",
+    }
+    for column, column_type in docs_additions.items():
+        if column not in docs_existing:
+            await conn.exec_driver_sql(
+                f"ALTER TABLE documents ADD COLUMN {column} {column_type}"
+            )

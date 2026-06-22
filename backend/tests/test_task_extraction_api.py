@@ -358,3 +358,376 @@ async def test_runner_persists_result_records_for_review_services(db_session):
     ).scalars().all()
     assert [doc.filename for doc in docs] == ["a.xlsx", "b.xlsx"]
     assert docs[0].flow_tables["records"][0]["counterparty_name"] == "张三"
+
+
+# ---------------------------------------------------------------------------
+# S4 data import — channel persistence, documents list, soft delete.
+# ---------------------------------------------------------------------------
+
+
+def _pdf_bytes(name: str = "sample.pdf") -> bytes:
+    return b"%PDF-1.4\n% fake pdf body\n"
+
+
+@pytest.mark.asyncio
+async def test_append_upload_persists_channel_on_documents(client, db_session, monkeypatch):
+    """Uploading with a channel labels every pre-created Document row."""
+    session, _user = db_session
+
+    async def fake_start(**kwargs):
+        return None
+
+    monkeypatch.setattr("app.routers.tasks.runner.start", fake_start)
+    monkeypatch.setattr("app.routers.tasks.runner.is_running", lambda task_id: False)
+
+    created = await client.post(
+        "/api/tasks/upload",
+        data={"title": "Channel task", "channel": "银行流水"},
+        files=[
+            ("files", ("a.pdf", _pdf_bytes(), "application/pdf")),
+            ("files", ("b.pdf", _pdf_bytes(), "application/pdf")),
+        ],
+    )
+    assert created.status_code == 201
+    task_id = created.json()["id"]
+
+    docs = (
+        await session.execute(
+            select(Document).where(Document.task_id == task_id).order_by(Document.filename.asc())
+        )
+    ).scalars().all()
+    assert [d.filename for d in docs] == ["a.pdf", "b.pdf"]
+    assert all(d.channel == "银行流水" for d in docs)
+    assert all(d.status == "pending" for d in docs)
+    # size_bytes captured at upload.
+    assert all(d.size_bytes is not None and d.size_bytes > 0 for d in docs)
+
+
+@pytest.mark.asyncio
+async def test_runner_persist_updates_precreated_rows_preserving_channel(db_session):
+    """_persist_result_documents updates pre-created rows in place (no delete+rebuild).
+
+    Channel + size_bytes from the pre-created row are preserved; only flow_tables
+    and status flip to completed.
+    """
+    session, user = db_session
+    task = Task(title="Persist with channel", owner_id=user.id, status="running")
+    session.add(task)
+    await session.flush()
+
+    pre = Document(
+        task_id=task.id,
+        filename="a.xlsx",
+        original_path="/tmp/run-1/a.xlsx",
+        status="pending",
+        channel="支付渠道",
+        size_bytes=123,
+    )
+    session.add(pre)
+    await session.commit()
+    await session.refresh(task)
+    pre_id = pre.id
+
+    result = {
+        "flow_records": [
+            {
+                "source_file": "a.xlsx",
+                "original_row": "2",
+                "transaction_time": "2026-06-17 10:00:00",
+                "counterparty_name": "张三",
+                "amount": "100.00",
+            },
+        ],
+        "failed_documents": [],
+        "errors": [],
+        "total_records": 1,
+    }
+
+    await ExtractionTaskRunner._persist_result_documents(session, task.id, result)
+
+    docs = (
+        await session.execute(select(Document).where(Document.task_id == task.id))
+    ).scalars().all()
+    # Same row updated in place — no new row, id preserved.
+    assert len(docs) == 1
+    assert docs[0].id == pre_id
+    assert docs[0].status == "completed"
+    assert docs[0].channel == "支付渠道"
+    assert docs[0].size_bytes == 123
+    assert docs[0].flow_tables["records"][0]["counterparty_name"] == "张三"
+
+
+@pytest.mark.asyncio
+async def test_runner_persist_marks_failed_documents(db_session):
+    """A pre-created row whose filename is in failed_documents flips to failed."""
+    session, user = db_session
+    task = Task(title="Failed doc", owner_id=user.id, status="running")
+    session.add(task)
+    await session.flush()
+
+    pre = Document(
+        task_id=task.id,
+        filename="bad.pdf",
+        original_path="/tmp/run-1/bad.pdf",
+        status="pending",
+        channel="银行流水",
+        size_bytes=10,
+    )
+    session.add(pre)
+    await session.commit()
+    await session.refresh(task)
+
+    result = {
+        "flow_records": [],
+        "failed_documents": ["bad.pdf"],
+        "errors": [{"document": "bad.pdf", "stage": "stage1", "error": "parse boom"}],
+        "total_records": 0,
+    }
+
+    await ExtractionTaskRunner._persist_result_documents(session, task.id, result)
+
+    doc = (
+        await session.execute(select(Document).where(Document.task_id == task.id))
+    ).scalar_one()
+    assert doc.status == "failed"
+    assert doc.error_log == "parse boom"
+    # Channel preserved across failure.
+    assert doc.channel == "银行流水"
+
+
+@pytest.mark.asyncio
+async def test_runner_persist_never_touches_soft_deleted_rows(db_session):
+    """A status=deleted row is never matched/updated — 不删减 hard line."""
+    session, user = db_session
+    task = Task(title="Soft deleted", owner_id=user.id, status="running")
+    session.add(task)
+    await session.flush()
+
+    deleted = Document(
+        task_id=task.id,
+        filename="a.xlsx",
+        original_path="/tmp/run-1/a.xlsx",
+        status="deleted",
+        channel="银行流水",
+        size_bytes=5,
+    )
+    pending = Document(
+        task_id=task.id,
+        filename="a.xlsx",
+        original_path="/tmp/run-2/a.xlsx",
+        status="pending",
+        channel="支付渠道",
+        size_bytes=9,
+    )
+    session.add_all([deleted, pending])
+    await session.commit()
+    await session.refresh(task)
+
+    result = {
+        "flow_records": [{"source_file": "a.xlsx", "amount": "1"}],
+        "failed_documents": [],
+        "errors": [],
+        "total_records": 1,
+    }
+
+    await ExtractionTaskRunner._persist_result_documents(session, task.id, result)
+
+    docs = (
+        await session.execute(
+            select(Document).where(Document.task_id == task.id).order_by(Document.id.asc())
+        )
+    ).scalars().all()
+    assert len(docs) == 2
+    # The deleted row stays deleted (untouched); the pending row is consumed.
+    statuses = {d.id: d.status for d in docs}
+    assert statuses[deleted.id] == "deleted"
+    assert statuses[pending.id] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_runner_persist_marks_no_record_docs_completed(db_session):
+    """A pre-created row whose doc produced no flow records flips to completed.
+
+    Documents processed by the extractor but yielding no flow_records (e.g. a
+    PDF with no extractable tables, or a portrait-only doc) have no entry in
+    flow_records or failed_documents. Without a final sweep, their pre-created
+    row would stay "pending" forever and the import page would poll
+    indefinitely. The runner must mark them completed with empty flow_tables.
+    """
+    session, user = db_session
+    task = Task(title="No records", owner_id=user.id, status="running")
+    session.add(task)
+    await session.flush()
+
+    pre = Document(
+        task_id=task.id,
+        filename="empty.pdf",
+        original_path="/tmp/run-1/empty.pdf",
+        status="pending",
+        channel="银行流水",
+        size_bytes=42,
+    )
+    session.add(pre)
+    await session.commit()
+    await session.refresh(task)
+    pre_id = pre.id
+
+    # Extraction finished with zero flow_records and empty failed_documents —
+    # the doc was processed but yielded nothing.
+    result = {
+        "flow_records": [],
+        "failed_documents": [],
+        "errors": [],
+        "total_records": 0,
+    }
+
+    await ExtractionTaskRunner._persist_result_documents(session, task.id, result)
+
+    doc = (
+        await session.execute(select(Document).where(Document.id == pre_id))
+    ).scalar_one()
+    assert doc.status == "completed"
+    assert doc.flow_tables == {"records": []}
+    # Channel preserved across the no-record sweep.
+    assert doc.channel == "银行流水"
+    assert doc.size_bytes == 42
+
+
+@pytest.mark.asyncio
+async def test_list_documents_filters_by_channel(client, db_session, monkeypatch):
+    """GET /documents?channel= filters to that channel only."""
+    session, _user = db_session
+
+    async def fake_start(**kwargs):
+        return None
+
+    monkeypatch.setattr("app.routers.tasks.runner.start", fake_start)
+    monkeypatch.setattr("app.routers.tasks.runner.is_running", lambda task_id: False)
+
+    created = await client.post(
+        "/api/tasks/upload",
+        data={"title": "Two channels", "channel": "银行流水"},
+        files=[("files", ("bank.pdf", _pdf_bytes(), "application/pdf"))],
+    )
+    task_id = created.json()["id"]
+
+    # Reset task to completed so append-upload is accepted.
+    row = await session.execute(select(Task).where(Task.id == task_id))
+    task = row.scalar_one()
+    task.status = "completed"
+    await session.commit()
+
+    await client.post(
+        f"/api/tasks/{task_id}/append-upload",
+        data={"channel": "支付渠道"},
+        files=[("files", ("pay.pdf", _pdf_bytes(), "application/pdf"))],
+    )
+
+    all_docs = await client.get(f"/api/tasks/{task_id}/documents")
+    assert all_docs.status_code == 200
+    assert all_docs.json()["total"] == 2
+
+    bank = await client.get(f"/api/tasks/{task_id}/documents?channel=银行流水")
+    bank_items = bank.json()["items"]
+    assert len(bank_items) == 1
+    assert bank_items[0]["filename"] == "bank.pdf"
+    assert bank_items[0]["channel"] == "银行流水"
+
+    pay = await client.get(f"/api/tasks/{task_id}/documents?channel=支付渠道")
+    pay_items = pay.json()["items"]
+    assert len(pay_items) == 1
+    assert pay_items[0]["filename"] == "pay.pdf"
+    assert pay_items[0]["channel"] == "支付渠道"
+
+
+@pytest.mark.asyncio
+async def test_delete_document_soft_deletes_and_hides_from_default_list(client, db_session, monkeypatch):
+    """DELETE /documents/{id} flips status to deleted; row stays; default list hides it."""
+    session, _user = db_session
+
+    async def fake_start(**kwargs):
+        return None
+
+    monkeypatch.setattr("app.routers.tasks.runner.start", fake_start)
+    monkeypatch.setattr("app.routers.tasks.runner.is_running", lambda task_id: False)
+
+    created = await client.post(
+        "/api/tasks/upload",
+        data={"title": "Delete me", "channel": "银行流水"},
+        files=[("files", ("a.pdf", _pdf_bytes(), "application/pdf"))],
+    )
+    task_id = created.json()["id"]
+
+    before = await client.get(f"/api/tasks/{task_id}/documents")
+    doc_id = before.json()["items"][0]["id"]
+
+    delete_resp = await client.delete(f"/api/tasks/{task_id}/documents/{doc_id}")
+    assert delete_resp.status_code == 204
+
+    # Row still exists in DB (soft delete, 不删减).
+    row = await session.execute(select(Document).where(Document.id == doc_id))
+    doc = row.scalar_one()
+    assert doc.status == "deleted"
+
+    # Default list hides deleted rows.
+    default_list = await client.get(f"/api/tasks/{task_id}/documents")
+    assert default_list.json()["total"] == 0
+    assert all(d["id"] != doc_id for d in default_list.json()["items"])
+
+    # include_deleted=true surfaces it.
+    with_deleted = await client.get(
+        f"/api/tasks/{task_id}/documents?include_deleted=true"
+    )
+    assert with_deleted.json()["total"] == 1
+    assert with_deleted.json()["items"][0]["id"] == doc_id
+    assert with_deleted.json()["items"][0]["status"] == "deleted"
+
+
+@pytest.mark.asyncio
+async def test_delete_document_unknown_id_returns_404(client, monkeypatch):
+    async def fake_start(**kwargs):
+        return None
+
+    monkeypatch.setattr("app.routers.tasks.runner.start", fake_start)
+    monkeypatch.setattr("app.routers.tasks.runner.is_running", lambda task_id: False)
+
+    created = await client.post(
+        "/api/tasks/upload",
+        data={"title": "Exists"},
+        files=[("files", ("a.pdf", _pdf_bytes(), "application/pdf"))],
+    )
+    task_id = created.json()["id"]
+
+    resp = await client.delete(f"/api/tasks/{task_id}/documents/999999")
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_append_upload_rejects_unsupported_files_regression(client, db_session, monkeypatch):
+    """422 on no-supported-files is preserved after the channel refactor."""
+    session, _user = db_session
+
+    async def fake_start(**kwargs):
+        return None
+
+    monkeypatch.setattr("app.routers.tasks.runner.start", fake_start)
+    monkeypatch.setattr("app.routers.tasks.runner.is_running", lambda task_id: False)
+
+    created = await client.post(
+        "/api/tasks/upload",
+        data={"title": "Regression"},
+        files=[("files", ("a.pdf", _pdf_bytes(), "application/pdf"))],
+    )
+    task_id = created.json()["id"]
+
+    row = await session.execute(select(Task).where(Task.id == task_id))
+    task = row.scalar_one()
+    task.status = "completed"
+    await session.commit()
+
+    resp = await client.post(
+        f"/api/tasks/{task_id}/append-upload",
+        data={"channel": "银行流水"},
+        files=[("files", ("notes.txt", b"hello", "text/plain"))],
+    )
+    assert resp.status_code == 422
