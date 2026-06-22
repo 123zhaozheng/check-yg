@@ -3,7 +3,7 @@
   "name": "slice-cleaning-standardization",
   "title": "清洗标准化闭环(含不删减回归)",
   "description": "垂直切片：清洗标准化。核心底线：清洗流水不删减。前端：中文化stitch_/cleaning_standardization并修正红色违规(异常数改黑底白字粗体,全站禁用#ba1a1a)——顶部页头(清洗与标准化标题+导出日志描边+提交清洗数据主按钮)，4卡统计(原始记录数/标准化记录数/排除记录数/异常数-黑底白字)，左侧规则/字段导航(清洗规则分组+命中数加粗),右侧标准化结果表(统一schema:日期/收支/金额等宽/对方/渠道/摘要+筛选排序),点击行展开原始↔标准对照(双栏+差异浅灰底高亮,不用彩色diff),排除项视图(被标excluded的非流水表/行+可捞回)。后端：1)不删减——normalizer改记录1:1保留(未解析行留占位+标unparsed),每条标准化记录带raw_payload(JSONB)存原始全部字段,FlowTableClassifier不丢非流水表改标excluded保留。2)新接口GET/api/tasks/{id}/records?channel=&status=&page=返回标准化记录+支持原始对照;GET/api/tasks/{id}/excluded返回排除项;POST/api/tasks/{id}/records/{id}/restore捞回。3)normalizer已由B1换pydantic-ai(output_type=list[FlowRecord]+output_validator验字段完整)。4)回归验证:固定输入diff换框架前后输出,记录1:1+字段无丢。清洗规则固定不可调(只展示对照,不做可配置/重洗)。契约先行。验收：chrome108渲染正常、无红色违规、记录1:1、原始↔标准对照清晰、排除项可查看可捞回、回归diff无字段丢失。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
