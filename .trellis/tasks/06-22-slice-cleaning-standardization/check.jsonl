@@ -1,8 +1,0 @@
-{"file": "stitch_/cleaning_standardization/code.html", "reason": "回归前端视觉：4卡统计/规则导航/标准化表/行展开原始↔标准对照(禁彩色diff改浅灰)/排除项视图是否对齐且单色化(异常数黑底白字,无#ba1a1a红色)。"}
-{"file": "docs/web-pages-design.md", "reason": "清洗标准化页文案与布局验收对照。"}
-{"file": "docs/zhixing-delivery-plan.md", "reason": "P0 核心底线核对：清洗不删减(1:1保留+raw_payload+excluded标记+软删)、提示词保真(禁改normalizer/classifier提示词)、单色原则(禁红色)、Chrome108渲染。"}
-{"file": ".trellis/spec/backend/directory-structure.md", "reason": "核对3阶段pipeline/checkpoint双层持久化/path-aware identity是否未被破坏。"}
-{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "核对raw_payload(JSONB)落地是否走jsonb()+Alembic规范。"}
-{"file": "backend/tests/test_llm_parity.py", "reason": "提示词保真 parity 测试回归——确认S5未改normalizer/classifier提示词。"}
-{"file": "backend/tests/test_task_extraction_api.py", "reason": "回归现有上传/归档/path identity测试不破，S5新增records/excluded/restore测试。"}
-{"file": "src/core/flow_extractor_v2.py", "reason": "对照 legacy 确认改造后的不删减语义(1:1保留+raw_payload+excluded)与收支修正逻辑忠实于原版行为(仅增强保留,不改变正常记录输出)。"}
