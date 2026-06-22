@@ -1,1 +1,5 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": "docs/web-pages-design.md", "reason": "§C5 单色要点逐条核对 — 报告正文排版主角、标题层级行距、批注左细灰竖线+浅灰底块禁彩色高亮、定稿只读+已定稿灰阶标签、行内编辑细虚线框、重生成描边次按钮"}
+{"file": "docs/zhixing-delivery-plan.md", "reason": "硬底线核对 — Chrome108 渲染(禁裸 oklch/lab/color-mix)、单色原则(9级ink token 禁红黄绿)、不污染主分支(feat/web-split)"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "迁移链 head 推进(1d08c3cec268 S6 → 新 S7 migration)、jsonb() 使用、env.py/database.py import 登记、定稿不改章节内容只改 status 软态(不删减精神)"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "测试覆盖与构建验证 — pytest 全绿 + pnpm build(tsc+vite chrome108)"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "owner-only 403、章节/批注不存在 404、定稿后编辑 409/422 守卫"}

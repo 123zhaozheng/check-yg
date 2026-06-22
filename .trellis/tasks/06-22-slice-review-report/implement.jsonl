@@ -1,1 +1,7 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": "docs/web-pages-design.md", "reason": "§C5 审查报告页规范 — 三栏布局(左大纲/中正文/右批注)、6 章目录、行内编辑细虚线框、重生成按钮、批注左细灰竖线+浅灰底块(禁彩色)、定稿只读+'已定稿'灰阶标签、正文像黑白年报排版"}
+{"file": "docs/zhixing-delivery-plan.md", "reason": "总规划+硬底线(Chrome108渲染/清洗不删减/提示词保真/单色原则)+10子任务拆分，S7 审查报告闭环是第9个切片"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Alembic 迁移链规则 + jsonb() 辅助 + 新模型必须在 migrations/env.py import 登记 + database.py init_db import 登记"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "router/service/model 分层约定；owner-only 复用 _load_owned_task；path-aware identity"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "403/404/422 统一错误响应风格，owner 校验与定稿只读守卫"}
+{"file": "docs/research/pydantic-ai-conventions.md", "reason": "pydantic-ai v1.107.0 规范 — S7 单章重生成占位不接真实 LLM，后续接入 agent.run 时需遵循 deps_type传类型/deps传实例/message_history/ModelMessagesTypeAdapter"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "测试覆盖要求 — 报告生成/章节编辑/批注增解/定稿只读的单测，Chrome108 CSS color-mix @supports 守护"}
