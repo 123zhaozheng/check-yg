@@ -197,3 +197,137 @@ export const api = {
 }
 
 export { extractErrorDetail }
+
+/* =========================================================================
+ * Task API — types + helpers (S3 task list + new-task dialog).
+ * Appended only; the apiFetch core above is unchanged.
+ * ======================================================================= */
+
+/** Mirrors `backend/app/routers/tasks.py::TaskResponse`. */
+export interface TaskItem {
+  id: number
+  title: string
+  description?: string | null
+  status: string
+  owner_id: number
+  config?: Record<string, unknown> | null
+  created_at: string
+  updated_at: string
+  completed_at?: string | null
+  employee_name?: string | null
+  employee_id?: string | null
+  department?: string | null
+  audit_start?: string | null
+  audit_end?: string | null
+  expected_channels?: string[] | null
+  archived: boolean
+}
+
+export interface TaskListResponse {
+  items: TaskItem[]
+  total: number
+  page: number
+  page_size: number
+}
+
+/** Query params for GET /api/tasks (all optional, mirrors backend filters). */
+export interface TaskListParams {
+  page?: number
+  page_size?: number
+  status_filter?: string
+  stage?: string
+  created_after?: string
+  created_before?: string
+  employee_id?: string
+  archived?: boolean
+  search?: string
+}
+
+/** Payload for POST /api/tasks (new-task dialog). Only `title` is required. */
+export interface TaskCreatePayload {
+  title: string
+  description?: string
+  document_folder?: string
+  batch_size?: number
+  confidence_threshold?: number
+  employee_name?: string
+  employee_id?: string
+  department?: string
+  audit_start?: string
+  audit_end?: string
+  expected_channels?: string[]
+}
+
+export function listTasks(params?: TaskListParams): Promise<TaskListResponse> {
+  return api.get<TaskListResponse>("/tasks/", params as ApiRequestOptions["params"])
+}
+
+export function createTask(payload: TaskCreatePayload): Promise<TaskItem> {
+  return api.post<TaskItem>("/tasks/", payload)
+}
+
+export function archiveTask(taskId: number): Promise<TaskItem> {
+  return api.post<TaskItem>(`/tasks/${taskId}/archive`)
+}
+
+export function unarchiveTask(taskId: number): Promise<TaskItem> {
+  return api.post<TaskItem>(`/tasks/${taskId}/unarchive`)
+}
+
+/** Soft-delete = archive (backend honors 不删减, never removes the row). */
+export function deleteTask(taskId: number): Promise<void> {
+  return api.delete<void>(`/tasks/${taskId}`)
+}
+
+/* =========================================================================
+ * Dashboard API — types + helpers (S2 dashboard aggregation).
+ * Appended only; the apiFetch core above is unchanged.
+ * Mirrors `backend/app/routers/dashboard.py::DashboardData`.
+ * ======================================================================= */
+
+export interface DashboardKpis {
+  active_tasks: number
+  monthly_completed: number
+  pending_alerts: number
+  avg_audit_hours: number
+}
+
+export interface DashboardInProgressTask {
+  id: number
+  title: string
+  /** 工号 — placeholder until S3 lands the employee_id field on Task. */
+  employee_id?: string | null
+  status: string
+  /** Grayscale stage label (待开始/导入中/清洗中/已完成/失败/已取消/已暂停). */
+  stage: string
+  /** 0-100, rendered as a grayscale bar — never a colored progress bar. */
+  progress: number
+  updated_at: string
+}
+
+export interface DashboardRecentReport {
+  id: number
+  task_id: number
+  task_title: string
+  created_at: string
+}
+
+export interface DashboardPendingAction {
+  id: number
+  /** "review_pending" | "report_pending" — drives the action button label. */
+  type: string
+  title: string
+  task_id: number
+}
+
+export interface DashboardData {
+  kpis: DashboardKpis
+  in_progress_tasks: DashboardInProgressTask[]
+  recent_reports: DashboardRecentReport[]
+  pending_actions: DashboardPendingAction[]
+}
+
+/** GET /api/dashboard — aggregated landing-page payload. */
+export function getDashboard(): Promise<DashboardData> {
+  return api.get<DashboardData>("/dashboard/")
+}

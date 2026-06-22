@@ -30,6 +30,13 @@ class TaskCreateRequest(BaseModel):
     document_folder: Optional[str] = None
     batch_size: int = 20
     confidence_threshold: int = 70
+    # New-task dialog metadata (all optional — only `title` is required).
+    employee_name: Optional[str] = None
+    employee_id: Optional[str] = None
+    department: Optional[str] = None
+    audit_start: Optional[datetime] = None
+    audit_end: Optional[datetime] = None
+    expected_channels: Optional[list[str]] = None
 
 
 class TaskActionRequest(BaseModel):
@@ -48,6 +55,14 @@ class TaskResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     completed_at: Optional[datetime] = None
+    # Audited employee + review period + expected channels + archive flag.
+    employee_name: Optional[str] = None
+    employee_id: Optional[str] = None
+    department: Optional[str] = None
+    audit_start: Optional[datetime] = None
+    audit_end: Optional[datetime] = None
+    expected_channels: Optional[list[str]] = None
+    archived: bool = False
 
     class Config:
         from_attributes = True
@@ -71,6 +86,13 @@ def _task_response(task: Task) -> TaskResponse:
         created_at=task.created_at,
         updated_at=task.updated_at,
         completed_at=task.completed_at,
+        employee_name=task.employee_name,
+        employee_id=task.employee_id,
+        department=task.department,
+        audit_start=task.audit_start,
+        audit_end=task.audit_end,
+        expected_channels=task.expected_channels,
+        archived=task.archived,
     )
 
 
@@ -148,17 +170,44 @@ async def list_tasks(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     status_filter: Optional[str] = Query(None),
+    stage: Optional[str] = Query(None),
+    created_after: Optional[datetime] = Query(None),
+    created_before: Optional[datetime] = Query(None),
+    employee_id: Optional[str] = Query(None),
+    archived: Optional[bool] = Query(None, description="true=归档, false=未归档, omitted=默认只看未归档"),
     search: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """List tasks with pagination and filters."""
+    """List tasks with pagination and filters.
+
+    ``archived`` defaults to "未归档" (False) when omitted so the task list
+    hides soft-deleted rows unless the caller explicitly asks for them.
+    """
     query = select(Task)
 
     if status_filter:
         query = query.where(Task.status == status_filter)
+    if stage:
+        # Stage is the high-level pipeline step stored in Task.status; the list
+        # filter passes it straight through (draft/import → running → completed).
+        query = query.where(Task.status == stage)
+    if created_after:
+        query = query.where(Task.created_at >= created_after)
+    if created_before:
+        query = query.where(Task.created_at <= created_before)
+    if employee_id:
+        query = query.where(Task.employee_id == employee_id)
     if search:
-        query = query.where(Task.title.contains(search))
+        query = query.where(Task.title.ilike(f"%{search}%"))
+
+    # Default: hide archived. Only when archived=True do we surface archived rows;
+    # passing archived=False also hides them (explicit). Omitting archived keeps
+    # the default-hide behavior, so archived tasks never leak into the main list.
+    if archived is True:
+        query = query.where(Task.archived.is_(True))
+    else:
+        query = query.where(Task.archived.is_(False))
 
     count_query = select(func.count()).select_from(query.subquery())
     total_result = await db.execute(count_query)
@@ -196,6 +245,12 @@ async def create_task(
         owner_id=current_user.id,
         status="draft",
         config=config,
+        employee_name=request.employee_name,
+        employee_id=request.employee_id,
+        department=request.department,
+        audit_start=request.audit_start,
+        audit_end=request.audit_end,
+        expected_channels=request.expected_channels,
     )
     db.add(task)
     await db.flush()
@@ -497,6 +552,54 @@ async def cancel_task(
     await db.commit()
     await db.refresh(task)
     return _task_response(task)
+
+
+@router.post("/{task_id}/archive", response_model=TaskResponse)
+async def archive_task(
+    task_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Archive a task (soft flag — data is never deleted)."""
+    task = await _load_owned_task(db, task_id, current_user)
+    task.archived = True
+    db.add(TaskLog(task_id=task.id, level="info", message="Task archived"))
+    await db.commit()
+    await db.refresh(task)
+    return _task_response(task)
+
+
+@router.post("/{task_id}/unarchive", response_model=TaskResponse)
+async def unarchive_task(
+    task_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Restore an archived task back to the active list."""
+    task = await _load_owned_task(db, task_id, current_user)
+    task.archived = False
+    db.add(TaskLog(task_id=task.id, level="info", message="Task unarchived"))
+    await db.commit()
+    await db.refresh(task)
+    return _task_response(task)
+
+
+@router.delete("/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_task(
+    task_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Soft-delete a task by archiving it.
+
+    Honors the 不删减 hard line — the row and all its audit data stay in the
+    DB; we only flip ``archived`` so the task drops out of the default list.
+    """
+    task = await _load_owned_task(db, task_id, current_user)
+    task.archived = True
+    db.add(TaskLog(task_id=task.id, level="warning", message="Task soft-deleted (archived)"))
+    await db.commit()
+    return None
 
 
 async def _load_owned_task(db: AsyncSession, task_id: int, current_user: User) -> Task:

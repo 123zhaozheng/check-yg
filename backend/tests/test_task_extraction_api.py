@@ -27,6 +27,84 @@ async def test_create_task_persists_draft(client):
 
 
 @pytest.mark.asyncio
+async def test_create_task_persists_employee_and_archive_fields(client):
+    """The new-task dialog writes employee + period + channels into the row."""
+    response = await client.post(
+        "/api/tasks/",
+        json={
+            "title": "2026 张三审查",
+            "employee_name": "张三",
+            "employee_id": "ZS-0421",
+            "department": "财务部",
+            "audit_start": "2026-01-01T00:00:00",
+            "audit_end": "2026-06-30T00:00:00",
+            "expected_channels": ["银行", "支付"],
+        },
+    )
+
+    assert response.status_code == 201
+    data = response.json()
+    assert data["employee_name"] == "张三"
+    assert data["employee_id"] == "ZS-0421"
+    assert data["department"] == "财务部"
+    assert data["audit_start"].startswith("2026-01-01")
+    assert data["expected_channels"] == ["银行", "支付"]
+    assert data["archived"] is False
+
+
+@pytest.mark.asyncio
+async def test_archive_unarchive_and_soft_delete(client):
+    created = await client.post("/api/tasks/", json={"title": "To archive"})
+    task_id = created.json()["id"]
+
+    archive_resp = await client.post(f"/api/tasks/{task_id}/archive")
+    assert archive_resp.status_code == 200
+    assert archive_resp.json()["archived"] is True
+
+    # Archived tasks are hidden from the default list.
+    listed = await client.get("/api/tasks/")
+    assert all(item["id"] != task_id for item in listed.json()["items"])
+
+    # Asking explicitly for archived surfaces it.
+    archived_list = await client.get("/api/tasks/?archived=true")
+    assert any(item["id"] == task_id for item in archived_list.json()["items"])
+
+    unarchive_resp = await client.post(f"/api/tasks/{task_id}/unarchive")
+    assert unarchive_resp.status_code == 200
+    assert unarchive_resp.json()["archived"] is False
+
+    # Soft delete = archive (no row removal).
+    delete_resp = await client.delete(f"/api/tasks/{task_id}")
+    assert delete_resp.status_code == 204
+    still_there = await client.get(f"/api/tasks/{task_id}")
+    assert still_there.status_code == 200
+    assert still_there.json()["archived"] is True
+
+
+@pytest.mark.asyncio
+async def test_list_filters_by_employee_id_and_search(client):
+    await client.post(
+        "/api/tasks/",
+        json={"title": "Alpha audit", "employee_id": "EMP-001"},
+    )
+    await client.post(
+        "/api/tasks/",
+        json={"title": "Beta audit", "employee_id": "EMP-002"},
+    )
+
+    by_employee = await client.get("/api/tasks/?employee_id=EMP-001")
+    assert by_employee.status_code == 200
+    items = by_employee.json()["items"]
+    assert len(items) == 1
+    assert items[0]["title"] == "Alpha audit"
+
+    by_search = await client.get("/api/tasks/?search=Beta")
+    search_items = by_search.json()["items"]
+    assert len(search_items) == 1
+    assert search_items[0]["title"] == "Beta audit"
+
+
+@pytest.mark.asyncio
 async def test_start_task_requires_existing_folder(client):
     created = await client.post("/api/tasks/", json={"title": "Needs folder"})
     task_id = created.json()["id"]
