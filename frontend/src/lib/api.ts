@@ -266,6 +266,11 @@ export function createTask(payload: TaskCreatePayload): Promise<TaskItem> {
   return api.post<TaskItem>("/tasks/", payload)
 }
 
+/** GET /api/tasks/{taskId} — single task (for config-derived fields like last_analysis_at). */
+export function getTask(taskId: number): Promise<TaskItem> {
+  return api.get<TaskItem>(`/tasks/${taskId}`)
+}
+
 export function archiveTask(taskId: number): Promise<TaskItem> {
   return api.post<TaskItem>(`/tasks/${taskId}/archive`)
 }
@@ -528,4 +533,114 @@ export function exportCleaningLog(
     `/tasks/${taskId}/cleaning/export`,
     { method: "GET", params: { format } },
   )
+}
+
+/* =========================================================================
+ * AI Analysis API — types + helpers (S6).
+ * Appended only; the apiFetch core above is unchanged.
+ * Mirrors `backend/app/routers/tasks.py` S6 block + `app/llm/types.py`.
+ * agent 接入点结构遵循 docs/research/pydantic-ai-conventions.md (v1.107.0)：
+ * AuditDeps / @agent.tool / ModelMessagesTypeAdapter / message_history.
+ * 本切片 agent.run / chat 走占位实现（真实 prompt/tools 用户后续接）。
+ * ======================================================================= */
+
+/** severity 三态，前端灰阶+形状双编码（单色原则，禁红黄绿）. */
+export type Severity = "high" | "medium" | "low"
+
+/** status 三态：pending（默认）/ accepted（采纳为告警）/ ignored（忽略）. */
+export type FindingStatus = "pending" | "accepted" | "ignored"
+
+/** One findings row — AI-surfaced anomaly + 人工复核状态.
+ *  Mirrors `backend/app/routers/tasks.py::FindingResponse`. */
+export interface FindingItem {
+  id: number
+  task_id: number
+  type: string
+  severity: Severity
+  description: string
+  counterparty?: string | null
+  amount?: string | null
+  confidence: number
+  status: FindingStatus
+  comment?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface FindingListResponse {
+  items: FindingItem[]
+  total: number
+}
+
+/** Query params for GET /api/tasks/{id}/findings. */
+export interface FindingListParams {
+  severity?: Severity
+  status?: FindingStatus
+}
+
+/** AnalysisResult.findings 项（对齐 backend AnalysisFindingItem / app.llm.types.FindingItem）. */
+export interface AnalysisFinding {
+  type: string
+  severity: Severity
+  description: string
+  counterparty?: string | null
+  amount?: string | null
+  confidence: number
+}
+
+/** POST /api/tasks/{id}/analyze 响应：summary + findings 列表. */
+export interface AnalysisResultResponse {
+  summary: string
+  findings: AnalysisFinding[]
+}
+
+/** POST /api/tasks/{id}/analyze 请求体. */
+export interface AnalyzeRequest {
+  mode?: "quick" | "deep"
+}
+
+/** POST /api/tasks/{id}/analyze/chat 响应. */
+export interface ChatResponse {
+  reply: string
+}
+
+/** PATCH /api/findings/{id} 请求体（status / comment，均可选）. */
+export interface PatchFindingRequest {
+  status?: FindingStatus
+  comment?: string
+}
+
+/** GET /api/tasks/{taskId}/findings — severity + status filter, severity-desc sorted. */
+export function listFindings(
+  taskId: number,
+  params?: FindingListParams,
+): Promise<FindingListResponse> {
+  return api.get<FindingListResponse>(
+    `/tasks/${taskId}/findings`,
+    params as ApiRequestOptions["params"],
+  )
+}
+
+/** POST /api/tasks/{taskId}/analyze — trigger AI analysis (placeholder建 finding + 写 last_analysis_at). */
+export function startAnalysis(
+  taskId: number,
+  body?: AnalyzeRequest,
+): Promise<AnalysisResultResponse> {
+  return api.post<AnalysisResultResponse>(`/tasks/${taskId}/analyze`, body ?? {})
+}
+
+/** PATCH /api/findings/{findingId} — update finding status/comment (top-level, no /tasks prefix). */
+export function patchFinding(
+  findingId: number,
+  body: PatchFindingRequest,
+): Promise<FindingItem> {
+  return api.patch<FindingItem>(`/findings/${findingId}`, body)
+}
+
+/** POST /api/tasks/{taskId}/analyze/chat — 多轮对话（占位回复 + history 存回）. */
+export function chatAnalyze(
+  taskId: number,
+  message: string,
+): Promise<ChatResponse> {
+  return api.post<ChatResponse>(`/tasks/${taskId}/analyze/chat`, { message })
 }

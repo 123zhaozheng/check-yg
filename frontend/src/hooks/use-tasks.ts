@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   archiveTask,
   createTask,
+  getTask,
   listTasks,
   type TaskCreatePayload,
   type TaskListParams,
@@ -22,6 +23,15 @@ export function useTaskList(params: TaskListParams) {
   return useQuery({
     queryKey: [...TASKS_QUERY_KEY, params],
     queryFn: () => listTasks(params),
+    placeholderData: (prev) => prev,
+  })
+}
+
+/** Read a single task by id (for config-derived fields like last_analysis_at). */
+export function useTask(taskId: number) {
+  return useQuery({
+    queryKey: [...TASKS_QUERY_KEY, "detail", taskId],
+    queryFn: () => getTask(taskId),
     placeholderData: (prev) => prev,
   })
 }
