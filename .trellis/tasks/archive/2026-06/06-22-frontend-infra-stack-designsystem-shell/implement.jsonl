@@ -1,0 +1,5 @@
+{"file": "stitch_/monochrome_precision/DESIGN.md", "reason": "单色设计系统源：9 级明度标尺(#000→#fff)、Hanken Grotesk+JetBrains Mono 双字体、状态胶囊灰阶递进、禁用红绿(error 黑底白字+粗体+2px 黑边)、4px 基线、卡片 1px 边框+柔和阴影。设计系统 token 落地的权威依据。"}
+{"file": "docs/web-pages-design.md", "reason": "13 页面设计规范含英中对照表，中文化依据；布局壳(A2 侧栏 220px+顶栏 56px+主内容区)与路由骨架(/login,/,/tasks,/tasks/:id 6 子页 Tab,/settings,/404)的页面级定义。"}
+{"file": "docs/zhixing-delivery-plan.md", "reason": "全流程交付总索引：grill 决策(Q2 前端栈 Vite+React18+TanStack Router/Query+Tailwind4+lightningcss(chrome108)+shadcn、Q4 开发分离代理+生产 FastAPI 挂静态、Q12 旧 web/ 归档 archive/web-legacy)、硬底线(Chrome108、单色原则)。B2 总体约束来源。"}
+{"file": "web/vite.config.ts", "reason": "旧 web 的 chrome108 lightningcss 降级配置参考：cssTargets={chrome:108<<16}、cssInclude=Features.LabColors|OklabColors、build.target=chrome108。新 frontend/ 直接照此模式落地，保证 Chrome108 渲染。"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "布局壳/路由/TanStack Query 封装涉及跨层(路由→数据→组件)数据流，对照表与 SPA fallback 落点参考。"}
