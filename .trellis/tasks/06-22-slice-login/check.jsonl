@@ -1,4 +1,0 @@
-{"file": "stitch_/login/code.html", "reason": "登录页视觉对齐验收：布局比例、品牌区元素、登录卡结构是否与设计稿一致；error 是否已从 #ba1a1a 红色改成单色(深灰底白字小条)。"}
-{"file": "docs/web-pages-design.md", "reason": "§A1 登录页单色要点验收：错误用深灰底白字小条而非红色、品牌区灰度渐变不喧宾夺主、主按钮黑底白字。§A2 布局壳退出入口。"}
-{"file": "docs/zhixing-delivery-plan.md", "reason": "硬底线核对：Chrome108 渲染正常、单色原则(全站禁彩色)、cookie HttpOnly+SameSite=Strict、不污染主分支(feat/web-split)。S1 验收项。"}
-{"file": ".trellis/spec/backend/directory-structure.md", "reason": "Auth Cookie Boundary 验收：login Set-Cookie、me 读 cookie、refresh 读 cookie、logout 清 cookie、前端 credentials:include、401 跳 /login、静默 refresh 重试一次。"}

@@ -1,7 +1,0 @@
-{"file": "stitch_/login/code.html", "reason": "登录页设计稿源码：左60%品牌区(盾形+网格几何+智行卫士+流水审查·标准化·智能报告+底部版本号灰文)、右40%登录卡(安全登录+账号/密码下划线输入+记住我+找回密码+登录按钮+底部受限区提示)。中文化与视觉对齐依据。注意设计稿 error 用 #ba1a1a 红色违规，必须改单色(深灰底白字小条)。"}
-{"file": "docs/web-pages-design.md", "reason": "§A1 登录页设计规范：布局、核心组件、单色要点(错误用深灰底白字小条而非红色)。§A2 布局壳退出登录入口位置参考。英中对照表中文化依据。"}
-{"file": "docs/zhixing-delivery-plan.md", "reason": "grill 决策 Q4(JWT access+refresh 存 httpOnly cookie SameSite=Strict)、Q11(契约先行)、硬底线(Chrome108、单色原则、不污染主分支)。S1 验收项来源。"}
-{"file": ".trellis/spec/backend/directory-structure.md", "reason": "FastAPI Auth Cookie Boundary scenario：login Set-Cookie、refresh 读 cookie 优先回退 body、me 读 cookie、logout 清 cookie、前端 apiFetch credentials:include、401 跳 /login。S1 前端对接后端契约的规范依据。"}
-{"file": "frontend/src/lib/api.ts", "reason": "B2 已建的 apiFetch 封装(credentials:include、401 跳 /login)。S1 要加 401 静默 refresh 重试一次。现状参考。"}
-{"file": "frontend/src/routes/__authenticated.tsx", "reason": "B2 已建的鉴权布局，beforeLoad 是 placeholder。S1 要接真实 /api/auth/me 守卫。"}
-{"file": "frontend/src/components/layout/app-shell.tsx", "reason": "B2 已建的应用布局壳，底部用户区。S1 要加退出登录按钮调 /api/auth/logout。"}
