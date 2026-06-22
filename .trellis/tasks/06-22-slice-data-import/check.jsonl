@@ -1,1 +1,6 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": "stitch_/data_import/code.html", "reason": "回归前端视觉一致性：渠道列表/上传区/文件表/状态胶囊是否对齐源稿(单色改造后)。"}
+{"file": "docs/web-pages-design.md", "reason": "§C2 文案与布局验收对照。"}
+{"file": "docs/zhixing-delivery-plan.md", "reason": "硬底线核对：Chrome108渲染(lightningcss降级oklch/lab/color-mix)、清洗不删减、单色原则(禁彩色,9级ink灰阶,error黑底白字粗体)。"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "核对MinerU单次fetch/run-{n}子目录/path-aware identity/422无支持文件错误边界是否被遵守。"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "核对channel字段迁移是否走Alembic+jsonb()规范，无手写SQL建表。"}
+{"file": "backend/tests/test_task_extraction_api.py", "reason": "已有上传/归档契约测试，S4要扩展channel参数+documents列表+delete测试，回归不删减与path identity。"}
