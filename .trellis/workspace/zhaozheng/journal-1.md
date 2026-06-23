@@ -579,3 +579,37 @@ S7 审查报告闭环完成 (umbrella 8/10→9/10)。后端：新建 ReportChapt
 ### Next Steps
 
 - None - task complete
+
+
+## Session 18: 关键词库 + 关键词审查阶段 + 删概览 + 清洗规则折叠
+
+**Date**: 2026-06-23
+**Task**: 关键词库 + 关键词审查阶段 + 删概览 + 清洗规则折叠
+**Branch**: `feat/web-split`
+
+### Summary
+
+新增全局关键词库(左侧导航页,keyword_cards/terms 两表,CRUD+excel 导入合并追加去重+导出,admin 限写)与任务级关键词审查阶段(移植 legacy matcher 三层精确/脱敏/模糊 Levenshtein 阈值70%,只扫 standard 对手名+摘要,手动触发重跑清旧再插,keyword_hits 表+采纳/忽略/备注,不自动喂 AI);删任务概览子 tab(/tasks/:id 重定向到数据导入);清洗页应用规则栏改可折叠默认收起。trellis-check 自修 6 问题含 matcher 模糊层 NameError 真运行时 bug。214 tests / alembic 单 head b7c3d1e4f2a9 / frontend build(chrome108)全过。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `fa2a380f` | (see git log) |
+| `07e4cada` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
