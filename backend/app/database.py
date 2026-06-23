@@ -41,6 +41,8 @@ async def init_db() -> None:
         ExportFile,
         Finding,
         FlowRecordRow,
+        LLMModel,
+        LLMModelAssignment,
         Report,
         ReportAnnotation,
         ReportChapter,
@@ -90,6 +92,12 @@ async def init_db() -> None:
                 is_active=True,
             ))
             await session.commit()
+
+        # Seed default LLM model cards (06-23-llm-model-card). Idempotent —
+        # only inserts cards whose display_name isn't already present.
+        # Assignments stay empty (user picks per-stage in the settings UI).
+        from app.services.llm_model_service import seed_default_llm_models
+        await seed_default_llm_models(session)
 
 
 async def _run_alembic_upgrade() -> None:

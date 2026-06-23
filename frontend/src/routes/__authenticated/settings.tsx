@@ -4,10 +4,27 @@ import { createFileRoute } from "@tanstack/react-router"
 import { PageHeader } from "@/components/layout/page-header"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
+import {
+  Dialog,
+  DialogBody,
+  DialogClose,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Toggle } from "@/components/ui/toggle"
 import { cn } from "@/lib/utils"
-import { ApiError, extractErrorDetail, type SettingSchemaItem, type SettingType } from "@/lib/api"
+import {
+  ApiError,
+  extractErrorDetail,
+  type LLMModel,
+  type LLMModelUpsertBody,
+  type SettingSchemaItem,
+  type SettingType,
+  type Stage,
+  type ThinkingLevel,
+} from "@/lib/api"
 import { useCurrentUser } from "@/hooks/use-current-user"
 import {
   useChangePassword,
@@ -15,6 +32,14 @@ import {
   useUpdateMe,
   useUpdateSetting,
 } from "@/hooks/use-settings"
+import {
+  useCreateLLMModel,
+  useDeleteLLMModel,
+  useLLMModelAssignments,
+  useLLMModels,
+  useUpdateLLMModel,
+  useUpsertLLMModelAssignment,
+} from "@/hooks/use-llm-models"
 
 /**
  * 设置 /settings (docs §D1).
@@ -72,7 +97,7 @@ function SettingsPage() {
       {tab === "account" && <AccountTab />}
       {tab === "audit" && <SchemaTab category="audit" />}
       {tab === "channel" && <SchemaTab category="channel" />}
-      {tab === "integration" && <SchemaTab category="integration" />}
+      {tab === "integration" && <IntegrationTab />}
     </>
   )
 }
@@ -459,4 +484,540 @@ function extractDetail(err: unknown): string | undefined {
   if (err instanceof ApiError) return extractErrorDetail(err.data)
   if (err instanceof Error) return err.message
   return undefined
+}
+
+// ---------------------------------------------------------------------------
+// 集成与模型 Tab — 模型卡片管理 + 阶段指派 + llm.* 兜底配置（06-23-llm-model-card）
+// ---------------------------------------------------------------------------
+
+const STAGE_LABELS: { stage: Stage; label: string; reserved?: boolean }[] = [
+  { stage: "classification", label: "分类" },
+  { stage: "portrait", label: "画像" },
+  { stage: "normalization", label: "标准化" },
+  { stage: "ai_analysis", label: "AI 分析", reserved: true },
+  { stage: "ai_qa", label: "AI 问答", reserved: true },
+  { stage: "report_generation", label: "报告生成", reserved: true },
+]
+
+const THINKING_OPTIONS: ThinkingLevel[] = ["off", "low", "medium", "high"]
+
+const THINKING_LABELS: Record<ThinkingLevel, string> = {
+  off: "关闭",
+  low: "低",
+  medium: "中",
+  high: "高",
+}
+
+const EMPTY_CARD: LLMModelUpsertBody = {
+  display_name: "",
+  model_name: "",
+  provider_base_url: "",
+  api_key: "",
+  context_length: 0,
+  max_output: 0,
+  supports_tool_call: true,
+  supports_tool_choice_required: true,
+  is_reasoning: false,
+  supports_streaming: true,
+  default_thinking: "off",
+  default_max_tokens: 4000,
+  default_temperature: null,
+}
+
+function IntegrationTab() {
+  const { user } = useCurrentUser()
+  const isAdmin = user?.role === "admin"
+
+  return (
+    <div className="flex flex-col gap-4">
+      <ModelCardsCard isAdmin={isAdmin} />
+      <StageAssignmentCard isAdmin={isAdmin} />
+      {/* llm.* 兜底配置（阶段未指派卡片时用）—— 沿用 schema 表单. */}
+      <SchemaTab category="integration" />
+    </div>
+  )
+}
+
+/** 模型卡片管理：列表 table + 新建/编辑/删除. */
+function ModelCardsCard({ isAdmin }: { isAdmin: boolean }) {
+  const modelsQuery = useLLMModels()
+  const deleteModel = useDeleteLLMModel()
+  const [editing, setEditing] = React.useState<LLMModel | null>(null)
+  const [creating, setCreating] = React.useState(false)
+  const [error, setError] = React.useState<string | null>(null)
+
+  const models = modelsQuery.data ?? []
+
+  async function handleDelete(model: LLMModel) {
+    setError(null)
+    try {
+      await deleteModel.mutateAsync(model.id)
+    } catch (err) {
+      setError(extractDetail(err) ?? "删除失败")
+    }
+  }
+
+  return (
+    <Card>
+      <CardContent className="flex flex-col gap-4 p-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="font-sans text-base font-bold text-ink-900">模型卡片</h2>
+            <p className="mt-1 text-xs text-ink-600">
+              管理 LLM 连接与模型元信息（上下文 / 最大输出 / 工具调用 / 推理模式 /
+              流式）。api_key 脱敏显示，编辑留空不改。
+            </p>
+          </div>
+          {isAdmin && (
+            <Button size="sm" onClick={() => setCreating(true)}>
+              新建卡片
+            </Button>
+          )}
+        </div>
+
+        {modelsQuery.isLoading && (
+          <p className="text-sm text-ink-600">加载中…</p>
+        )}
+        {modelsQuery.isError && (
+          <p className="text-sm text-ink-600">模型卡片加载失败，请稍后重试。</p>
+        )}
+
+        {models.length > 0 && (
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-sm">
+              <thead>
+                <tr className="border-b border-ink-400 text-left">
+                  <Th>显示名</Th>
+                  <Th>model</Th>
+                  <Th>上下文</Th>
+                  <Th>最大输出</Th>
+                  <Th>工具调用</Th>
+                  <Th>推理模式</Th>
+                  <Th>流式</Th>
+                  <Th>max_tokens</Th>
+                  <Th>thinking</Th>
+                  {isAdmin && <Th>操作</Th>}
+                </tr>
+              </thead>
+              <tbody>
+                {models.map((m) => (
+                  <tr key={m.id} className="border-b border-ink-300">
+                    <Td className="font-medium text-ink-900">{m.display_name}</Td>
+                    <Td className="font-mono text-xs">{m.model_name}</Td>
+                    <Td className="font-mono text-xs">{formatTokens(m.context_length)}</Td>
+                    <Td className="font-mono text-xs">{formatTokens(m.max_output)}</Td>
+                    <Td>{m.supports_tool_call ? "是" : "否"}</Td>
+                    <Td>{m.is_reasoning ? "是" : "否"}</Td>
+                    <Td>{m.supports_streaming ? "是" : "否"}</Td>
+                    <Td className="font-mono text-xs">{m.default_max_tokens}</Td>
+                    <Td>{THINKING_LABELS[m.default_thinking]}</Td>
+                    {isAdmin && (
+                      <Td>
+                        <div className="flex gap-2">
+                          <Button
+                            variant="tertiary"
+                            size="sm"
+                            onClick={() => setEditing(m)}
+                          >
+                            编辑
+                          </Button>
+                          <Button
+                            variant="tertiary"
+                            size="sm"
+                            onClick={() => handleDelete(m)}
+                            disabled={deleteModel.isPending}
+                          >
+                            删除
+                          </Button>
+                        </div>
+                      </Td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {!modelsQuery.isLoading && models.length === 0 && (
+          <p className="text-sm text-ink-600">暂无模型卡片，点击「新建卡片」添加。</p>
+        )}
+
+        {error && (
+          <p className="font-mono text-xs font-bold text-ink-900">{error}</p>
+        )}
+
+        {creating && (
+          <ModelCardDialog
+            mode="create"
+            onClose={() => setCreating(false)}
+          />
+        )}
+        {editing && (
+          <ModelCardDialog
+            mode="edit"
+            initial={editing}
+            onClose={() => setEditing(null)}
+          />
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+/** 阶段模型指派：6 阶段各一个下拉，选卡片或「未指派（用兜底）」. */
+function StageAssignmentCard({ isAdmin }: { isAdmin: boolean }) {
+  const assignmentsQuery = useLLMModelAssignments()
+  const modelsQuery = useLLMModels()
+  const upsert = useUpsertLLMModelAssignment()
+  const [error, setError] = React.useState<string | null>(null)
+
+  const assignments = assignmentsQuery.data ?? []
+  const models = modelsQuery.data ?? []
+
+  async function handleAssign(stage: Stage, modelId: number | null) {
+    setError(null)
+    try {
+      await upsert.mutateAsync({ stage, body: { llm_model_id: modelId } })
+    } catch (err) {
+      setError(extractDetail(err) ?? "指派失败")
+    }
+  }
+
+  if (assignmentsQuery.isLoading || modelsQuery.isLoading) {
+    return (
+      <Card>
+        <CardContent className="p-6 text-sm text-ink-600">加载中…</CardContent>
+      </Card>
+    )
+  }
+
+  return (
+    <Card>
+      <CardContent className="flex flex-col gap-4 p-6">
+        <div>
+          <h2 className="font-sans text-base font-bold text-ink-900">阶段模型指派</h2>
+          <p className="mt-1 text-xs text-ink-600">
+            为每个阶段指定一张模型卡片；未指派时回退「集成与模型」兜底配置 +
+            模块默认值。标注「预留」的阶段待后续接入真实 LLM 后生效。
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          {STAGE_LABELS.map(({ stage, label, reserved }) => {
+            const assignment = assignments.find((a) => a.stage === stage)
+            const value = assignment?.llm_model_id ?? ""
+            return (
+              <div key={stage} className="flex flex-col gap-1">
+                <label className="text-xs font-bold uppercase tracking-widest text-ink-600">
+                  {label}
+                  {reserved && (
+                    <span className="ml-2 font-normal normal-case text-ink-600">
+                      （预留，待接入）
+                    </span>
+                  )}
+                </label>
+                <select
+                  value={value}
+                  disabled={!isAdmin}
+                  onChange={(e) =>
+                    handleAssign(stage, e.target.value === "" ? null : Number(e.target.value))
+                  }
+                  className="rounded-[var(--radius-DEFAULT)] border border-ink-400 bg-ink-100 px-2 py-2 font-sans text-sm text-ink-900 focus:border-ink-900 focus:outline-none disabled:opacity-60"
+                >
+                  <option value="">未指派（用兜底）</option>
+                  {models.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.display_name}（{m.model_name}）
+                    </option>
+                  ))}
+                </select>
+                {assignment?.llm_model && (
+                  <p className="text-[11px] text-ink-600">
+                    当前：{assignment.llm_model.display_name} · max_tokens=
+                    {assignment.llm_model.default_max_tokens} · thinking=
+                    {THINKING_LABELS[assignment.llm_model.default_thinking]}
+                    {assignment.llm_model.is_reasoning ? " · 推理模型" : ""}
+                  </p>
+                )}
+              </div>
+            )
+          })}
+        </div>
+
+        {error && (
+          <p className="font-mono text-xs font-bold text-ink-900">{error}</p>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+/** 模型卡片新建/编辑对话框. */
+function ModelCardDialog({
+  mode,
+  initial,
+  onClose,
+}: {
+  mode: "create" | "edit"
+  initial?: LLMModel
+  onClose: () => void
+}) {
+  const createModel = useCreateLLMModel()
+  const updateModel = useUpdateLLMModel()
+  const [form, setForm] = React.useState<LLMModelUpsertBody>(() =>
+    initial
+      ? {
+          display_name: initial.display_name,
+          model_name: initial.model_name,
+          provider_base_url: initial.provider_base_url,
+          api_key: "",
+          context_length: initial.context_length,
+          max_output: initial.max_output,
+          supports_tool_call: initial.supports_tool_call,
+          supports_tool_choice_required: initial.supports_tool_choice_required,
+          is_reasoning: initial.is_reasoning,
+          supports_streaming: initial.supports_streaming,
+          default_thinking: initial.default_thinking,
+          default_max_tokens: initial.default_max_tokens,
+          default_temperature: initial.default_temperature ?? null,
+        }
+      : { ...EMPTY_CARD },
+  )
+  const [error, setError] = React.useState<string | null>(null)
+
+  function setField<K extends keyof LLMModelUpsertBody>(
+    key: K,
+    value: LLMModelUpsertBody[K],
+  ) {
+    setForm((prev) => ({ ...prev, [key]: value }))
+  }
+
+  async function handleSave() {
+    setError(null)
+    try {
+      if (mode === "create") {
+        await createModel.mutateAsync(form)
+      } else if (initial) {
+        await updateModel.mutateAsync({ id: initial.id, body: form })
+      }
+      onClose()
+    } catch (err) {
+      setError(extractDetail(err) ?? "保存失败")
+    }
+  }
+
+  const pending = createModel.isPending || updateModel.isPending
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()} className="max-w-2xl">
+      <DialogHeader>
+        <DialogTitle>{mode === "create" ? "新建模型卡片" : "编辑模型卡片"}</DialogTitle>
+        <DialogClose onOpenChange={(o) => !o && onClose()} />
+      </DialogHeader>
+      <DialogBody className="max-h-[60vh] overflow-y-auto">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <FieldText
+            label="显示名"
+            value={form.display_name}
+            onChange={(v) => setField("display_name", v)}
+          />
+          <FieldText
+            label="模型 model id"
+            value={form.model_name}
+            onChange={(v) => setField("model_name", v)}
+          />
+          <FieldText
+            label="端点 base_url"
+            value={form.provider_base_url}
+            onChange={(v) => setField("provider_base_url", v)}
+            full
+          />
+          <FieldText
+            label="API Key（留空不改）"
+            value={form.api_key ?? ""}
+            onChange={(v) => setField("api_key", v)}
+            full
+            placeholder={mode === "edit" ? "********（留空不改原值）" : "sk-..."}
+          />
+          <FieldNumber
+            label="上下文长度"
+            value={form.context_length}
+            onChange={(v) => setField("context_length", Number(v) || 0)}
+          />
+          <FieldNumber
+            label="最大输出"
+            value={form.max_output}
+            onChange={(v) => setField("max_output", Number(v) || 0)}
+          />
+          <FieldNumber
+            label="默认 max_tokens"
+            value={form.default_max_tokens}
+            onChange={(v) => setField("default_max_tokens", Number(v) || 0)}
+          />
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-bold uppercase tracking-widest text-ink-600">
+              默认 thinking
+            </label>
+            <select
+              value={form.default_thinking}
+              onChange={(e) => setField("default_thinking", e.target.value as ThinkingLevel)}
+              className="rounded-[var(--radius-DEFAULT)] border border-ink-400 bg-ink-100 px-2 py-2 font-sans text-sm text-ink-900 focus:border-ink-900 focus:outline-none"
+            >
+              {THINKING_OPTIONS.map((t) => (
+                <option key={t} value={t}>
+                  {THINKING_LABELS[t]}
+                </option>
+              ))}
+            </select>
+          </div>
+          <FieldNumber
+            label="默认 temperature（空=兜底）"
+            value={form.default_temperature ?? ""}
+            onChange={(v) => setField("default_temperature", v === "" ? null : v)}
+            allowEmpty
+          />
+          <div className="col-span-full grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <ToggleField
+              label="工具调用"
+              checked={form.supports_tool_call}
+              onChange={(v) => setField("supports_tool_call", v)}
+            />
+            <ToggleField
+              label="tool_choice:required"
+              checked={form.supports_tool_choice_required}
+              onChange={(v) => setField("supports_tool_choice_required", v)}
+            />
+            <ToggleField
+              label="推理模型"
+              checked={form.is_reasoning}
+              onChange={(v) => setField("is_reasoning", v)}
+            />
+            <ToggleField
+              label="流式"
+              checked={form.supports_streaming}
+              onChange={(v) => setField("supports_streaming", v)}
+            />
+          </div>
+        </div>
+        {error && (
+          <p className="mt-4 font-mono text-xs font-bold text-ink-900">{error}</p>
+        )}
+      </DialogBody>
+      <DialogFooter>
+        <Button variant="tertiary" onClick={onClose}>
+          取消
+        </Button>
+        <Button onClick={handleSave} disabled={pending}>
+          {pending ? "保存中…" : "保存"}
+        </Button>
+      </DialogFooter>
+    </Dialog>
+  )
+}
+
+function Th({ children }: { children: React.ReactNode }) {
+  return (
+    <th className="px-2 py-2 text-xs font-bold uppercase tracking-widest text-ink-600">
+      {children}
+    </th>
+  )
+}
+
+function Td({
+  children,
+  className,
+}: {
+  children: React.ReactNode
+  className?: string
+}) {
+  return <td className={cn("px-2 py-2 text-ink-900", className)}>{children}</td>
+}
+
+function FieldText({
+  label,
+  value,
+  onChange,
+  full,
+  placeholder,
+}: {
+  label: string
+  value: string
+  onChange: (v: string) => void
+  full?: boolean
+  placeholder?: string
+}) {
+  return (
+    <div className={cn("flex flex-col gap-1", full && "sm:col-span-2")}>
+      <label className="text-xs font-bold uppercase tracking-widest text-ink-600">
+        {label}
+      </label>
+      <Input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+      />
+    </div>
+  )
+}
+
+function FieldNumber({
+  label,
+  value,
+  onChange,
+  allowEmpty,
+}: {
+  label: string
+  value: number | ""
+  onChange: (v: number | "") => void
+  allowEmpty?: boolean
+}) {
+  return (
+    <div className="flex flex-col gap-1">
+      <label className="text-xs font-bold uppercase tracking-widest text-ink-600">
+        {label}
+      </label>
+      <Input
+        type="number"
+        value={value}
+        onChange={(e) => {
+          if (allowEmpty && e.target.value === "") {
+            onChange("")
+            return
+          }
+          const n = Number(e.target.value)
+          onChange(Number.isNaN(n) ? (allowEmpty ? "" : 0) : n)
+        }}
+      />
+    </div>
+  )
+}
+
+function ToggleField({
+  label,
+  checked,
+  onChange,
+}: {
+  label: string
+  checked: boolean
+  onChange: (v: boolean) => void
+}) {
+  return (
+    <div className="flex items-center gap-2 py-1.5">
+      <Toggle
+        checked={checked}
+        onCheckedChange={onChange}
+        aria-label={label}
+      />
+      <span className="font-mono text-xs text-ink-700">
+        {label}：{checked ? "启用" : "停用"}
+      </span>
+    </div>
+  )
+}
+
+function formatTokens(n: number): string {
+  if (n <= 0) return "—"
+  if (n >= 1000) return `${(n / 1000).toLocaleString()}K`
+  return String(n)
 }

@@ -130,12 +130,25 @@ class FlowDataNormalizer:
     ``amount``. Returns an empty list when normalization fails.
     """
 
-    def __init__(self, api_url: str, api_key: str, model: str, timeout: int = 60, max_retries: int = 3):
+    def __init__(
+        self,
+        api_url: str,
+        api_key: str,
+        model: str,
+        timeout: int = 60,
+        max_retries: int = 3,
+        max_tokens: int = _MAX_TOKENS_NORMALIZER,
+        thinking: Optional[str] = None,
+        temperature: Optional[float] = None,
+    ):
         self.api_url = api_url
         self.api_key = api_key
         self.model = model
         self.timeout = timeout
         self.max_retries = max_retries
+        self.max_tokens = max_tokens
+        self.thinking = thinking
+        self.temperature = temperature
         self._agent = None  # lazy-build，注册 output_validator
 
     def _get_agent(self):
@@ -147,7 +160,9 @@ class FlowDataNormalizer:
                 api_key=self.api_key,
                 model=self.model,
                 timeout=self.timeout,
-                max_tokens=_MAX_TOKENS_NORMALIZER,
+                max_tokens=self.max_tokens,
+                thinking=self.thinking,
+                temperature=self.temperature,
             )
 
             @agent.output_validator

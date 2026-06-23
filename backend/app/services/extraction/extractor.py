@@ -9,6 +9,16 @@ from typing import Any, Dict, List, Optional
 
 from ...config import settings
 from ...llm import DocumentPortraitExtractor, FlowDataNormalizer, FlowTableClassifier
+from ...llm.classifier import _MAX_TOKENS_CLASSIFIER
+from ...llm.normalizer import _MAX_TOKENS_NORMALIZER
+from ...llm.portrait import _MAX_TOKENS_PORTRAIT
+from ...models import LLMModel
+from ...models.llm_model import THINKING_OFF as _MODEL_THINKING_OFF
+from ...models.llm_model_assignment import (
+    STAGE_CLASSIFICATION,
+    STAGE_NORMALIZATION,
+    STAGE_PORTRAIT,
+)
 from ...parsers import DocxParser, ExcelParser, PDFParser
 from ...parsers.base import FlowRecord, RawTable
 from .checkpoint import CheckpointManager
@@ -75,8 +85,13 @@ class ExtractionResult:
 class FlowExtractor:
     """Async flow extraction pipeline."""
 
-    def __init__(self, runtime_settings: Optional[Dict[str, str]] = None):
+    def __init__(
+        self,
+        runtime_settings: Optional[Dict[str, str]] = None,
+        stage_models: Optional[Dict[str, Optional[LLMModel]]] = None,
+    ):
         runtime_settings = runtime_settings or {}
+        stage_models = stage_models or {}
         llm_timeout = self._int_setting(
             runtime_settings.get("llm.timeout"),
             settings.LLM_TIMEOUT,
@@ -105,29 +120,123 @@ class FlowExtractor:
         self.excel_parser = ExcelParser()
         self.docx_parser = DocxParser()
 
-        # Initialize LLM components
+        # Initialize LLM components. Per-stage resolution priority
+        # (prd ②): 阶段卡片 > runtime ``llm.*`` 设置项 > 模块硬编码兜底常量.
+        # ``stage_models`` is queried by the runner from DB (avoid extractor
+        # touching DB directly). Missing card (None) falls back to runtime
+        # ``llm.*`` settings + module constants — never crashes.
         self.classifier = FlowTableClassifier(
-            api_url=runtime_settings.get("llm.base_url") or settings.LLM_API_ENDPOINT,
-            api_key=runtime_settings.get("llm.api_key") or settings.LLM_API_KEY,
-            model=runtime_settings.get("llm.model_name") or settings.LLM_MODEL_NAME,
-            timeout=llm_timeout,
+            **self._resolve_stage_llm_params(
+                stage_models.get(STAGE_CLASSIFICATION),
+                runtime_settings,
+                llm_timeout,
+                fallback_max_tokens=_MAX_TOKENS_CLASSIFIER,
+            )
         )
         self.normalizer = FlowDataNormalizer(
-            api_url=runtime_settings.get("llm.base_url") or settings.LLM_API_ENDPOINT,
-            api_key=runtime_settings.get("llm.api_key") or settings.LLM_API_KEY,
-            model=runtime_settings.get("llm.model_name") or settings.LLM_MODEL_NAME,
-            timeout=llm_timeout,
+            **self._resolve_stage_llm_params(
+                stage_models.get(STAGE_NORMALIZATION),
+                runtime_settings,
+                llm_timeout,
+                fallback_max_tokens=_MAX_TOKENS_NORMALIZER,
+            )
         )
         self.portrait_extractor = DocumentPortraitExtractor(
-            api_url=runtime_settings.get("llm.base_url") or settings.LLM_API_ENDPOINT,
-            api_key=runtime_settings.get("llm.api_key") or settings.LLM_API_KEY,
-            model=runtime_settings.get("llm.model_name") or settings.LLM_MODEL_NAME,
-            timeout=llm_timeout,
+            **self._resolve_stage_llm_params(
+                stage_models.get(STAGE_PORTRAIT),
+                runtime_settings,
+                llm_timeout,
+                fallback_max_tokens=_MAX_TOKENS_PORTRAIT,
+            )
         )
 
         # Control flags
         self._cancel_requested = False
         self._pause_requested = False
+
+    @staticmethod
+    def _resolve_stage_llm_params(
+        model: Optional[LLMModel],
+        runtime_settings: Dict[str, str],
+        llm_timeout: int,
+        fallback_max_tokens: int,
+    ) -> Dict[str, Any]:
+        """Resolve per-stage LLM params (priority: card > runtime llm.* > module fallback).
+
+        Args:
+            model: 该阶段指派的卡片（None → 全部回退 runtime settings / 模块常量）。
+            runtime_settings: runtime ``llm.*`` 设置项（兜底层1）。
+            llm_timeout: LLM 超时（从 runtime settings 读，不来自卡片）。
+            fallback_max_tokens: 模块硬编码兜底常量（兜底层2，runtime 也缺时）。
+
+        Returns:
+            ``{api_url, api_key, model, timeout, max_tokens, thinking}`` 供三模块
+            构造器展开。``thinking``：卡片是 reasoning 模型且 default_thinking≠off
+            时传 low/medium/high；否则 None（不给非 reasoning 模型发
+            reasoning_effort，research §3）。
+        """
+        # 兜底层：runtime llm.* 设置项。
+        rt_base_url = runtime_settings.get("llm.base_url") or settings.LLM_API_ENDPOINT
+        rt_api_key = runtime_settings.get("llm.api_key") or settings.LLM_API_KEY
+        rt_model = runtime_settings.get("llm.model_name") or settings.LLM_MODEL_NAME
+        # runtime llm.max_tokens：未指派卡片时用；缺失/无效则退到模块硬编码常量
+        # （最后一层兜底）。生产环境 load_runtime_settings 用 DEFAULT_SETTINGS
+        # 填充 llm.max_tokens=16000，所以缺失只在测试/裸调用时发生。
+        rt_max_tokens: Optional[int] = None
+        try:
+            rt_value = runtime_settings.get("llm.max_tokens")
+            if rt_value:
+                rt_max_tokens = int(rt_value)
+        except (TypeError, ValueError):
+            rt_max_tokens = None
+        # runtime llm.temperature 兜底（空则 None → agent_factory 用内置 0.1）。
+        rt_temperature: Optional[float] = None
+        try:
+            rt_temp_value = runtime_settings.get("llm.temperature")
+            if rt_temp_value:
+                rt_temperature = float(rt_temp_value)
+        except (TypeError, ValueError):
+            rt_temperature = None
+
+        if model is None:
+            # 未指派卡片 → runtime llm.* + 模块常量兜底。max_tokens 取 runtime
+            # 值，缺失/无效则退到模块常量（保留旧行为）。
+            max_tokens = rt_max_tokens if rt_max_tokens and rt_max_tokens > 0 else fallback_max_tokens
+            return {
+                "api_url": rt_base_url,
+                "api_key": rt_api_key,
+                "model": rt_model,
+                "timeout": llm_timeout,
+                "max_tokens": max_tokens,
+                "thinking": None,
+                "temperature": rt_temperature,
+            }
+
+        # 指派了卡片：从卡片读（api_url/api_key/model/max_tokens/thinking）。
+        # temperature：卡片 default_temperature 空则回退 runtime llm.temperature。
+        thinking = model.default_thinking
+        if thinking == _MODEL_THINKING_OFF or not model.is_reasoning:
+            thinking = None
+        card_temperature = (
+            model.default_temperature if model.default_temperature is not None else rt_temperature
+        )
+        logger.info(
+            "阶段使用模型卡片: display_name=%s, model=%s, max_tokens=%d, thinking=%s, is_reasoning=%s",
+            model.display_name,
+            model.model_name,
+            model.default_max_tokens,
+            model.default_thinking,
+            model.is_reasoning,
+        )
+        return {
+            "api_url": model.provider_base_url or rt_base_url,
+            "api_key": model.api_key or rt_api_key,
+            "model": model.model_name or rt_model,
+            "timeout": llm_timeout,
+            "max_tokens": model.default_max_tokens or fallback_max_tokens,
+            "thinking": thinking,
+            "temperature": card_temperature,
+        }
 
     @staticmethod
     def _int_setting(value: Optional[str], default: int, minimum: int, maximum: int) -> int:

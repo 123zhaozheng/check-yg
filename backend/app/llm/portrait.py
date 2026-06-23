@@ -102,12 +102,25 @@ class DocumentPortraitExtractor:
     when extraction fails (network error, invalid output, or empty content).
     """
 
-    def __init__(self, api_url: str, api_key: str, model: str, timeout: int = 60, max_retries: int = 3):
+    def __init__(
+        self,
+        api_url: str,
+        api_key: str,
+        model: str,
+        timeout: int = 60,
+        max_retries: int = 3,
+        max_tokens: int = _MAX_TOKENS_PORTRAIT,
+        thinking: Optional[str] = None,
+        temperature: Optional[float] = None,
+    ):
         self.api_url = api_url
         self.api_key = api_key
         self.model = model
         self.timeout = timeout
         self.max_retries = max_retries
+        self.max_tokens = max_tokens
+        self.thinking = thinking
+        self.temperature = temperature
 
     def _agent(self):
         return get_agent(
@@ -117,7 +130,9 @@ class DocumentPortraitExtractor:
             api_key=self.api_key,
             model=self.model,
             timeout=self.timeout,
-            max_tokens=_MAX_TOKENS_PORTRAIT,
+            max_tokens=self.max_tokens,
+            thinking=self.thinking,
+            temperature=self.temperature,
         )
 
     async def extract(

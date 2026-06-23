@@ -19,12 +19,15 @@ TODO 用户后续接真实 agent.run 后，单章重生成可改为 agent 输出
 
 from collections import Counter
 from datetime import datetime
-from typing import Sequence
+from typing import Optional, Sequence
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Finding, FlowRecordRow, Task
+from app.models.llm_model import LLMModel
+from app.models.llm_model_assignment import STAGE_REPORT_GENERATION
+from app.services.llm_model_service import get_stage_model
 
 
 # 6 章固定标题（order_index 0-5）。
@@ -41,6 +44,22 @@ CHAPTER_TITLES: list[str] = [
 def chapter_titles() -> list[str]:
     """6 章固定标题（供测试与路由引用，避免硬编码漂移）."""
     return list(CHAPTER_TITLES)
+
+
+# ---------------------------------------------------------------------------
+# 阶段模型卡片预留接线（06-23-llm-model-card）
+# ---------------------------------------------------------------------------
+# report_generation 阶段当前是占位（确定性模板拼装，不调真实 LLM）。本切片只
+# 确保它**能**按阶段读卡片（预留接线函数），等后续任务接真实 agent.run 时生效。
+
+
+async def get_report_generation_model(db: AsyncSession) -> Optional[LLMModel]:
+    """report_generation 阶段指派的卡片（预留接线，占位阶段当前不调真实 LLM）。
+
+    Returns:
+        指派的 ``LLMModel`` 或 None（未指派 → 后续接真实 LLM 时回退兜底）。
+    """
+    return await get_stage_model(db, STAGE_REPORT_GENERATION)
 
 
 def _fmt_datetime(value: datetime | None) -> str:

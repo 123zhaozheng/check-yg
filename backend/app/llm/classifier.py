@@ -19,7 +19,6 @@ from ..parsers.base import RawTable
 
 logger = logging.getLogger(__name__)
 
-
 SYSTEM_PROMPT_FLOW_TABLE_CLASSIFIER = """你是一个银行/支付流水表格识别专家，熟悉中国各大银行、信用卡、支付宝、微信等流水格式。
 
 ## 任务
@@ -66,12 +65,25 @@ class FlowTableClassifier:
         "data_start_row": 0,
     }
 
-    def __init__(self, api_url: str, api_key: str, model: str, timeout: int = 60, max_retries: int = 3):
+    def __init__(
+        self,
+        api_url: str,
+        api_key: str,
+        model: str,
+        timeout: int = 60,
+        max_retries: int = 3,
+        max_tokens: int = _MAX_TOKENS_CLASSIFIER,
+        thinking: Optional[str] = None,
+        temperature: Optional[float] = None,
+    ):
         self.api_url = api_url
         self.api_key = api_key
         self.model = model
         self.timeout = timeout
         self.max_retries = max_retries
+        self.max_tokens = max_tokens
+        self.thinking = thinking
+        self.temperature = temperature
 
     def _agent(self):
         return get_agent(
@@ -81,7 +93,9 @@ class FlowTableClassifier:
             api_key=self.api_key,
             model=self.model,
             timeout=self.timeout,
-            max_tokens=_MAX_TOKENS_CLASSIFIER,
+            max_tokens=self.max_tokens,
+            thinking=self.thinking,
+            temperature=self.temperature,
         )
 
     async def classify(

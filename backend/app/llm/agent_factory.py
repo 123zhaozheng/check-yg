@@ -6,32 +6,43 @@
   ``LLM_TIMEOUT``）。
 - ``base_url`` 必须以 ``/v1`` 结尾（Chat Completions 走 ``/v1/chat/completions``）。
 - agent 模块级创建一次、跨请求复用（无状态、线程安全）；per-request 数据走
-  ``deps=``。这里按 (base_url, api_key, model, timeout, max_tokens) 缓存，
-  runtime settings 变了会重建对应 agent。
+  ``deps=``。这里按 (base_url, api_key, model, timeout, max_tokens, thinking)
+  缓存，runtime settings 变了会重建对应 agent。
 - ``trust_env=False``：显式传 ``httpx.AsyncClient(trust_env=False)``，等价旧
   httpx 直连实现，避免内网/ollama 环境走系统代理。
 - 三模块 ``max_tokens`` 不同（classifier/portrait 1500，normalizer 4000），
   per-agent 设 ``ModelSettings``。
 - ``temperature=0.1`` 保留（与旧实现一致，缩小回归 diff）。
+- ``thinking``（06-23-llm-model-card）：透传到 ``ModelSettings(thinking=...)``
+  控 reasoning 预算（research §1.3：统一字段 → OpenAI ``reasoning_effort``）。
+  ``None``/``'off'`` 时不传该字段——避免给非 reasoning 模型发
+  ``reasoning_effort`` 报错（research §3）。
 """
 
 from __future__ import annotations
 
 import logging
 import threading
+from typing import Optional
 
 import httpx
 from pydantic_ai import Agent, ModelSettings
-from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.models.openai import OpenAIChatModel, OpenAIModelProfile
 from pydantic_ai.providers.openai import OpenAIProvider
 
 from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-# (base_url, api_key, model, timeout, max_tokens) -> Agent
+# (base_url, api_key, model, timeout, max_tokens, thinking, temperature,
+#  output_type, instructions, deps_type) -> Agent. ``thinking`` 计入 key——
+# reasoning（low/medium/high）与非 reasoning（off/None）拿到不同 agent 实例
+# （reasoning 实例带 ``OpenAIModelProfile(supports_thinking=True)``）。
 _agent_cache: dict[tuple, Agent] = {}
 _lock = threading.Lock()
+
+# thinking 档位（off 不传 reasoning_effort）。与 llm_model.THINKING_LEVELS 对齐。
+_THINKING_LEVELS = ("off", "low", "medium", "high")
 
 
 def _normalize_base_url(base_url: str) -> str:
@@ -51,6 +62,8 @@ def _build_agent(
     model: str,
     timeout: int,
     max_tokens: int,
+    thinking: Optional[str] = None,
+    temperature: Optional[float] = None,
     retries: int = 3,
     deps_type: type | None = None,
 ) -> Agent:
@@ -72,9 +85,30 @@ def _build_agent(
             http_client=httpx.AsyncClient(trust_env=False),
         ),
     )
+    # temperature：未传时保留旧默认 0.1（缩小回归 diff）；卡片/runtime 指定
+    # 时用指定值（prd ② temperature 可配）。
+    effective_temp = 0.1 if temperature is None else float(temperature)
+    model_settings = ModelSettings(
+        temperature=effective_temp, max_tokens=max_tokens, timeout=timeout
+    )
+    # thinking：off/None 不传 reasoning_effort（非 reasoning 模型会报错）。
+    # 见 research §1.3 / §3。
+    send_thinking = bool(thinking) and thinking != "off" and thinking in _THINKING_LEVELS
+    if send_thinking:
+        model_settings["thinking"] = thinking  # type: ignore[typeddict-unknown-key]
+    # 关键：OpenAIChatModel 默认 profile ``supports_thinking=False``，会导致
+    # ``Model.prepare_request`` 把 ``thinking`` 字段从 model_settings 里**剥离**且
+    # 不塞进 ``ModelRequestParameters.thinking``，最终 ``_translate_thinking`` 返
+    # OMIT → ``reasoning_effort`` 根本不发到端点（research §3）。给 reasoning 模型
+    # 传 ``OpenAIModelProfile(supports_thinking=True)`` 才能让 ``thinking=low``
+    # 真正映射成 ``reasoning_effort=low`` 发出去。非 reasoning（send_thinking=False）
+    # 时不传 profile，保留默认行为（thinking 也不会在 model_settings 里，安全）。
+    # 只设 supports_thinking，不动 openai_supports_reasoning（避免触发
+    # ``_drop_sampling_params_for_reasoning`` 丢 temperature）。
     chat_model = OpenAIChatModel(
         model,
         provider=provider,
+        profile=OpenAIModelProfile(supports_thinking=True) if send_thinking else None,
         settings=ModelSettings(timeout=timeout, max_tokens=max_tokens),
     )
     # deps_type 传类型（conventions.md），None 时 agent 无 deps（与旧三模块一致）。
@@ -83,7 +117,7 @@ def _build_agent(
         output_type=output_type,
         instructions=instructions,
         retries={"tools": retries, "output": retries},
-        model_settings=ModelSettings(temperature=0.1, max_tokens=max_tokens, timeout=timeout),
+        model_settings=model_settings,
         deps_type=deps_type,
     )
 
@@ -97,6 +131,8 @@ def get_agent(
     model: str | None = None,
     timeout: int | None = None,
     max_tokens: int,
+    thinking: Optional[str] = None,
+    temperature: Optional[float] = None,
     deps_type: type | None = None,
 ) -> Agent:
     """按连接参数取/建缓存 agent。
@@ -107,6 +143,12 @@ def get_agent(
     ``deps_type`` 传类型（conventions.md：deps_type=AuditDeps 传类型，deps=
     传实例）；为 None 时 agent 无 deps（与旧三模块 classifier/normalizer/portrait
     一致）。``deps_type`` 计入缓存 key，不同 deps_type 得到不同 agent 实例。
+
+    ``thinking`` 计入缓存 key（同 max_tokens）——不同 reasoning 预算得到不同
+    agent 实例。``None``/``'off'`` 不传 ``reasoning_effort``（非 reasoning 模型
+    会报错——research §3）。
+
+    ``temperature`` 计入缓存 key；``None`` 时保留旧默认 0.1。
     """
     base_url = base_url or settings.LLM_API_ENDPOINT
     api_key = api_key or settings.LLM_API_KEY
@@ -119,6 +161,8 @@ def get_agent(
         model,
         int(timeout),
         int(max_tokens),
+        thinking or "off",
+        None if temperature is None else float(temperature),
         output_type,
         instructions,
         deps_type,
@@ -134,6 +178,8 @@ def get_agent(
                 model=model,
                 timeout=timeout,
                 max_tokens=max_tokens,
+                thinking=thinking,
+                temperature=temperature,
                 deps_type=deps_type,
             )
             _agent_cache[key] = agent

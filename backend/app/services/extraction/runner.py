@@ -11,6 +11,8 @@ from sqlalchemy import delete, select
 
 from app.database import async_session
 from app.models import Document, FlowRecordRow, Task, TaskLog
+from app.models.llm_model_assignment import ACTIVE_STAGES
+from app.services.llm_model_service import load_stage_models
 from app.services.settings_service import get_int_setting, load_runtime_settings
 from app.websocket.notifications import notify_user
 
@@ -57,6 +59,9 @@ class ExtractionTaskRunner:
 
         async with async_session() as session:
             runtime_settings = await load_runtime_settings(session)
+            # 查 classification/portrait/normalization 三阶段指派的卡片（一次查完，
+            # 避免 extractor 内访问 DB）。未指派返回 None → extractor 回退兜底。
+            stage_models = await load_stage_models(session, ACTIVE_STAGES)
 
         if mineru_concurrency is None:
             mineru_concurrency = get_int_setting(
@@ -67,7 +72,10 @@ class ExtractionTaskRunner:
                 runtime_settings, "extraction.llm_concurrency", 2, 1, 16
             )
 
-        extractor = FlowExtractor(runtime_settings=runtime_settings)
+        extractor = FlowExtractor(
+            runtime_settings=runtime_settings,
+            stage_models=stage_models,
+        )
         loop = asyncio.get_running_loop()
 
         def report_progress(report: ProgressReport) -> None:

@@ -6,6 +6,8 @@ from app.models.document import Document
 from app.models.export import ExportFile
 from app.models.finding import Finding
 from app.models.flow_record import FlowRecordRow
+from app.models.llm_model import LLMModel
+from app.models.llm_model_assignment import LLMModelAssignment
 from app.models.report import Report
 from app.models.report_annotation import ReportAnnotation
 from app.models.report_chapter import ReportChapter
@@ -24,6 +26,8 @@ __all__ = [
     "ExportFile",
     "Finding",
     "FlowRecordRow",
+    "LLMModel",
+    "LLMModelAssignment",
     "Report",
     "ReportAnnotation",
     "ReportChapter",

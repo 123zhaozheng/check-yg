@@ -21,6 +21,8 @@ from app.models import (  # noqa: F401
     ExportFile,
     Finding,
     FlowRecordRow,
+    LLMModel,
+    LLMModelAssignment,
     Report,
     ReportAnnotation,
     ReportChapter,

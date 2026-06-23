@@ -68,6 +68,7 @@ from app.routers.settings import router as settings_router
 from app.routers.reviews import router as reviews_router
 from app.routers.reports import router as reports_router
 from app.routers.exports import router as exports_router
+from app.routers.llm_models import router as llm_models_router
 from app.websocket.router import router as websocket_router
 
 app.include_router(auth_router, prefix="/api")
@@ -80,6 +81,7 @@ app.include_router(settings_router, prefix="/api")
 app.include_router(reviews_router, prefix="/api")
 app.include_router(reports_router, prefix="/api")
 app.include_router(exports_router, prefix="/api")
+app.include_router(llm_models_router, prefix="/api")
 app.include_router(websocket_router)
 
 

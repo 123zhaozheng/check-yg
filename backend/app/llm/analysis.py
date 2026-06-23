@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from typing import Optional
 
 from pydantic_ai import Agent, ModelMessagesTypeAdapter, RunContext
 from pydantic_core import to_json
@@ -35,6 +36,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.llm.agent_factory import get_agent
 from app.llm.types import AnalysisResult
 from app.models import FlowRecordRow
+from app.models.llm_model import LLMModel
+from app.models.llm_model_assignment import STAGE_AI_ANALYSIS, STAGE_AI_QA
+from app.services.llm_model_service import get_stage_model
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +84,27 @@ amount/confidence）+ summary（整体推理摘要）。severity 取 high|medium
 """
 
 _MAX_TOKENS_ANALYSIS = 2000
+
+
+# ---------------------------------------------------------------------------
+# 阶段模型卡片预留接线（06-23-llm-model-card）
+# ---------------------------------------------------------------------------
+# ai_analysis / ai_qa 阶段当前是占位（不调真实 LLM）。本切片只确保它们**能**
+# 按阶段读卡片（预留接线函数），等后续任务接真实 agent.run 时生效。
+
+
+async def get_analysis_model(db: AsyncSession) -> Optional[LLMModel]:
+    """ai_analysis 阶段指派的卡片（预留接线，占位阶段当前不调真实 LLM）。
+
+    Returns:
+        指派的 ``LLMModel`` 或 None（未指派 → 后续接真实 LLM 时回退兜底）。
+    """
+    return await get_stage_model(db, STAGE_AI_ANALYSIS)
+
+
+async def get_ai_qa_model(db: AsyncSession) -> Optional[LLMModel]:
+    """ai_qa 阶段指派的卡片（预留接线，占位阶段当前不调真实 LLM）。"""
+    return await get_stage_model(db, STAGE_AI_QA)
 
 
 # ---------------------------------------------------------------------------

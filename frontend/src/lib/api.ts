@@ -964,3 +964,109 @@ export function changePassword(body: ChangePasswordBody): Promise<{ ok: boolean 
 export function updateMe(body: UpdateMeBody): Promise<UserMeResponse> {
   return api.patch<UserMeResponse>("/users/me", body)
 }
+
+/* =========================================================================
+ * LLM Model Cards + Stage Assignments API — 06-23-llm-model-card.
+ * Appended only; the apiFetch core above is unchanged.
+ * Mirrors `backend/app/routers/llm_models.py` + `app/schemas/llm_model.py`.
+ * 模型卡片管理 + 按阶段指派；api_key 脱敏（********XXXX），编辑留空不改.
+ * ======================================================================= */
+
+/** reasoning 预算档位（off=不传 reasoning_effort；reasoning 模型默认 low）. */
+export type ThinkingLevel = "off" | "low" | "medium" | "high"
+
+/** 6 个阶段：前三个真实生效，后三个预留（占位，待接入真实 LLM）. */
+export type Stage =
+  | "classification"
+  | "portrait"
+  | "normalization"
+  | "ai_analysis"
+  | "ai_qa"
+  | "report_generation"
+
+/** 模型卡片响应——api_key 脱敏（********XXXX）. */
+export interface LLMModel {
+  id: number
+  display_name: string
+  model_name: string
+  provider_base_url: string
+  /** 脱敏串（********XXXX）；编辑时留空/传脱敏串表示不改原值. */
+  api_key: string
+  context_length: number
+  max_output: number
+  supports_tool_call: boolean
+  supports_tool_choice_required: boolean
+  is_reasoning: boolean
+  supports_streaming: boolean
+  default_thinking: ThinkingLevel
+  default_max_tokens: number
+  default_temperature?: number | null
+  created_at: string
+  updated_at: string
+}
+
+/** 新建/编辑模型卡片请求体（api_key 留空不改）. */
+export interface LLMModelUpsertBody {
+  display_name: string
+  model_name: string
+  provider_base_url: string
+  /** 留空/省略/传脱敏串 → 不改原值；新建默认空串. */
+  api_key?: string
+  context_length: number
+  max_output: number
+  supports_tool_call: boolean
+  supports_tool_choice_required: boolean
+  is_reasoning: boolean
+  supports_streaming: boolean
+  default_thinking: ThinkingLevel
+  default_max_tokens: number
+  default_temperature?: number | null
+}
+
+/** 阶段指派响应——stage + 指派的卡片（未指派时 llm_model=null）. */
+export interface LLMModelAssignment {
+  id?: number | null
+  stage: Stage
+  llm_model_id?: number | null
+  llm_model?: LLMModel | null
+  created_at?: string | null
+  updated_at?: string | null
+}
+
+/** PUT /api/llm-model-assignments/{stage} 请求体（llm_model_id=null 解除指派）. */
+export interface LLMModelAssignmentBody {
+  llm_model_id: number | null
+}
+
+/** GET /api/llm-models — 列出所有模型卡片（api_key 脱敏）. */
+export function listLLMModels(): Promise<LLMModel[]> {
+  return api.get<LLMModel[]>("/llm-models")
+}
+
+/** POST /api/llm-models — 新建模型卡片（admin）. */
+export function createLLMModel(body: LLMModelUpsertBody): Promise<LLMModel> {
+  return api.post<LLMModel>("/llm-models", body)
+}
+
+/** PUT /api/llm-models/{id} — 更新模型卡片（admin；api_key 留空不改）. */
+export function updateLLMModel(id: number, body: LLMModelUpsertBody): Promise<LLMModel> {
+  return api.put<LLMModel>(`/llm-models/${id}`, body)
+}
+
+/** DELETE /api/llm-models/{id} — 删除模型卡片（admin；被指派返 409）. */
+export function deleteLLMModel(id: number): Promise<void> {
+  return api.delete<void>(`/llm-models/${id}`)
+}
+
+/** GET /api/llm-model-assignments — 列出 6 阶段 + 各自指派. */
+export function listLLMModelAssignments(): Promise<LLMModelAssignment[]> {
+  return api.get<LLMModelAssignment[]>("/llm-model-assignments")
+}
+
+/** PUT /api/llm-model-assignments/{stage} — 指派/解除该阶段的卡片（admin）. */
+export function upsertLLMModelAssignment(
+  stage: Stage,
+  body: LLMModelAssignmentBody,
+): Promise<LLMModelAssignment> {
+  return api.put<LLMModelAssignment>(`/llm-model-assignments/${stage}`, body)
+}

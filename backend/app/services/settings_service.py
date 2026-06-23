@@ -54,11 +54,11 @@ DEFAULT_SETTINGS: Dict[str, Dict[str, Any]] = {
         "description": "0.0-2.0，越低输出越确定。",
     },
     "llm.max_tokens": {
-        "value": "2000",
+        "value": "16000",
         "category": "llm",
         "type": "number",
         "label": "LLM 最大输出 token",
-        "description": "单次响应的最大 token 数。",
+        "description": "单次响应的最大 token 数（兜底：阶段未指派卡片时用；reasoning 模型建议≥4096）。",
     },
     # --- MinerU ---
     "mineru.mode": {
