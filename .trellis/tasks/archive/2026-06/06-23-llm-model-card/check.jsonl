@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "check 阶段:代码标准、禁止模式、测试覆盖要求,验证 CRUD/阶段指派/三模块接线/seed/admin鉴权有对应测试且 mock LLM agent。"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "check 阶段:验证新模型/router/service 接线契约、alembic 迁移链 head 正确、tasks 端点契约未破坏、三模块按阶段读卡片不破坏 extraction pipeline。"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "check 阶段:验证两张新表迁移 down_revision=c4a1e9f8b2d4 正确、枚举/nullable FK 用法、sqlite create_all 覆盖、seed 不重复插入。"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "check 阶段:验证删被指派卡片 409、CRUD admin 鉴权 403、卡片缺失回退兜底不崩、api_key 脱敏返回。"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "check 阶段:验证三模块读卡片的中文日志符合 spec 格式、api_key 不进日志。"}
+{"file": ".trellis/tasks/06-23-web-4/research/llm-model-card-and-gateway.md", "reason": "check 阶段:验证实现对齐研究结论——thinking 字段透传、max_tokens 从卡片读、非 reasoning 模型不发 reasoning_effort、reasoning 模型默认 max_tokens≥4096+thinking=low。"}
