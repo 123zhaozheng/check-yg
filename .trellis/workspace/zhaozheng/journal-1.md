@@ -544,3 +544,38 @@ S7 审查报告闭环完成 (umbrella 8/10→9/10)。后端：新建 ReportChapt
 ### Next Steps
 
 - None - task complete
+
+
+## Session 17: web-4 收尾修复 + LLM 模型卡片按阶段选模型
+
+**Date**: 2026-06-23
+**Task**: web-4 收尾修复 + LLM 模型卡片按阶段选模型
+**Branch**: `feat/web-split`
+
+### Summary
+
+从「后端无日志」一路追到根因:(1) 日志被 watchfiles/pikepdf/alembic.runtime 噪音淹没 + 启动卡死——_run_alembic_upgrade 在 asyncio 事件循环所在进程跑同步 alembic 会因 fileConfig 重配 logging 与 uvicorn handler 冲突而死锁,改 subprocess.run 起独立子进程跑迁移解决;LLM 失败日志加厚为异常类型+业务后果三件套。(2) 画像生成失败根因实锤:step-3.7-flash 是 reasoning 模型,reasoning token 计入 max_completion_tokens 预算,硬编码 1500 被推理烧光→UnexpectedModelBehavior;更深发现设置页早有 llm.max_tokens 但三模块没读它各自硬编码,设置项是孤儿。(3) 新任务 06-23-llm-model-card:llm_models+llm_model_assignments 两表+迁移+seed,三模块按阶段读卡片(严格优先级 阶段卡片>runtime ll.*>模块兜底),agent_factory thinking 透传(trellis-check 抓到关键 bug:默认 profile supports_thinking=False 会静默丢弃 thinking,改传 OpenAIModelProfile(supports_thinking=True) 让 reasoning_effort 真发到端点+加 HTTP 层回归测试),CRUD/指派 API(admin 鉴权+api_key 脱敏+删被指派返 409),前端「集成与模型」tab,14 新测试。178 tests + alembic head a5b2c0d3e1f8 + frontend build 通过。两任务归档。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4e1e4713` | (see git log) |
+| `3a63a3e0` | (see git log) |
+| `091dc294` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

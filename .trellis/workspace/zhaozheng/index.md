@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 16
-- **Last Active**: 2026-06-22
+- **Total Sessions**: 17
+- **Last Active**: 2026-06-23
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~546 | Active |
+| `journal-1.md` | ~581 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 17 | 2026-06-23 | web-4 收尾修复 + LLM 模型卡片按阶段选模型 | `4e1e4713`, `3a63a3e0`, `091dc294` | `feat/web-split` |
 | 16 | 2026-06-22 | S7 审查报告闭环 | `ebf5dfd9`, `73cacc1e`, `1bd06d26` | `feat/web-split` |
 | 15 | 2026-06-22 | S6 AI 分析骨架闭环 | `1876708`, `04fa406` | `feat/web-split` |
 | 14 | 2026-06-22 | S5 清洗标准化闭环（P0 核心底线） | `6d54d30`, `cf6d025` | `feat/web-split` |
