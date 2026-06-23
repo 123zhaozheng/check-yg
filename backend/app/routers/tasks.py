@@ -18,9 +18,17 @@ from ..auth.dependencies import get_current_user
 from ..config import settings
 from ..database import get_db
 from ..llm.analysis import AuditDeps, chat as analysis_chat, run_analysis
-from ..models import Document, Finding, FlowRecordRow, Task, TaskLog, User
+from ..models import Document, Finding, FlowRecordRow, KeywordHit, Task, TaskLog, User
+from ..schemas.keyword import (
+    KeywordHitItem,
+    KeywordHitListResponse,
+    KeywordHitPatchRequest,
+    KeywordReviewRunRequest,
+    KeywordReviewRunStats,
+)
 from ..services.extraction.runner import runner
 from ..services.extraction.scanner import DocumentScanner
+from ..services.keyword.keyword_review_service import KeywordReviewService
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
@@ -1349,4 +1357,154 @@ async def analyze_chat(
     await db.commit()
 
     return ChatResponse(reply=reply)
+
+
+# ---------------------------------------------------------------------------
+# 06-23-tab 关键词审查 — run / hits / PATCH hit.
+# Owner-only, reuses _load_owned_task. 命中只扫 standard 记录的 counterparty_name
+# + summary；重跑清旧命中再算（同 task 可换卡片反复重审）。
+# ---------------------------------------------------------------------------
+
+
+_keyword_review_service = KeywordReviewService()
+
+
+def _hit_item(hit: KeywordHit) -> KeywordHitItem:
+    return KeywordHitItem(
+        id=hit.id,
+        task_id=hit.task_id,
+        flow_record_id=hit.flow_record_id,
+        keyword_card_id=hit.keyword_card_id,
+        keyword_term_id=hit.keyword_term_id,
+        match_type=hit.match_type,
+        confidence=hit.confidence,
+        risk_level=hit.risk_level,
+        matched_field=hit.matched_field,
+        matched_snippet=hit.matched_snippet,
+        status=hit.status,
+        note=hit.note,
+        created_at=hit.created_at,
+        updated_at=hit.updated_at,
+    )
+
+
+@router.post(
+    "/{task_id}/keyword-review/run", response_model=KeywordReviewRunStats
+)
+async def run_keyword_review(
+    task_id: int,
+    request: KeywordReviewRunRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """运行关键词审查（owner-only）。多选卡片 → 逐行 × 逐词三层匹配 → 命中入库。
+
+    重跑策略：先删该 task 旧命中，再插新命中（结果即当前选中卡片集）。
+    返回统计（扫描记录数 / 命中记录数 / 命中词数 / 高风险命中数）。
+    """
+    task = await _load_owned_task(db, task_id, current_user)
+    stats = await _keyword_review_service.run_review(db, task.id, request.card_ids)
+    config = dict(task.config or {})
+    config["last_keyword_review_at"] = datetime.now(timezone.utc).isoformat()
+    task.config = config
+    db.add(
+        TaskLog(
+            task_id=task.id,
+            level="info",
+            message=(
+                "Keyword review run: cards=%s scanned=%d hits=%d"
+                % (request.card_ids, stats["scanned_records"], stats["hit_records"])
+            ),
+        )
+    )
+    await db.commit()
+    return KeywordReviewRunStats(**stats)
+
+
+@router.get(
+    "/{task_id}/keyword-review/hits", response_model=KeywordHitListResponse
+)
+async def list_keyword_hits(
+    task_id: int,
+    status: Optional[str] = Query(
+        None, description="pending | confirmed | ignored"
+    ),
+    risk_level: Optional[str] = Query(None, description="高 | 中 | 低"),
+    match_type: Optional[str] = Query(
+        None, description="精确匹配 | 脱敏匹配 | 模糊匹配"
+    ),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """分页列命中（支持 status/risk_level/match_type 过滤）。owner-only。"""
+    await _load_owned_task(db, task_id, current_user)
+
+    query = select(KeywordHit).where(KeywordHit.task_id == task_id)
+    if status:
+        query = query.where(KeywordHit.status == status)
+    if risk_level:
+        query = query.where(KeywordHit.risk_level == risk_level)
+    if match_type:
+        query = query.where(KeywordHit.match_type == match_type)
+
+    count_query = select(func.count()).select_from(query.subquery())
+    total = (await db.execute(count_query)).scalar() or 0
+
+    query = query.order_by(KeywordHit.id.asc())
+    query = query.offset((page - 1) * page_size).limit(page_size)
+    result = await db.execute(query)
+    hits = result.scalars().all()
+
+    return KeywordHitListResponse(
+        items=[_hit_item(h) for h in hits],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@router.patch(
+    "/{task_id}/keyword-review/hits/{hit_id}", response_model=KeywordHitItem
+)
+async def patch_keyword_hit(
+    task_id: int,
+    hit_id: int,
+    request: KeywordHitPatchRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """改命中的 status / note（采纳为告警 / 忽略 / 备注）。owner-only。"""
+    await _load_owned_task(db, task_id, current_user)
+
+    result = await db.execute(
+        select(KeywordHit).where(
+            KeywordHit.id == hit_id, KeywordHit.task_id == task_id
+        )
+    )
+    hit = result.scalar_one_or_none()
+    if not hit:
+        raise HTTPException(status_code=404, detail="Keyword hit not found")
+
+    if request.status is not None:
+        if request.status not in ("confirmed", "ignored", "pending"):
+            raise HTTPException(
+                status_code=422,
+                detail="status must be 'pending', 'confirmed' or 'ignored'",
+            )
+        hit.status = request.status
+    if request.note is not None:
+        hit.note = request.note
+
+    db.add(
+        TaskLog(
+            task_id=task_id,
+            level="info",
+            message=f"Keyword hit {hit.id} updated: status={hit.status}",
+        )
+    )
+    await db.commit()
+    await db.refresh(hit)
+    return _hit_item(hit)
 

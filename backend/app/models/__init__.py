@@ -6,6 +6,7 @@ from app.models.document import Document
 from app.models.export import ExportFile
 from app.models.finding import Finding
 from app.models.flow_record import FlowRecordRow
+from app.models.keyword import KeywordCard, KeywordHit, KeywordTerm
 from app.models.llm_model import LLMModel
 from app.models.llm_model_assignment import LLMModelAssignment
 from app.models.report import Report
@@ -26,6 +27,9 @@ __all__ = [
     "ExportFile",
     "Finding",
     "FlowRecordRow",
+    "KeywordCard",
+    "KeywordHit",
+    "KeywordTerm",
     "LLMModel",
     "LLMModelAssignment",
     "Report",

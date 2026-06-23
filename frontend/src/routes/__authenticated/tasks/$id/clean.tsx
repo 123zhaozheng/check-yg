@@ -79,6 +79,8 @@ function CleanPage() {
   const [activeRule, setActiveRule] = React.useState(0)
   const [standardPage, setStandardPage] = React.useState(1)
   const [excludedPage, setExcludedPage] = React.useState(1)
+  // 应用规则 aside 折叠态（06-23-tab）：默认收起（true），展开恢复规则列表。
+  const [rulesCollapsed, setRulesCollapsed] = React.useState(true)
 
   const PAGE_SIZE = 20
 
@@ -204,43 +206,65 @@ function CleanPage() {
 
       {/* Main split: rule panel (left) + content (right) */}
       <div className="flex min-h-[420px] gap-4">
-        {/* Left: static rule panel */}
-        <aside className="flex w-80 flex-shrink-0 flex-col rounded-[var(--radius-lg)] border border-ink-400 bg-ink-100">
-          <div className="border-b border-ink-400 p-4">
-            <h3 className="font-sans text-base font-semibold text-ink-900">
+        {/* Left: static rule panel — 可折叠（06-23-tab），默认收起 */}
+        {rulesCollapsed ? (
+          <button
+            onClick={() => setRulesCollapsed(false)}
+            className="flex w-10 flex-shrink-0 flex-col items-center gap-2 rounded-[var(--radius-lg)] border border-ink-400 bg-ink-100 py-3 text-ink-700 transition-colors hover:bg-ink-300"
+            aria-label="展开应用规则"
+            title="展开应用规则"
+          >
+            <ChevronRight className="size-4" />
+            <span className="font-sans text-xs font-semibold [writing-mode:vertical-rl]">
               应用规则
-            </h3>
-          </div>
-          <div className="scroll-thin flex-1 space-y-1 overflow-y-auto p-2">
-            {CLEANING_RULES.map((rule, idx) => {
-              const isActive = idx === activeRule
-              return (
-                <button
-                  key={rule.title}
-                  onClick={() => setActiveRule(idx)}
-                  className={cn(
-                    "mb-1 w-full cursor-pointer p-3 text-left transition-colors",
-                    isActive
-                      ? "border-l-2 border-ink-900 bg-ink-300"
-                      : "border-l-2 border-transparent hover:bg-ink-300",
-                  )}
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <span
-                      className={cn(
-                        "font-sans text-sm",
-                        isActive ? "font-medium text-ink-900" : "text-ink-800",
-                      )}
-                    >
-                      {rule.title}
-                    </span>
-                  </div>
-                  <p className="mt-1 text-xs text-ink-700">{rule.desc}</p>
-                </button>
-              )
-            })}
-          </div>
-        </aside>
+            </span>
+          </button>
+        ) : (
+          <aside className="flex w-80 flex-shrink-0 flex-col rounded-[var(--radius-lg)] border border-ink-400 bg-ink-100">
+            <div className="flex items-center justify-between border-b border-ink-400 p-4">
+              <h3 className="font-sans text-base font-semibold text-ink-900">
+                应用规则
+              </h3>
+              <button
+                onClick={() => setRulesCollapsed(true)}
+                aria-label="收起应用规则"
+                title="收起应用规则"
+                className="text-ink-600 transition-colors hover:text-ink-900"
+              >
+                <ChevronDown className="size-4" />
+              </button>
+            </div>
+            <div className="scroll-thin flex-1 space-y-1 overflow-y-auto p-2">
+              {CLEANING_RULES.map((rule, idx) => {
+                const isActive = idx === activeRule
+                return (
+                  <button
+                    key={rule.title}
+                    onClick={() => setActiveRule(idx)}
+                    className={cn(
+                      "mb-1 w-full cursor-pointer p-3 text-left transition-colors",
+                      isActive
+                        ? "border-l-2 border-ink-900 bg-ink-300"
+                        : "border-l-2 border-transparent hover:bg-ink-300",
+                    )}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <span
+                        className={cn(
+                          "font-sans text-sm",
+                          isActive ? "font-medium text-ink-900" : "text-ink-800",
+                        )}
+                      >
+                        {rule.title}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-xs text-ink-700">{rule.desc}</p>
+                  </button>
+                )
+              })}
+            </div>
+          </aside>
+        )}
 
         {/* Right: standard table or excluded view */}
         <section className="flex min-w-0 flex-1 flex-col rounded-[var(--radius-lg)] border border-ink-400 bg-ink-100">

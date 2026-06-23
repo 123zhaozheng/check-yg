@@ -13,25 +13,25 @@ import { cn } from "@/lib/utils"
 /**
  * 任务详情壳 /tasks/:id (docs §C0).
  * Renders the constant task header (name + employee + review period + stage
- * progress bar + status pill) and the 6-tab sub-nav. Each tab is a child route.
+ * progress bar + status pill) and the sub-nav. Each tab is a child route.
  *
- *   1 概览       → /tasks/:id/overview   (index redirect)
- *   2 数据导入   → /tasks/:id/import
- *   3 清洗标准化 → /tasks/:id/clean
+ *   1 数据导入   → /tasks/:id/import   (index redirect)
+ *   2 清洗标准化 → /tasks/:id/clean
+ *   3 关键词审查 → /tasks/:id/keyword-review
  *   4 AI 分析    → /tasks/:id/analyze
  *   5 审查报告   → /tasks/:id/report
  *   6 导出       → /tasks/:id/export
  *
- * Tab content is a placeholder in this infra task; per-slice tasks fill it in.
+ * 06-23-tab: 概览 tab 已删，/tasks/:id 落到「数据导入」；顶部进度条 5 段含「关键词」。
  */
 export const Route = createFileRoute("/__authenticated/tasks/$id")({
   component: TaskDetailShell,
 })
 
 const TABS = [
-  { segment: "overview", label: "概览" },
   { segment: "import", label: "数据导入" },
   { segment: "clean", label: "清洗标准化" },
+  { segment: "keyword-review", label: "关键词审查" },
   { segment: "analyze", label: "AI 分析" },
   { segment: "report", label: "审查报告" },
   { segment: "export", label: "导出" },
@@ -40,6 +40,7 @@ const TABS = [
 const STAGES = [
   { label: "导入", tone: "done" as const },
   { label: "清洗", tone: "in-progress" as const },
+  { label: "关键词", tone: "pending" as const },
   { label: "分析", tone: "pending" as const },
   { label: "报告", tone: "pending" as const },
 ]

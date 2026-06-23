@@ -14,11 +14,12 @@ import { Route as _authenticatedRouteImport } from './routes/__authenticated'
 import { Route as SplatRouteImport } from './routes/$'
 import { Route as _authenticatedIndexRouteImport } from './routes/__authenticated/index'
 import { Route as _authenticatedSettingsRouteImport } from './routes/__authenticated/settings'
+import { Route as _authenticatedKeywordLibraryRouteImport } from './routes/__authenticated/keyword-library'
 import { Route as _authenticatedTasksIndexRouteImport } from './routes/__authenticated/tasks/index'
 import { Route as _authenticatedTasksIdRouteImport } from './routes/__authenticated/tasks/$id'
 import { Route as _authenticatedTasksIdIndexRouteImport } from './routes/__authenticated/tasks/$id/index'
 import { Route as _authenticatedTasksIdReportRouteImport } from './routes/__authenticated/tasks/$id/report'
-import { Route as _authenticatedTasksIdOverviewRouteImport } from './routes/__authenticated/tasks/$id/overview'
+import { Route as _authenticatedTasksIdKeywordReviewRouteImport } from './routes/__authenticated/tasks/$id/keyword-review'
 import { Route as _authenticatedTasksIdImportRouteImport } from './routes/__authenticated/tasks/$id/import'
 import { Route as _authenticatedTasksIdExportRouteImport } from './routes/__authenticated/tasks/$id/export'
 import { Route as _authenticatedTasksIdCleanRouteImport } from './routes/__authenticated/tasks/$id/clean'
@@ -48,6 +49,12 @@ const _authenticatedSettingsRoute = _authenticatedSettingsRouteImport.update({
   path: '/settings',
   getParentRoute: () => _authenticatedRoute,
 } as any)
+const _authenticatedKeywordLibraryRoute =
+  _authenticatedKeywordLibraryRouteImport.update({
+    id: '/keyword-library',
+    path: '/keyword-library',
+    getParentRoute: () => _authenticatedRoute,
+  } as any)
 const _authenticatedTasksIndexRoute =
   _authenticatedTasksIndexRouteImport.update({
     id: '/tasks/',
@@ -71,10 +78,10 @@ const _authenticatedTasksIdReportRoute =
     path: '/report',
     getParentRoute: () => _authenticatedTasksIdRoute,
   } as any)
-const _authenticatedTasksIdOverviewRoute =
-  _authenticatedTasksIdOverviewRouteImport.update({
-    id: '/overview',
-    path: '/overview',
+const _authenticatedTasksIdKeywordReviewRoute =
+  _authenticatedTasksIdKeywordReviewRouteImport.update({
+    id: '/keyword-review',
+    path: '/keyword-review',
     getParentRoute: () => _authenticatedTasksIdRoute,
   } as any)
 const _authenticatedTasksIdImportRoute =
@@ -106,6 +113,7 @@ export interface FileRoutesByFullPath {
   '/$': typeof SplatRoute
   '/': typeof _authenticatedIndexRoute
   '/login': typeof LoginRoute
+  '/keyword-library': typeof _authenticatedKeywordLibraryRoute
   '/settings': typeof _authenticatedSettingsRoute
   '/tasks/$id': typeof _authenticatedTasksIdRouteWithChildren
   '/tasks/': typeof _authenticatedTasksIndexRoute
@@ -113,13 +121,14 @@ export interface FileRoutesByFullPath {
   '/tasks/$id/clean': typeof _authenticatedTasksIdCleanRoute
   '/tasks/$id/export': typeof _authenticatedTasksIdExportRoute
   '/tasks/$id/import': typeof _authenticatedTasksIdImportRoute
-  '/tasks/$id/overview': typeof _authenticatedTasksIdOverviewRoute
+  '/tasks/$id/keyword-review': typeof _authenticatedTasksIdKeywordReviewRoute
   '/tasks/$id/report': typeof _authenticatedTasksIdReportRoute
   '/tasks/$id/': typeof _authenticatedTasksIdIndexRoute
 }
 export interface FileRoutesByTo {
   '/$': typeof SplatRoute
   '/login': typeof LoginRoute
+  '/keyword-library': typeof _authenticatedKeywordLibraryRoute
   '/settings': typeof _authenticatedSettingsRoute
   '/': typeof _authenticatedIndexRoute
   '/tasks': typeof _authenticatedTasksIndexRoute
@@ -127,7 +136,7 @@ export interface FileRoutesByTo {
   '/tasks/$id/clean': typeof _authenticatedTasksIdCleanRoute
   '/tasks/$id/export': typeof _authenticatedTasksIdExportRoute
   '/tasks/$id/import': typeof _authenticatedTasksIdImportRoute
-  '/tasks/$id/overview': typeof _authenticatedTasksIdOverviewRoute
+  '/tasks/$id/keyword-review': typeof _authenticatedTasksIdKeywordReviewRoute
   '/tasks/$id/report': typeof _authenticatedTasksIdReportRoute
   '/tasks/$id': typeof _authenticatedTasksIdIndexRoute
 }
@@ -136,6 +145,7 @@ export interface FileRoutesById {
   '/$': typeof SplatRoute
   '/__authenticated': typeof _authenticatedRouteWithChildren
   '/login': typeof LoginRoute
+  '/__authenticated/keyword-library': typeof _authenticatedKeywordLibraryRoute
   '/__authenticated/settings': typeof _authenticatedSettingsRoute
   '/__authenticated/': typeof _authenticatedIndexRoute
   '/__authenticated/tasks/$id': typeof _authenticatedTasksIdRouteWithChildren
@@ -144,7 +154,7 @@ export interface FileRoutesById {
   '/__authenticated/tasks/$id/clean': typeof _authenticatedTasksIdCleanRoute
   '/__authenticated/tasks/$id/export': typeof _authenticatedTasksIdExportRoute
   '/__authenticated/tasks/$id/import': typeof _authenticatedTasksIdImportRoute
-  '/__authenticated/tasks/$id/overview': typeof _authenticatedTasksIdOverviewRoute
+  '/__authenticated/tasks/$id/keyword-review': typeof _authenticatedTasksIdKeywordReviewRoute
   '/__authenticated/tasks/$id/report': typeof _authenticatedTasksIdReportRoute
   '/__authenticated/tasks/$id/': typeof _authenticatedTasksIdIndexRoute
 }
@@ -154,6 +164,7 @@ export interface FileRouteTypes {
     | '/$'
     | '/'
     | '/login'
+    | '/keyword-library'
     | '/settings'
     | '/tasks/$id'
     | '/tasks/'
@@ -161,13 +172,14 @@ export interface FileRouteTypes {
     | '/tasks/$id/clean'
     | '/tasks/$id/export'
     | '/tasks/$id/import'
-    | '/tasks/$id/overview'
+    | '/tasks/$id/keyword-review'
     | '/tasks/$id/report'
     | '/tasks/$id/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/$'
     | '/login'
+    | '/keyword-library'
     | '/settings'
     | '/'
     | '/tasks'
@@ -175,7 +187,7 @@ export interface FileRouteTypes {
     | '/tasks/$id/clean'
     | '/tasks/$id/export'
     | '/tasks/$id/import'
-    | '/tasks/$id/overview'
+    | '/tasks/$id/keyword-review'
     | '/tasks/$id/report'
     | '/tasks/$id'
   id:
@@ -183,6 +195,7 @@ export interface FileRouteTypes {
     | '/$'
     | '/__authenticated'
     | '/login'
+    | '/__authenticated/keyword-library'
     | '/__authenticated/settings'
     | '/__authenticated/'
     | '/__authenticated/tasks/$id'
@@ -191,7 +204,7 @@ export interface FileRouteTypes {
     | '/__authenticated/tasks/$id/clean'
     | '/__authenticated/tasks/$id/export'
     | '/__authenticated/tasks/$id/import'
-    | '/__authenticated/tasks/$id/overview'
+    | '/__authenticated/tasks/$id/keyword-review'
     | '/__authenticated/tasks/$id/report'
     | '/__authenticated/tasks/$id/'
   fileRoutesById: FileRoutesById
@@ -239,6 +252,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof _authenticatedSettingsRouteImport
       parentRoute: typeof _authenticatedRoute
     }
+    '/__authenticated/keyword-library': {
+      id: '/__authenticated/keyword-library'
+      path: '/keyword-library'
+      fullPath: '/keyword-library'
+      preLoaderRoute: typeof _authenticatedKeywordLibraryRouteImport
+      parentRoute: typeof _authenticatedRoute
+    }
     '/__authenticated/tasks/': {
       id: '/__authenticated/tasks/'
       path: '/tasks'
@@ -267,11 +287,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof _authenticatedTasksIdReportRouteImport
       parentRoute: typeof _authenticatedTasksIdRoute
     }
-    '/__authenticated/tasks/$id/overview': {
-      id: '/__authenticated/tasks/$id/overview'
-      path: '/overview'
-      fullPath: '/tasks/$id/overview'
-      preLoaderRoute: typeof _authenticatedTasksIdOverviewRouteImport
+    '/__authenticated/tasks/$id/keyword-review': {
+      id: '/__authenticated/tasks/$id/keyword-review'
+      path: '/keyword-review'
+      fullPath: '/tasks/$id/keyword-review'
+      preLoaderRoute: typeof _authenticatedTasksIdKeywordReviewRouteImport
       parentRoute: typeof _authenticatedTasksIdRoute
     }
     '/__authenticated/tasks/$id/import': {
@@ -310,7 +330,7 @@ interface _authenticatedTasksIdRouteChildren {
   _authenticatedTasksIdCleanRoute: typeof _authenticatedTasksIdCleanRoute
   _authenticatedTasksIdExportRoute: typeof _authenticatedTasksIdExportRoute
   _authenticatedTasksIdImportRoute: typeof _authenticatedTasksIdImportRoute
-  _authenticatedTasksIdOverviewRoute: typeof _authenticatedTasksIdOverviewRoute
+  _authenticatedTasksIdKeywordReviewRoute: typeof _authenticatedTasksIdKeywordReviewRoute
   _authenticatedTasksIdReportRoute: typeof _authenticatedTasksIdReportRoute
   _authenticatedTasksIdIndexRoute: typeof _authenticatedTasksIdIndexRoute
 }
@@ -320,7 +340,8 @@ const _authenticatedTasksIdRouteChildren: _authenticatedTasksIdRouteChildren = {
   _authenticatedTasksIdCleanRoute: _authenticatedTasksIdCleanRoute,
   _authenticatedTasksIdExportRoute: _authenticatedTasksIdExportRoute,
   _authenticatedTasksIdImportRoute: _authenticatedTasksIdImportRoute,
-  _authenticatedTasksIdOverviewRoute: _authenticatedTasksIdOverviewRoute,
+  _authenticatedTasksIdKeywordReviewRoute:
+    _authenticatedTasksIdKeywordReviewRoute,
   _authenticatedTasksIdReportRoute: _authenticatedTasksIdReportRoute,
   _authenticatedTasksIdIndexRoute: _authenticatedTasksIdIndexRoute,
 }
@@ -331,6 +352,7 @@ const _authenticatedTasksIdRouteWithChildren =
   )
 
 interface _authenticatedRouteChildren {
+  _authenticatedKeywordLibraryRoute: typeof _authenticatedKeywordLibraryRoute
   _authenticatedSettingsRoute: typeof _authenticatedSettingsRoute
   _authenticatedIndexRoute: typeof _authenticatedIndexRoute
   _authenticatedTasksIdRoute: typeof _authenticatedTasksIdRouteWithChildren
@@ -338,6 +360,7 @@ interface _authenticatedRouteChildren {
 }
 
 const _authenticatedRouteChildren: _authenticatedRouteChildren = {
+  _authenticatedKeywordLibraryRoute: _authenticatedKeywordLibraryRoute,
   _authenticatedSettingsRoute: _authenticatedSettingsRoute,
   _authenticatedIndexRoute: _authenticatedIndexRoute,
   _authenticatedTasksIdRoute: _authenticatedTasksIdRouteWithChildren,

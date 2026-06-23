@@ -1070,3 +1070,198 @@ export function upsertLLMModelAssignment(
 ): Promise<LLMModelAssignment> {
   return api.put<LLMModelAssignment>(`/llm-model-assignments/${stage}`, body)
 }
+
+/* =========================================================================
+ * Keyword Library + Keyword Review API — 06-23-tab.
+ * Appended only; the apiFetch core above is unchanged.
+ * Mirrors `backend/app/routers/keyword_library.py` + `tasks.py` keyword-review block.
+ * 全局关键词库（卡片 CRUD + excel 导入/导出）+ 任务级关键词审查（run/hits/patch）.
+ * ======================================================================= */
+
+/** 卡片级风险等级（词级无风险等级）. */
+export type KeywordRiskLevel = "高" | "中" | "低"
+
+/** 命中匹配类型（对齐 backend matcher.MatchType.value）. */
+export type KeywordMatchType = "精确匹配" | "脱敏匹配" | "模糊匹配"
+
+/** 命中字段（只扫 standard 记录的这两列）. */
+export type KeywordMatchedField = "counterparty_name" | "summary"
+
+/** 命中人工处理状态. */
+export type KeywordHitStatus = "pending" | "confirmed" | "ignored"
+
+/** 单个关键词（详情用）. */
+export interface KeywordTermItem {
+  id: number
+  term: string
+  created_at: string
+}
+
+/** 卡片列表项（含 term 数 + 风险等级 + 备注）. */
+export interface KeywordCardListItem {
+  id: number
+  name: string
+  risk_level: KeywordRiskLevel
+  note?: string | null
+  term_count: number
+  created_at: string
+  updated_at: string
+}
+
+/** 卡片详情（含 terms 列表）. */
+export interface KeywordCardDetail {
+  id: number
+  name: string
+  risk_level: KeywordRiskLevel
+  note?: string | null
+  terms: KeywordTermItem[]
+  created_at: string
+  updated_at: string
+}
+
+/** 新建/编辑卡片请求体（terms 全量替换）. */
+export interface KeywordCardUpsertBody {
+  name: string
+  risk_level: KeywordRiskLevel
+  note?: string | null
+  terms: string[]
+}
+
+/** excel 导入统计. */
+export interface KeywordImportStats {
+  created_cards: number
+  appended_cards: number
+  new_terms: number
+  skipped_terms: number
+  rejected_rows: number
+}
+
+/** POST /tasks/{id}/keyword-review/run 请求体. */
+export interface KeywordReviewRunBody {
+  card_ids: number[]
+}
+
+/** POST run 响应统计. */
+export interface KeywordReviewRunStats {
+  scanned_records: number
+  hit_records: number
+  hit_terms: number
+  high_risk_hits: number
+}
+
+/** 单个命中行. */
+export interface KeywordHitItem {
+  id: number
+  task_id: number
+  flow_record_id: number
+  keyword_card_id: number
+  keyword_term_id: number
+  match_type: KeywordMatchType
+  confidence: number
+  risk_level: KeywordRiskLevel
+  matched_field: KeywordMatchedField
+  matched_snippet: string
+  status: KeywordHitStatus
+  note?: string | null
+  created_at: string
+  updated_at: string
+}
+
+/** 命中分页列表. */
+export interface KeywordHitListResponse {
+  items: KeywordHitItem[]
+  total: number
+  page: number
+  page_size: number
+}
+
+/** PATCH 命中请求体（status / note，均可选）. */
+export interface KeywordHitPatchBody {
+  status?: KeywordHitStatus
+  note?: string
+}
+
+/** GET /api/keyword-library/cards — 列出卡片（所有登录用户可读）. */
+export function listKeywordCards(): Promise<KeywordCardListItem[]> {
+  return api.get<KeywordCardListItem[]>("/keyword-library/cards")
+}
+
+/** GET /api/keyword-library/cards/{id} — 卡片详情. */
+export function getKeywordCard(cardId: number): Promise<KeywordCardDetail> {
+  return api.get<KeywordCardDetail>(`/keyword-library/cards/${cardId}`)
+}
+
+/** POST /api/keyword-library/cards — 新建卡片（admin）. */
+export function createKeywordCard(body: KeywordCardUpsertBody): Promise<KeywordCardDetail> {
+  return api.post<KeywordCardDetail>("/keyword-library/cards", body)
+}
+
+/** PUT /api/keyword-library/cards/{id} — 编辑卡片（admin；terms 全量替换）. */
+export function updateKeywordCard(
+  cardId: number,
+  body: KeywordCardUpsertBody,
+): Promise<KeywordCardDetail> {
+  return api.put<KeywordCardDetail>(`/keyword-library/cards/${cardId}`, body)
+}
+
+/** DELETE /api/keyword-library/cards/{id} — 删卡（admin；被引用返 409）. */
+export function deleteKeywordCard(cardId: number): Promise<void> {
+  return api.delete<void>(`/keyword-library/cards/${cardId}`)
+}
+
+/**
+ * POST /api/keyword-library/import — excel 导入（admin，multipart）.
+ * `apiFetch` detects FormData and sends multipart without a Content-Type header.
+ */
+export function importKeywordLibrary(file: File): Promise<KeywordImportStats> {
+  const form = new FormData()
+  form.append("file", file, file.name)
+  return api.post<KeywordImportStats>("/keyword-library/import", form)
+}
+
+/**
+ * GET /api/keyword-library/export — excel 导出（返 raw Response，调用方触发下载）.
+ */
+export function exportKeywordLibrary(): Promise<Response> {
+  return apiFetch<Response>("/keyword-library/export", { method: "GET" })
+}
+
+/** POST /api/tasks/{taskId}/keyword-review/run — 运行关键词审查（owner）. */
+export function runKeywordReview(
+  taskId: number,
+  body: KeywordReviewRunBody,
+): Promise<KeywordReviewRunStats> {
+  return api.post<KeywordReviewRunStats>(
+    `/tasks/${taskId}/keyword-review/run`,
+    body,
+  )
+}
+
+/** GET /api/tasks/{taskId}/keyword-review/hits — 分页列命中（支持过滤）. */
+export function listKeywordHits(
+  taskId: number,
+  params?: {
+    status?: KeywordHitStatus
+    risk_level?: KeywordRiskLevel
+    match_type?: KeywordMatchType
+    page?: number
+    page_size?: number
+  },
+): Promise<KeywordHitListResponse> {
+  return api.get<KeywordHitListResponse>(
+    `/tasks/${taskId}/keyword-review/hits`,
+    params as ApiRequestOptions["params"],
+  )
+}
+
+/** PATCH /api/tasks/{taskId}/keyword-review/hits/{hitId} — 改命中 status / note. */
+export function patchKeywordHit(
+  taskId: number,
+  hitId: number,
+  body: KeywordHitPatchBody,
+): Promise<KeywordHitItem> {
+  return api.patch<KeywordHitItem>(
+    `/tasks/${taskId}/keyword-review/hits/${hitId}`,
+    body,
+  )
+}
