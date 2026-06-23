@@ -1,1 +1,7 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": "docs/web-pages-design.md", "reason": "§C6 导出页(报告导出PDF/Word/HTML单选+含批注开关+数据导出范围Excel/CSV+导出历史+预览单色) + §D1 设置页(4 Tab:账户/审查参数/渠道解析/集成模型,统一表单+保存) + §D2 空状态(居中线框盾形+标题+说明+主CTA) + §D3 错误404/500(大号粗体状态码+解释+返回Dashboard主按钮+返回上一页描边,黑白不用红色)"}
+{"file": "docs/zhixing-delivery-plan.md", "reason": "总规划+硬底线(Chrome108渲染/单色原则/不删减/不污染主分支)+10子任务拆分,S8 导出+设置+辅助页是第10个切片(最后一个)"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "ExportFile 表扩展(加 scope 字段记录导出范围)迁移链规则 + Setting 表默认种子 + jsonb() 辅助 + 新模型三处登记(env.py/database.py/__init__.py)"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "router/service/model 分层；owner-only 复用 _load_owned_task；导出产物持久化 OUTPUT_DIR + 导出历史"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "403/404/422 统一错误响应；change-password 旧密码校验 400/401；导出报告不存在 404"}
+{"file": "docs/research/pydantic-ai-conventions.md", "reason": "pydantic-ai 规范参考 — S8 设置页 llm.temperature/llm.max_tokens 设置项影响 S6 agent,但 S8 只改设置存储不接 agent.run"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "测试覆盖 — 导出4格式+CSV+历史+预览+change-password+settings schema 单测,Chrome108 CSS color-mix @supports 守护,前端 build"}
