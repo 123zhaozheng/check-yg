@@ -47,3 +47,17 @@ class TokenPayload(BaseModel):
     sub: str
     type: str
     exp: int
+
+
+class ChangePasswordRequest(BaseModel):
+    """POST /api/auth/change-password 请求体."""
+
+    old_password: str
+    new_password: str
+
+
+class UpdateMeRequest(BaseModel):
+    """PATCH /api/users/me 请求体（个人信息，当前用户改自己）."""
+
+    username: str | None = None
+    email: str | None = None

@@ -14,7 +14,12 @@ from ..auth.dependencies import get_current_user
 from ..auth.permissions import check_admin_permission
 from ..database import get_db
 from ..models import Setting, User
-from ..services.settings_service import DEFAULT_SETTINGS, load_runtime_settings, setting_category
+from ..services.settings_service import (
+    DEFAULT_SETTINGS,
+    load_runtime_settings,
+    setting_category,
+    settings_schema,
+)
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 
@@ -34,9 +39,38 @@ class SettingUpdate(BaseModel):
     value: str
 
 
+class SettingSchemaItem(BaseModel):
+    """设置项元数据（供前端表单渲染）."""
+
+    key: str
+    category: str
+    type: str  # string | number | boolean | select
+    label: str
+    description: str
+    value: str
+    options: Optional[list[str]] = None
+
+
 class ConnectionTestResponse(BaseModel):
     ok: bool
     message: str
+
+
+@router.get("/schema", response_model=list[SettingSchemaItem])
+async def get_settings_schema(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """返回设置项元数据列表（key/category/type/label/description/options/value）.
+
+    供前端设置页按 type 渲染 input/number/toggle/select 分组表单。
+    value 优先用 DB 已存值，否则用 DEFAULT_SETTINGS 兜底。
+    """
+    saved_map: dict[str, str] = {}
+    result = await db.execute(select(Setting))
+    for item in result.scalars().all():
+        saved_map[item.key] = item.value
+    return settings_schema(saved_map)
 
 
 @router.get("/", response_model=list[SettingResponse])

@@ -17,6 +17,8 @@ class ExportFile(Base):
     task_id: Mapped[int] = mapped_column(Integer, ForeignKey("tasks.id"), nullable=False)
     review_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("reviews.id"), nullable=True)
     format: Mapped[str] = mapped_column(String(20), nullable=False)
+    # S8 导出范围：report / raw / standard / findings（旧 excel/bundle 行 null 兼容）.
+    scope: Mapped[str | None] = mapped_column(String(50), nullable=True)
     file_path: Mapped[str] = mapped_column(String(500), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

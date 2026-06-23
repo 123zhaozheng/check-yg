@@ -154,3 +154,12 @@ async def _run_lightweight_migrations(conn) -> None:
         await conn.exec_driver_sql(
             "ALTER TABLE reports ADD COLUMN status VARCHAR(20) NOT NULL DEFAULT 'draft'"
         )
+
+    # exports: scope (S8 导出范围 report/raw/standard/findings). Additive only —
+    # nullable so legacy excel/bundle rows stay compatible (不删减精神).
+    exports_result = await conn.exec_driver_sql("PRAGMA table_info(exports)")
+    exports_existing = {row[1] for row in exports_result.fetchall()}
+    if "scope" not in exports_existing:
+        await conn.exec_driver_sql(
+            "ALTER TABLE exports ADD COLUMN scope VARCHAR(50)"
+        )

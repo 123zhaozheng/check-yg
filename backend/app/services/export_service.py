@@ -1,6 +1,17 @@
 # -*- coding: utf-8 -*-
-"""Export generation service."""
+"""Export generation service.
 
+S8 扩展：在原有 Excel/bundle（legacy ReviewMatch 链路）基础上新增
+- 报告导出（pdf=reportlab / docx=python-docx / html=模板字符串），
+  数据源为 S7 章节化报告（ReportChapter + 可选 ReportAnnotation）.
+- 数据导出（excel/csv），数据源为 S5 flow_records（raw/standard）或 S6 findings.
+- 导出历史列表 + 预览取样（不生成产物）.
+
+不删减精神：导出只读原数据 + 复制产物，不删原记录；导出历史产物文件保留可
+重新下载（不删 ExportFile 行 / 不删产物文件）.
+"""
+
+import csv
 import json
 import zipfile
 from pathlib import Path
@@ -10,9 +21,20 @@ import openpyxl
 from openpyxl.styles import Font, PatternFill
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.config import settings
-from app.models import ExportFile, Review, ReviewMatch, Task
+from app.models import (
+    ExportFile,
+    Finding,
+    FlowRecordRow,
+    Report,
+    ReportAnnotation,
+    ReportChapter,
+    Review,
+    ReviewMatch,
+    Task,
+)
 from app.services.review_service import FlowRecord, ReviewService
 
 
@@ -92,6 +114,550 @@ class ExportService:
         await db.flush()
         await db.refresh(export)
         return export
+
+    # -------------------------------------------------------------------
+    # S8 报告导出：pdf / docx / html
+    # -------------------------------------------------------------------
+
+    async def export_report(
+        self,
+        db: AsyncSession,
+        task_id: int,
+        fmt: str,
+        include_annotations: bool = False,
+    ) -> ExportFile:
+        """基于 S7 章节化报告生成 pdf/docx/html 产物.
+
+        数据源：task 最新 Report + chapters（按 order_index 排序）+
+        可选 annotations. 报告不存在 → ValueError（router 转 404）.
+        """
+        task = await self._load_task(db, task_id)
+        report = await self._load_task_report(db, task.id)
+        chapters = sorted(report.chapters, key=lambda c: c.order_index)
+        annotations = list(report.annotations) if include_annotations else []
+
+        export_dir = self.output_dir / str(task.id)
+        export_dir.mkdir(parents=True, exist_ok=True)
+        ext = {"pdf": "pdf", "docx": "docx", "html": "html"}.get(fmt, fmt)
+        path = export_dir / f"task_{task.id}_report_{fmt}.{ext}"
+
+        if fmt == "pdf":
+            self._write_report_pdf(path, task, chapters, annotations)
+        elif fmt == "docx":
+            self._write_report_docx(path, task, chapters, annotations)
+        elif fmt == "html":
+            self._write_report_html(path, task, chapters, annotations)
+        else:
+            raise ValueError("Unsupported report format: %s" % fmt)
+
+        export = ExportFile(
+            task_id=task.id,
+            review_id=report.review_id,
+            format=fmt,
+            scope="report",
+            file_path=str(path),
+        )
+        db.add(export)
+        await db.flush()
+        await db.refresh(export)
+        return export
+
+    # -------------------------------------------------------------------
+    # S8 数据导出：excel / csv × raw / standard / findings
+    # -------------------------------------------------------------------
+
+    async def export_data(
+        self,
+        db: AsyncSession,
+        task_id: int,
+        scope: str,
+        fmt: str,
+    ) -> ExportFile:
+        """导出 flow_records（raw/standard）或 findings 为 excel/csv."""
+        task = await self._load_task(db, task_id)
+
+        export_dir = self.output_dir / str(task.id)
+        export_dir.mkdir(parents=True, exist_ok=True)
+        ext = "xlsx" if fmt == "excel" else "csv"
+        path = export_dir / f"task_{task.id}_{scope}.{ext}"
+
+        if scope in ("raw", "standard"):
+            rows = await self._load_flow_records(db, task.id, scope)
+            if fmt == "excel":
+                self._write_flow_records_excel(path, scope, rows)
+            else:
+                self._write_flow_records_csv(path, scope, rows)
+        elif scope == "findings":
+            rows = await self._load_findings(db, task.id)
+            if fmt == "excel":
+                self._write_findings_excel(path, rows)
+            else:
+                self._write_findings_csv(path, rows)
+        else:
+            raise ValueError("Unsupported data scope: %s" % scope)
+
+        export = ExportFile(
+            task_id=task.id,
+            format=fmt,
+            scope=scope,
+            file_path=str(path),
+        )
+        db.add(export)
+        await db.flush()
+        await db.refresh(export)
+        return export
+
+    async def list_task_exports(self, db: AsyncSession, task_id: int) -> list[ExportFile]:
+        """导出历史列表（按 created_at 降序，含 scope/format/file_path/created_at）."""
+        result = await db.execute(
+            select(ExportFile)
+            .where(ExportFile.task_id == task_id)
+            .order_by(ExportFile.created_at.desc())
+        )
+        return list(result.scalars().all())
+
+    async def preview_export(
+        self,
+        db: AsyncSession,
+        task_id: int,
+        scope: str,
+    ) -> dict[str, Any]:
+        """取样预览（不生成产物）.
+
+        - report: 前 2 章 content 文本 + 批注数.
+        - raw / standard: 前 20 行 JSON.
+        - findings: 前 20 行 JSON.
+        """
+        task = await self._load_task(db, task_id)
+        if scope == "report":
+            report = await self._load_task_report(db, task.id)
+            chapters = sorted(report.chapters, key=lambda c: c.order_index)
+            sample = [
+                {"title": c.title, "content": c.content}
+                for c in chapters[:2]
+            ]
+            return {
+                "scope": "report",
+                "sample": sample,
+                "annotation_count": len(report.annotations),
+            }
+        if scope in ("raw", "standard"):
+            rows = await self._load_flow_records(db, task.id, scope)
+            return {
+                "scope": scope,
+                "sample": [self._flow_record_to_dict(r) for r in rows[:20]],
+            }
+        if scope == "findings":
+            rows = await self._load_findings(db, task.id)
+            return {
+                "scope": "findings",
+                "sample": [self._finding_to_dict(r) for r in rows[:20]],
+            }
+        raise ValueError("Unsupported preview scope: %s" % scope)
+
+    # -------------------------------------------------------------------
+    # S8 helpers: data loading
+    # -------------------------------------------------------------------
+
+    async def _load_task_report(self, db: AsyncSession, task_id: int) -> Report:
+        """取 task 最新章节化报告 + chapters + annotations（不存在 raise ValueError → 404）."""
+        result = await db.execute(
+            select(Report)
+            .options(
+                selectinload(Report.chapters),
+                selectinload(Report.annotations),
+            )
+            .where(Report.task_id == task_id)
+            .order_by(Report.created_at.desc())
+            .limit(1)
+        )
+        report = result.scalar_one_or_none()
+        if not report:
+            raise ValueError("Report not generated yet")
+        return report
+
+    async def _load_flow_records(
+        self, db: AsyncSession, task_id: int, scope: str
+    ) -> list[FlowRecordRow]:
+        """raw=全部 flow_records；standard=record_type='standard'."""
+        query = select(FlowRecordRow).where(FlowRecordRow.task_id == task_id)
+        if scope == "standard":
+            query = query.where(FlowRecordRow.record_type == "standard")
+        query = query.order_by(FlowRecordRow.id.asc())
+        result = await db.execute(query)
+        return list(result.scalars().all())
+
+    async def _load_findings(self, db: AsyncSession, task_id: int) -> list[Finding]:
+        """S6 findings 全部（按 id 升序）."""
+        result = await db.execute(
+            select(Finding)
+            .where(Finding.task_id == task_id)
+            .order_by(Finding.id.asc())
+        )
+        return list(result.scalars().all())
+
+    # -------------------------------------------------------------------
+    # S8 helpers: report writers (pdf / docx / html) — 黑白单色年报排版
+    # -------------------------------------------------------------------
+
+    def _write_report_pdf(
+        self,
+        path: Path,
+        task: Task,
+        chapters: list[ReportChapter],
+        annotations: list[ReportAnnotation],
+    ) -> None:
+        """reportlab platypus 黑白年报排版（封面标题 + 各章 + 批注附录）."""
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+        from reportlab.lib.units import mm
+        from reportlab.lib.enums import TA_LEFT
+        from reportlab.platypus import (
+            SimpleDocTemplate,
+            Paragraph,
+            Spacer,
+            PageBreak,
+            HRFlowable,
+        )
+
+        doc = SimpleDocTemplate(
+            str(path),
+            pagesize=A4,
+            leftMargin=20 * mm,
+            rightMargin=20 * mm,
+            topMargin=20 * mm,
+            bottomMargin=20 * mm,
+            title=f"审查报告 - {task.title}",
+        )
+        base = getSampleStyleSheet()
+        title_style = ParagraphStyle(
+            "ReportTitle",
+            parent=base["Title"],
+            fontName="Helvetica-Bold",
+            fontSize=22,
+            leading=28,
+            alignment=TA_LEFT,
+            textColor="#000000",
+        )
+        h2_style = ParagraphStyle(
+            "ReportH2",
+            parent=base["Heading2"],
+            fontName="Helvetica-Bold",
+            fontSize=16,
+            leading=22,
+            spaceBefore=12,
+            spaceAfter=6,
+            textColor="#000000",
+        )
+        body_style = ParagraphStyle(
+            "ReportBody",
+            parent=base["BodyText"],
+            fontName="Helvetica",
+            fontSize=10.5,
+            leading=16,
+            spaceAfter=6,
+            textColor="#1f1f1f",
+        )
+        ann_style = ParagraphStyle(
+            "ReportAnn",
+            parent=base["BodyText"],
+            fontName="Helvetica",
+            fontSize=9.5,
+            leading=14,
+            leftIndent=12,
+            textColor="#595959",
+        )
+
+        flowables: list[Any] = []
+        flowables.append(Paragraph(f"审查报告", title_style))
+        flowables.append(Spacer(1, 4 * mm))
+        flowables.append(Paragraph(f"任务：{task.title}", body_style))
+        flowables.append(Paragraph(f"任务编号：{task.id}", body_style))
+        flowables.append(HRFlowable(width="100%", thickness=0.5, color="#000000"))
+        flowables.append(Spacer(1, 4 * mm))
+
+        for ch in chapters:
+            flowables.append(Paragraph(ch.title, h2_style))
+            for para in ch.content.split("\n\n"):
+                text = para.strip()
+                if text:
+                    flowables.append(Paragraph(self._escape_html(text), body_style))
+            flowables.append(Spacer(1, 3 * mm))
+
+        if annotations:
+            flowables.append(PageBreak())
+            flowables.append(Paragraph("批注附录", h2_style))
+            for ann in annotations:
+                label = "已解决" if ann.resolved else "待解决"
+                head = f"[{label}] {ann.author}："
+                flowables.append(Paragraph(self._escape_html(head + ann.content), ann_style))
+
+        doc.build(flowables)
+
+    def _write_report_docx(
+        self,
+        path: Path,
+        task: Task,
+        chapters: list[ReportChapter],
+        annotations: list[ReportAnnotation],
+    ) -> None:
+        """python-docx 黑白年报排版（标题样式 + 段落 + 批注附录）."""
+        from docx import Document
+        from docx.shared import Pt
+
+        doc = Document()
+        title = doc.add_heading(f"审查报告 - {task.title}", level=0)
+        for run in title.runs:
+            run.font.color.rgb = None  # default black
+
+        for ch in chapters:
+            doc.add_heading(ch.title, level=1)
+            for para in ch.content.split("\n\n"):
+                text = para.strip()
+                if text:
+                    p = doc.add_paragraph(text)
+                    for run in p.runs:
+                        run.font.size = Pt(10.5)
+
+        if annotations:
+            doc.add_heading("批注附录", level=1)
+            for ann in annotations:
+                label = "已解决" if ann.resolved else "待解决"
+                p = doc.add_paragraph(f"[{label}] {ann.author}：{ann.content}")
+                for run in p.runs:
+                    run.font.size = Pt(9.5)
+
+        doc.save(str(path))
+
+    def _write_report_html(
+        self,
+        path: Path,
+        task: Task,
+        chapters: list[ReportChapter],
+        annotations: list[ReportAnnotation],
+    ) -> None:
+        """模板字符串生成自包含 HTML（单色内联 CSS，黑白年报）."""
+        parts: list[str] = [
+            "<!DOCTYPE html>",
+            '<html lang="zh-CN">',
+            "<head>",
+            '<meta charset="utf-8">',
+            f"<title>审查报告 - {self._escape_html(task.title)}</title>",
+            "<style>",
+            "body{font-family:-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;"
+            "color:#1f1f1f;background:#fff;max-width:800px;margin:24px auto;padding:0 16px;}",
+            "h1{font-size:28px;font-weight:700;border-bottom:1px solid #000;padding-bottom:8px;}",
+            "h2{font-size:20px;font-weight:700;margin-top:24px;}",
+            "p{font-size:14px;line-height:1.7;white-space:pre-wrap;}",
+            ".meta{color:#595959;font-size:13px;margin:4px 0;}",
+            ".ann{border-left:2px solid #bfbfbf;background:#f0f0f0;padding:8px 12px;margin:8px 0;"
+            "font-size:13px;color:#595959;}",
+            ".ann-label{font-weight:700;color:#000;}",
+            "</style>",
+            "</head>",
+            "<body>",
+            f"<h1>审查报告</h1>",
+            f'<p class="meta">任务：{self._escape_html(task.title)}</p>',
+            f'<p class="meta">任务编号：{task.id}</p>',
+            "<hr style=\"border:none;border-top:1px solid #000\"/>",
+        ]
+        for ch in chapters:
+            parts.append(f"<h2>{self._escape_html(ch.title)}</h2>")
+            for para in ch.content.split("\n\n"):
+                text = para.strip()
+                if text:
+                    parts.append(f"<p>{self._escape_html(text)}</p>")
+        if annotations:
+            parts.append("<h2>批注附录</h2>")
+            for ann in annotations:
+                label = "已解决" if ann.resolved else "待解决"
+                parts.append(
+                    f'<div class="ann"><span class="ann-label">[{label}] '
+                    f"{self._escape_html(ann.author)}：</span>"
+                    f"{self._escape_html(ann.content)}</div>"
+                )
+        parts.append("</body></html>")
+        path.write_text("\n".join(parts), encoding="utf-8")
+
+    # -------------------------------------------------------------------
+    # S8 helpers: data writers (excel / csv) — 黑白表头
+    # -------------------------------------------------------------------
+
+    def _write_flow_records_excel(
+        self, path: Path, scope: str, rows: list[FlowRecordRow]
+    ) -> None:
+        """flow_records excel（黑白表头，raw 含 raw_payload 序列化列）."""
+        wb = openpyxl.Workbook()
+        try:
+            ws = wb.active
+            ws.title = f"{scope}_records"
+            headers = self._flow_record_headers(scope)
+            self._write_header(ws, headers)
+            for row_index, rec in enumerate(rows, 2):
+                values = self._flow_record_row(scope, rec)
+                for col_index, value in enumerate(values, 1):
+                    ws.cell(row=row_index, column=col_index, value=value)
+            wb.save(path)
+        finally:
+            wb.close()
+
+    def _write_flow_records_csv(
+        self, path: Path, scope: str, rows: list[FlowRecordRow]
+    ) -> None:
+        """flow_records csv（UTF-8 BOM，raw 含 raw_payload JSON）."""
+        headers = self._flow_record_headers(scope)
+        with open(path, "w", encoding="utf-8-sig", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(headers)
+            for rec in rows:
+                writer.writerow(self._flow_record_row(scope, rec))
+
+    def _write_findings_excel(self, path: Path, rows: list[Finding]) -> None:
+        """findings excel（黑白表头）."""
+        wb = openpyxl.Workbook()
+        try:
+            ws = wb.active
+            ws.title = "findings"
+            headers = self._finding_headers()
+            self._write_header(ws, headers)
+            for row_index, finding in enumerate(rows, 2):
+                values = self._finding_row(finding)
+                for col_index, value in enumerate(values, 1):
+                    ws.cell(row=row_index, column=col_index, value=value)
+            wb.save(path)
+        finally:
+            wb.close()
+
+    def _write_findings_csv(self, path: Path, rows: list[Finding]) -> None:
+        """findings csv（UTF-8 BOM）."""
+        headers = self._finding_headers()
+        with open(path, "w", encoding="utf-8-sig", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(headers)
+            for finding in rows:
+                writer.writerow(self._finding_row(finding))
+
+    @staticmethod
+    def _flow_record_headers(scope: str) -> list[str]:
+        base = [
+            "记录ID",
+            "文档ID",
+            "渠道",
+            "记录类型",
+            "行号",
+            "交易时间",
+            "交易对手名",
+            "交易对手账号",
+            "金额",
+            "原始金额",
+            "摘要",
+            "收支类型",
+            "状态",
+            "排除原因",
+        ]
+        if scope == "raw":
+            base.append("原始载荷")
+        return base
+
+    @staticmethod
+    def _flow_record_row(scope: str, rec: FlowRecordRow) -> list[Any]:
+        row: list[Any] = [
+            rec.id,
+            rec.document_id,
+            rec.channel or "",
+            rec.record_type,
+            rec.row_index,
+            rec.transaction_time or "",
+            rec.counterparty_name or "",
+            rec.counterparty_account or "",
+            rec.amount or "",
+            rec.raw_amount or "",
+            rec.summary or "",
+            rec.transaction_type or "",
+            rec.status,
+            rec.exclude_reason or "",
+        ]
+        if scope == "raw":
+            payload = rec.raw_payload if rec.raw_payload is not None else ""
+            row.append(json.dumps(payload, ensure_ascii=False) if payload else "")
+        return row
+
+    @staticmethod
+    def _flow_record_to_dict(rec: FlowRecordRow) -> dict[str, Any]:
+        return {
+            "id": rec.id,
+            "document_id": rec.document_id,
+            "channel": rec.channel,
+            "record_type": rec.record_type,
+            "row_index": rec.row_index,
+            "transaction_time": rec.transaction_time,
+            "counterparty_name": rec.counterparty_name,
+            "counterparty_account": rec.counterparty_account,
+            "amount": rec.amount,
+            "raw_amount": rec.raw_amount,
+            "summary": rec.summary,
+            "transaction_type": rec.transaction_type,
+            "status": rec.status,
+            "exclude_reason": rec.exclude_reason,
+            "raw_payload": rec.raw_payload,
+        }
+
+    @staticmethod
+    def _finding_headers() -> list[str]:
+        return [
+            "发现ID",
+            "类型",
+            "风险等级",
+            "描述",
+            "交易对手",
+            "金额",
+            "置信度",
+            "状态",
+            "备注",
+            "创建时间",
+        ]
+
+    @staticmethod
+    def _finding_row(f: Finding) -> list[Any]:
+        return [
+            f.id,
+            f.type,
+            f.severity,
+            f.description,
+            f.counterparty or "",
+            f.amount or "",
+            f.confidence,
+            f.status,
+            f.comment or "",
+            f.created_at.isoformat() if f.created_at else "",
+        ]
+
+    @staticmethod
+    def _finding_to_dict(f: Finding) -> dict[str, Any]:
+        return {
+            "id": f.id,
+            "type": f.type,
+            "severity": f.severity,
+            "description": f.description,
+            "counterparty": f.counterparty,
+            "amount": f.amount,
+            "confidence": f.confidence,
+            "status": f.status,
+            "comment": f.comment,
+            "created_at": f.created_at.isoformat() if f.created_at else "",
+            "updated_at": f.updated_at.isoformat() if f.updated_at else "",
+        }
+
+    @staticmethod
+    def _escape_html(text: str) -> str:
+        """转义 HTML 特殊字符（< > & " '）."""
+        return (
+            text.replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;")
+            .replace("'", "&#39;")
+        )
 
     async def _load_task(self, db: AsyncSession, task_id: int) -> Task:
         result = await db.execute(select(Task).where(Task.id == task_id))

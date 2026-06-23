@@ -13,6 +13,7 @@ from ..auth.password import hash_password
 from ..auth.permissions import check_admin_permission
 from ..database import get_db
 from ..models import Role, User
+from ..schemas.auth import UpdateMeRequest, UserResponse
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -106,6 +107,58 @@ async def create_user(
         username=user.username,
         email=user.email,
         role=request.role,
+        is_active=user.is_active,
+    )
+
+
+@router.patch("/me", response_model=UserResponse)
+async def update_me(
+    request: UpdateMeRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """当前用户改自己的个人信息（username/email，非 admin-only）.
+
+    不允许改 role/hashed_password（敏感字段走 admin 路由或 change-password）.
+    username 冲突→409；email 冲突→409.
+    """
+    result = await db.execute(select(User).where(User.id == current_user.id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    if request.username is not None and request.username != user.username:
+        existing = await db.execute(
+            select(User).where(User.username == request.username, User.id != user.id)
+        )
+        if existing.scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Username already exists",
+            )
+        user.username = request.username
+
+    if request.email is not None and request.email != user.email:
+        existing = await db.execute(
+            select(User).where(User.email == request.email, User.id != user.id)
+        )
+        if existing.scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Email already exists",
+            )
+        user.email = request.email
+
+    await db.commit()
+    await db.refresh(user)
+
+    role_result = await db.execute(select(Role).where(Role.id == user.role_id))
+    role = role_result.scalar_one_or_none()
+    return UserResponse(
+        id=user.id,
+        username=user.username,
+        email=user.email,
+        role=role.name if role else "unknown",
         is_active=user.is_active,
     )
 

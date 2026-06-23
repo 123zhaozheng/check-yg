@@ -16,11 +16,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.dependencies import get_current_user
 from ..auth.jwt import create_access_token, create_refresh_token, verify_token
-from ..auth.password import verify_password
+from ..auth.password import hash_password, verify_password
 from ..config import settings
 from ..database import get_db
 from ..models import User, Role
-from ..schemas.auth import LoginRequest, TokenResponse, RefreshRequest, UserResponse
+from ..schemas.auth import (
+    ChangePasswordRequest,
+    LoginRequest,
+    TokenResponse,
+    RefreshRequest,
+    UserResponse,
+)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -170,3 +176,31 @@ async def logout(response: Response):
     """Clear auth cookies (client-side logout)."""
     _clear_auth_cookies(response)
     return {"detail": "logged out"}
+
+
+@router.post("/change-password")
+async def change_password(
+    request: ChangePasswordRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """修改当前用户密码.
+
+    校验旧密码（错→400 "旧密码不正确"），新密码长度≥8 校验（422），
+    更新 ``User.hashed_password`` 并 commit。返 {ok: true}.
+    """
+    if not verify_password(request.old_password, current_user.hashed_password):
+        raise HTTPException(status_code=400, detail="旧密码不正确")
+    if len(request.new_password) < 8:
+        raise HTTPException(
+            status_code=422,
+            detail="新密码长度不足，至少 8 位",
+        )
+
+    result = await db.execute(select(User).where(User.id == current_user.id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    user.hashed_password = hash_password(request.new_password)
+    await db.commit()
+    return {"ok": True}
