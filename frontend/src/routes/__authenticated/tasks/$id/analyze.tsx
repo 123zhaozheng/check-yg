@@ -1,6 +1,6 @@
 import * as React from "react"
 import { createFileRoute, useParams } from "@tanstack/react-router"
-import { ChevronRight, Send } from "lucide-react"
+import { Send } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import type { FindingItem, Severity } from "@/lib/api"
@@ -92,25 +92,6 @@ function AnalyzePage() {
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Header */}
-      <div className="flex flex-col gap-2 pb-2 md:flex-row md:items-end md:justify-between">
-        <div className="min-w-0">
-          <div className="flex items-center gap-1.5 text-xs text-ink-700">
-            <span>任务</span>
-            <ChevronRight className="size-3" />
-            <span>{id}</span>
-            <ChevronRight className="size-3" />
-            <span className="text-ink-900">AI 分析</span>
-          </div>
-          <h1 className="mt-1 font-sans text-2xl font-bold leading-tight tracking-tight text-ink-900">
-            AI 分析
-          </h1>
-          <p className="mt-1 text-sm text-ink-700">
-            对标准化流水运行 AI 审查模型，发现异常与风险点并展示。
-          </p>
-        </div>
-      </div>
-
       {/* 分析控制条 */}
       <div className="flex flex-col gap-3 rounded-[var(--radius-lg)] border border-ink-400 bg-ink-100 p-4 md:flex-row md:items-center md:justify-between">
         <div className="flex flex-wrap items-center gap-3">

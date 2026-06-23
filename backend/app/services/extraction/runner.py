@@ -4,13 +4,14 @@
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import Dict
+from pathlib import Path
+from typing import Dict, Optional
 
 from sqlalchemy import delete, select
 
 from app.database import async_session
 from app.models import Document, FlowRecordRow, Task, TaskLog
-from app.services.settings_service import load_runtime_settings
+from app.services.settings_service import get_int_setting, load_runtime_settings
 from app.websocket.notifications import notify_user
 
 from .extractor import FlowExtractor
@@ -39,13 +40,32 @@ class ExtractionTaskRunner:
         batch_size: int = 20,
         confidence_threshold: int = 70,
         append: bool = False,
+        mineru_concurrency: Optional[int] = None,
+        llm_concurrency: Optional[int] = None,
     ) -> None:
-        """Start or append an extraction job."""
+        """Start an extraction job that runs a batch loop.
+
+        Reads ``extraction.mineru_concurrency`` / ``extraction.llm_concurrency``
+        from runtime settings (unless overridden by the explicit args) and
+        threads them into the extractor. The batch loop processes every pending
+        document across all the task's upload folders, then re-checks for files
+        uploaded mid-run; new uploads are picked up by the next loop iteration
+        without restarting the runner.
+        """
         if self.is_running(task_id):
             raise ValueError("Task is already running")
 
         async with async_session() as session:
             runtime_settings = await load_runtime_settings(session)
+
+        if mineru_concurrency is None:
+            mineru_concurrency = get_int_setting(
+                runtime_settings, "extraction.mineru_concurrency", 1, 1, 16
+            )
+        if llm_concurrency is None:
+            llm_concurrency = get_int_setting(
+                runtime_settings, "extraction.llm_concurrency", 2, 1, 16
+            )
 
         extractor = FlowExtractor(runtime_settings=runtime_settings)
         loop = asyncio.get_running_loop()
@@ -79,6 +99,8 @@ class ExtractionTaskRunner:
                 batch_size=batch_size,
                 confidence_threshold=confidence_threshold,
                 append=append,
+                mineru_concurrency=mineru_concurrency,
+                llm_concurrency=llm_concurrency,
             )
         )
         self._jobs[task_id] = job
@@ -116,25 +138,75 @@ class ExtractionTaskRunner:
         batch_size: int,
         confidence_threshold: int,
         append: bool,
+        mineru_concurrency: int = 1,
+        llm_concurrency: int = 2,
     ) -> None:
+        """Run the batch loop until no new pending documents remain.
+
+        Each iteration processes every not-yet-processed document across all the
+        task's upload folders (the ``document_folder`` plus every entry in
+        ``append_document_folders``), path-deduped against
+        ``processed_document_paths``. After a round, if new files were uploaded
+        mid-run (new pending Document rows whose path isn't yet processed),
+        another round runs to pick them up — the runner is never restarted,
+        the loop just continues. When no new work appears, the task finishes.
+        """
         try:
-            if append:
-                existing_paths = await self._load_existing_document_paths(task_id)
-                result = await extractor.extract_flows_append(
-                    task_id=str(task_id),
-                    new_folder=document_folder,
-                    batch_size=batch_size,
-                    confidence_threshold=confidence_threshold,
-                    existing_document_paths=existing_paths,
+            first_round = not append
+            ran_a_round = False
+            while True:
+                if extractor._cancel_requested:
+                    break
+
+                pending_docs = await self._collect_pending_documents(
+                    task_id, document_folder, extractor
                 )
-            else:
+                if not pending_docs:
+                    break
+
+                ran_a_round = True
+                logger.info(
+                    "批循环轮次：待处理文档 %d 个 (task=%s)",
+                    len(pending_docs),
+                    task_id,
+                )
+
+                # Reuse extract_flows with a pre-filtered document set so the
+                # path-aware dedup (skip already-processed full paths) is done
+                # here via _collect_pending_documents; the extractor then runs
+                # stage1+stage2 with concurrency limits.
                 result = await extractor.extract_flows(
                     document_folder=document_folder,
                     task_id=str(task_id),
                     batch_size=batch_size,
                     confidence_threshold=confidence_threshold,
+                    documents=pending_docs,
+                    mineru_concurrency=mineru_concurrency,
+                    llm_concurrency=llm_concurrency,
                 )
-            await self._mark_finished(task_id, owner_id, result.to_dict(), append=append)
+
+                await self._mark_finished(
+                    task_id, owner_id, result.to_dict(), append=not first_round
+                )
+                first_round = False
+
+                # Loop continues: _collect_pending_documents re-reads pending
+                # Document rows + processed_document_paths, so files uploaded
+                # during this round surface as new pending docs next iteration.
+                # If none remain, the while-break above exits.
+
+            # No pending documents from the start (e.g. task already processed,
+            # or start pressed on a task whose uploads were all handled). The
+            # start endpoint already flipped status to "running"; mark it
+            # completed with an empty result so the task doesn't stick in
+            # running forever.
+            if not ran_a_round and not extractor._cancel_requested:
+                from .extractor import ExtractionResult
+
+                empty = ExtractionResult(task_id=str(task_id), document_folder=document_folder)
+                await self._mark_finished(
+                    task_id, owner_id, empty.to_dict(), append=append
+                )
         except Exception as exc:
             logger.exception("Extraction task %s failed", task_id)
             await self._mark_failed(task_id, owner_id, str(exc))
@@ -142,6 +214,45 @@ class ExtractionTaskRunner:
             self._extractors.pop(task_id, None)
             self._jobs.pop(task_id, None)
 
+    async def _collect_pending_documents(
+        self, task_id: int, document_folder: str, extractor: FlowExtractor
+    ) -> list:
+        """Return Path list of documents not yet processed for this task.
+
+        Scans every folder the task has uploaded into (``document_folder`` plus
+        ``append_document_folders``) and filters out full paths already in
+        ``processed_document_paths`` (path-aware dedup — same-named files in
+        different run dirs stay distinct). This is the batch loop's work queue:
+        a file uploaded mid-run appears here next iteration, so the loop picks
+        it up without a runner restart.
+        """
+        async with async_session() as session:
+            db_result = await session.execute(select(Task).where(Task.id == task_id))
+            task = db_result.scalar_one_or_none()
+            if not task:
+                return []
+            config = task.config or {}
+            last_result = config.get("last_result") or {}
+            processed = {
+                str(Path(p).as_posix())
+                for p in (last_result.get("processed_document_paths") or [])
+            }
+            folders = []
+            if config.get("document_folder"):
+                folders.append(config["document_folder"])
+            for folder in (config.get("append_document_folders") or []):
+                if folder and folder not in folders:
+                    folders.append(folder)
+
+        scanner = extractor.scanner  # reuse the extractor's DocumentScanner
+        all_docs: list = []
+        for folder in folders:
+            folder_path = Path(folder)
+            if not folder_path.exists() or not folder_path.is_dir():
+                continue
+            all_docs.extend(scanner.scan_directory(str(folder_path)))
+
+        return [d for d in all_docs if d.as_posix() not in processed]
     @staticmethod
     async def _load_existing_document_paths(task_id: int) -> list:
         """Return full paths already processed for a task, for append dedup."""
@@ -231,6 +342,14 @@ class ExtractionTaskRunner:
             source_file = str(record.get("source_file") or "unknown").strip() or "unknown"
             records_by_source.setdefault(source_file, []).append(record)
 
+        # Per-document portrait (stage-1 generated), keyed by filename. May be
+        # None for a doc whose portrait extraction failed — written through so
+        # the import page hover card can show 「画像待生成」 for those rows.
+        portraits_by_name: dict[str, dict | None] = {
+            str(name): portrait
+            for name, portrait in (result.get("per_document_portraits") or {}).items()
+        }
+
         # Load existing non-deleted documents for this task, keyed by filename so
         # we can update the pre-created row instead of deleting + recreating.
         existing_result = await session.execute(
@@ -252,6 +371,8 @@ class ExtractionTaskRunner:
                 target.flow_tables = {"records": records}
                 target.status = "completed"
                 target.error_log = None
+                if source_file in portraits_by_name:
+                    target.portrait = portraits_by_name[source_file]
                 consumed_ids.add(target.id)
             else:
                 # No pre-created row (legacy / fallback) — create one with no channel.
@@ -262,6 +383,7 @@ class ExtractionTaskRunner:
                         original_path=source_file,
                         status="completed",
                         flow_tables={"records": records},
+                        portrait=portraits_by_name.get(source_file),
                     )
                 )
 
@@ -302,6 +424,11 @@ class ExtractionTaskRunner:
                 if doc.status == "pending":
                     doc.status = "completed"
                     doc.flow_tables = {"records": []}
+                    # A portrait-only / no-flow-tables doc still has a stage-1
+                    # portrait (the extractor captured it even with empty
+                    # flow_tables). Write it through so the hover card shows it.
+                    if doc.filename in portraits_by_name:
+                        doc.portrait = portraits_by_name[doc.filename]
                     consumed_ids.add(doc.id)
 
         # S5 不删减: persist every extracted row (standard + unparsed + excluded)
@@ -482,6 +609,15 @@ class ExtractionTaskRunner:
             if doc_name not in prev_stats:
                 prev_stats[doc_name] = stat
         merged["per_document_stats"] = prev_stats
+
+        # Merge per-document portraits: keep previous, add current's new docs.
+        # Same-named files in different folders are distinct documents (path-
+        # aware identity), but portraits are keyed by filename for Document-row
+        # matching, so a current entry for an existing name refreshes it.
+        prev_portraits = dict(previous.get("per_document_portraits") or {})
+        curr_portraits = current.get("per_document_portraits") or {}
+        prev_portraits.update(curr_portraits)
+        merged["per_document_portraits"] = prev_portraits
 
         # Accumulate processed full paths (deduped, path-aware).
         prev_paths = list(previous.get("processed_document_paths", []) or [])

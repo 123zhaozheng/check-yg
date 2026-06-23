@@ -316,12 +316,14 @@ async def create_task_from_upload(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Create a task from uploaded files and start extraction immediately.
+    """Create a draft task from uploaded files (no auto-start).
 
     Files are saved under a per-task upload subfolder, which becomes the
     extraction ``document_folder`` — no backend-local directory path is typed
     by the user. ``channel`` labels the uploaded files (e.g. 银行流水) and is
-    persisted on each pre-created Document row.
+    persisted on each pre-created Document row. The task stays ``draft``;
+    extraction is started manually via POST /tasks/{id}/start (the batch loop
+    then picks up pending documents).
     """
     clean_title = title.strip()
     if not clean_title:
@@ -350,25 +352,10 @@ async def create_task_from_upload(
     _precreate_documents(db, task.id, saved_meta, channel)
     config["document_folder"] = str(upload_dir)
     task.config = config
-    task.status = "running"
-    task.completed_at = None
-    db.add(TaskLog(task_id=task.id, level="info", message="Extraction started"))
+    # Stays draft — extraction starts on POST /tasks/{id}/start.
+    db.add(TaskLog(task_id=task.id, level="info", message="Files uploaded, awaiting manual start"))
     await db.commit()
     await db.refresh(task)
-
-    try:
-        await runner.start(
-            task_id=task.id,
-            owner_id=current_user.id,
-            document_folder=str(upload_dir),
-            batch_size=batch_size,
-            confidence_threshold=confidence_threshold,
-            append=False,
-        )
-    except ValueError as exc:
-        task.status = "draft"
-        await db.commit()
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     return _task_response(task)
 
@@ -383,15 +370,18 @@ async def append_task_from_upload(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Append uploaded documents to an existing task and start append extraction.
+    """Append uploaded documents to an existing task (no auto-start / no restart).
 
     Files land in a fresh per-run subfolder so same-named files from different
     append runs stay distinct (path-aware document identity). ``channel`` labels
     the appended files and is persisted on each pre-created Document row.
+
+    Running tasks accept uploads: the files are saved + pre-created as pending
+    Document rows + the folder is registered in ``append_document_folders``.
+    The runner's batch loop picks them up on its next iteration — the runner is
+    never restarted. Non-running tasks just queue the files for the next start.
     """
     task = await _load_owned_task(db, task_id, current_user)
-    if task.status == "running" or runner.is_running(task.id):
-        raise HTTPException(status_code=409, detail="Task is already running")
     _ensure_supported_files(files)
 
     config = dict(task.config or {})
@@ -407,26 +397,12 @@ async def append_task_from_upload(
     config["append_document_folders"] = append_folders
     config["append_document_folder"] = str(upload_dir)
     config["document_folder"] = config.get("document_folder") or str(upload_dir)
+    config["batch_size"] = bs
+    config["confidence_threshold"] = ct
     task.config = config
-    task.status = "running"
-    task.completed_at = None
-    db.add(TaskLog(task_id=task.id, level="info", message="Append extraction started from upload"))
+    db.add(TaskLog(task_id=task.id, level="info", message="Append upload registered (awaiting batch loop)"))
     await db.commit()
     await db.refresh(task)
-
-    try:
-        await runner.start(
-            task_id=task.id,
-            owner_id=current_user.id,
-            document_folder=str(upload_dir),
-            batch_size=bs,
-            confidence_threshold=ct,
-            append=True,
-        )
-    except ValueError as exc:
-        task.status = "failed"
-        await db.commit()
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     return _task_response(task)
 
@@ -450,25 +426,30 @@ async def get_task(
 @router.post("/{task_id}/start", response_model=TaskResponse)
 async def start_task(
     task_id: int,
-    request: TaskActionRequest,
+    request: Optional[TaskActionRequest] = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Start extraction for a task in the background."""
+    """Start extraction for a task in the background.
+
+    Body is optional — when omitted (or ``document_folder`` absent), falls back
+    to the saved ``config["document_folder"]`` from the upload. The runner's
+    batch loop then processes every pending document across all upload folders.
+    """
     task = await _load_owned_task(db, task_id, current_user)
     if task.status == "running" or runner.is_running(task.id):
         raise HTTPException(status_code=409, detail="Task is already running")
 
     config = dict(task.config or {})
-    document_folder = request.document_folder or config.get("document_folder")
+    document_folder = (request.document_folder if request else None) or config.get("document_folder")
     if not document_folder:
         raise HTTPException(status_code=422, detail="document_folder is required")
     folder_path = Path(document_folder)
     if not folder_path.exists() or not folder_path.is_dir():
         raise HTTPException(status_code=422, detail="document_folder must be an existing directory")
 
-    batch_size = request.batch_size or int(config.get("batch_size") or 20)
-    confidence_threshold = request.confidence_threshold or int(config.get("confidence_threshold") or 70)
+    batch_size = (request.batch_size if request else None) or int(config.get("batch_size") or 20)
+    confidence_threshold = (request.confidence_threshold if request else None) or int(config.get("confidence_threshold") or 70)
     config.update(
         {
             "document_folder": str(folder_path),
@@ -680,6 +661,7 @@ class DocumentResponse(BaseModel):
     channel: Optional[str] = None
     status: str
     size_bytes: Optional[int] = None
+    portrait: Optional[dict] = None
     created_at: datetime
     error_log: Optional[str] = None
 
@@ -700,6 +682,7 @@ def _document_response(doc: Document) -> DocumentResponse:
         channel=doc.channel,
         status=doc.status,
         size_bytes=doc.size_bytes,
+        portrait=doc.portrait,
         created_at=doc.created_at,
         error_log=doc.error_log,
     )

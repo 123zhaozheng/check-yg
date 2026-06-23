@@ -20,7 +20,13 @@ def _pdf_bytes(name: str = "sample.pdf") -> bytes:
 
 
 @pytest.mark.asyncio
-async def test_create_from_upload_starts_extraction(client, monkeypatch):
+async def test_create_from_upload_does_not_auto_start(client, monkeypatch):
+    """Upload no longer auto-starts extraction (③ 手动处理).
+
+    The task stays ``draft``, ``runner.start`` is NOT called, files are saved
+    under a per-task run dir, and ``config.document_folder`` points at it.
+    Extraction is started manually via POST /tasks/{id}/start.
+    """
     calls = []
 
     async def fake_start(**kwargs):
@@ -37,12 +43,11 @@ async def test_create_from_upload_starts_extraction(client, monkeypatch):
 
     assert response.status_code == 201
     data = response.json()
-    assert data["status"] == "running"
-    assert calls[0]["task_id"] == data["id"]
-    assert calls[0]["batch_size"] == 5
-    assert calls[0]["confidence_threshold"] == 88
+    # Stays draft — no auto-start.
+    assert data["status"] == "draft"
+    assert calls == []
     # The document_folder points at the saved upload dir, not a user-typed path.
-    folder = calls[0]["document_folder"]
+    folder = data["config"]["document_folder"]
     assert "tasks" in folder and "run-1" in folder
     assert Path(folder).exists()
     assert (Path(folder) / "流水.pdf").exists()
@@ -68,12 +73,15 @@ async def test_create_from_upload_rejects_unsupported_files(client, monkeypatch)
 @pytest.mark.asyncio
 async def test_append_from_upload_uses_distinct_run_dir(client, db_session, monkeypatch):
     """A second append upload lands in run-2/, distinct from run-1/, so a
-    same-named file stays a distinct document (path-aware identity)."""
+    same-named file stays a distinct document (path-aware identity).
+
+    ③ 手动处理: append-upload no longer calls runner.start; it just registers
+    the folder. The run dir + append_document_folders are still tracked.
+    """
     session, _user = db_session
-    calls = []
 
     async def fake_start(**kwargs):
-        calls.append(kwargs)
+        return None
 
     monkeypatch.setattr("app.routers.tasks.runner.start", fake_start)
     monkeypatch.setattr("app.routers.tasks.runner.is_running", lambda task_id: False)
@@ -84,26 +92,21 @@ async def test_append_from_upload_uses_distinct_run_dir(client, db_session, monk
         files=[("files", ("流水.pdf", _pdf_bytes(), "application/pdf"))],
     )
     task_id = created.json()["id"]
+    run1 = created.json()["config"]["document_folder"]
+    assert run1.endswith("run-1")
 
-    # The router flips status to "running" and fake_start never finishes it;
-    # reset to "completed" between requests so the second append is accepted.
-    row = await session.execute(select(Task).where(Task.id == task_id))
-    task = row.scalar_one()
-    task.status = "completed"
-    await session.commit()
-
+    # No auto-start → status stays draft (no reset needed between requests).
     append_resp = await client.post(
         f"/api/tasks/{task_id}/append-upload",
         files=[("files", ("流水.pdf", _pdf_bytes(), "application/pdf"))],
     )
 
     assert append_resp.status_code == 200
-    folders = [c["document_folder"] for c in calls]
-    assert folders[0].endswith("run-1")
-    assert folders[1].endswith("run-2")
-    assert folders[0] != folders[1]
+    run2 = append_resp.json()["config"]["append_document_folder"]
+    assert run2.endswith("run-2")
+    assert run1 != run2
     append_folders = append_resp.json()["config"]["append_document_folders"]
-    assert append_folders == [folders[1]]
+    assert append_folders == [run2]
 
 
 # ---------------------------------------------------------------------------
@@ -199,7 +202,8 @@ def test_extract_flows_append_skips_already_processed_paths(tmp_path, monkeypatc
     captured = {}
 
     async def fake_extract_flows(self, document_folder, task_id=None, batch_size=20,
-                                 confidence_threshold=70, documents=None):
+                                 confidence_threshold=70, documents=None,
+                                 mineru_concurrency=1, llm_concurrency=2):
         captured["documents"] = documents
         return ExtractionResult(task_id=task_id or "t", document_folder=document_folder)
 

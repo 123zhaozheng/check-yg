@@ -18,6 +18,7 @@ import {
   useDocumentList,
   useUploadTaskDocuments,
 } from "@/hooks/use-documents"
+import { useStartExtraction, useTask } from "@/hooks/use-tasks"
 
 /**
  * 数据导入 /tasks/:id/import (docs §C2).
@@ -64,6 +65,10 @@ function ImportPage() {
   const allDocsQuery = useDocumentList(taskId, {})
   const allDocs = allDocsQuery.data?.items ?? []
 
+  // Task detail — read status so the 开始处理 button is disabled while running.
+  const taskQuery = useTask(taskId)
+  const taskStatus = taskQuery.data?.status ?? "draft"
+
   // Filtered view for the currently selected channel.
   const channelQuery = useDocumentList(taskId, { channel: selectedChannel })
   const channelDocs = channelQuery.data?.items ?? []
@@ -81,8 +86,15 @@ function ImportPage() {
     return counts
   }, [allDocs])
 
+  // 开始处理 is enabled only when there is at least one pending document and
+  // the task is not already running. Running tasks auto-pick up new uploads via
+  // the runner's batch loop, so the button is hidden then.
+  const hasPending = allDocs.some((d) => d.status === "pending")
+  const isRunning = taskStatus === "running"
+
   const upload = useUploadTaskDocuments(taskId)
   const deleteDoc = useDeleteDocument(taskId)
+  const startExtraction = useStartExtraction(taskId)
 
   // Cache the original File objects by filename+size so a failed row's Retry
   // can re-upload the same file without a file picker round-trip.
@@ -203,15 +215,32 @@ function ImportPage() {
 
       {/* Right: upload area + file table */}
       <section className="flex min-w-0 flex-1 flex-col rounded-[var(--radius-lg)] border border-ink-400 bg-ink-100 p-6">
-        {/* Header: channel title + 开始处理 */}
+        {/* Header: channel title + 上传文件 + 开始处理 */}
         <div className="mb-5 flex items-center justify-between">
           <h3 className="font-sans text-lg font-semibold text-ink-900">
             {channelLabel} 上传
           </h3>
-          <Button size="sm" onClick={openPicker}>
-            <Play className="size-4" />
-            开始处理
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="secondary" size="sm" onClick={openPicker}>
+              <Upload className="size-4" />
+              上传文件
+            </Button>
+            {isRunning ? (
+              <Button size="sm" disabled>
+                <RefreshCw className="size-4 animate-spin" />
+                处理中
+              </Button>
+            ) : (
+              <Button
+                size="sm"
+                onClick={() => startExtraction.mutate()}
+                disabled={!hasPending || startExtraction.isPending}
+              >
+                <Play className="size-4" />
+                开始处理
+              </Button>
+            )}
+          </div>
         </div>
 
         {/* Dropzone */}
@@ -268,6 +297,11 @@ function ImportPage() {
             上传失败：{(upload.error as Error)?.message ?? "请重试"}
           </p>
         )}
+        {startExtraction.isError && (
+          <p className="mb-3 text-sm text-ink-900">
+            开始处理失败：{(startExtraction.error as Error)?.message ?? "请重试"}
+          </p>
+        )}
 
         {/* File table */}
         <div className="flex min-h-0 flex-1 flex-col rounded-[var(--radius-DEFAULT)] border border-ink-400 bg-ink-100">
@@ -304,7 +338,13 @@ function ImportPage() {
 }
 
 /** One file row. Status capsule maps to a grayscale tone; Failed is the only
- *  "heavy" state — black bg + white bold uppercase + Retry. */
+ *  "heavy" state — black bg + white bold uppercase + Retry.
+ *
+ *  The filename is wrapped in a `group relative` container so hovering it
+ *  reveals an absolutely-positioned portrait card (纯 CSS group-hover, no
+ *  radix/portal — Chrome 96/108 safe). Card shows the stage-1 portrait's core
+ *  fields; when portrait is null (not yet generated / LLM failed) it shows a
+ *  「画像待生成」 placeholder. */
 function FileRow({
   doc,
   onRetry,
@@ -322,8 +362,8 @@ function FileRow({
         doc.status === "pending" && "opacity-70",
       )}
     >
-      {/* Filename + type icon */}
-      <div className="flex min-w-0 items-center gap-2">
+      {/* Filename + type icon + hover portrait card */}
+      <div className="group relative flex min-w-0 items-center gap-2">
         <FileTypeIcon filename={doc.filename} className="size-4 flex-shrink-0 text-ink-600" />
         <span
           className={cn(
@@ -334,6 +374,7 @@ function FileRow({
         >
           {doc.filename}
         </span>
+        <PortraitCard portrait={doc.portrait ?? null} />
       </div>
 
       {/* Type */}
@@ -386,6 +427,111 @@ function FileRow({
           </>
         )}
       </div>
+    </div>
+  )
+}
+
+/** 账户类型 → 中文标签（portrait.account_type 的 enum 值映射）. */
+const ACCOUNT_TYPE_LABEL: Record<string, string> = {
+  credit_card: "信用卡",
+  debit_card: "储蓄卡",
+  alipay: "支付宝",
+  wechat: "微信",
+  bank_general: "银行通用",
+  unknown: "未知",
+}
+
+/** 收支规则 → 中文标签（portrait.amount_sign_rule 的 enum 值映射）. */
+const AMOUNT_SIGN_RULE_LABEL: Record<string, string> = {
+  pos_income: "正数=收入",
+  pos_expense: "正数=支出",
+  no_sign: "无符号",
+  split_cols: "收支分列",
+  unknown: "未知",
+}
+
+/**
+ * 文档画像 hover 卡片（纯 CSS group-hover，文件名右下角弹出）.
+ *
+ * 渲染画像核心字段：账户类型/持有人/机构/对账期间/收支规则/表头属性。
+ * key_observations 截断省略（hover 卡片只显核心，不堆观察列表）。
+ * portrait 为 null（未生成 / LLM 失败）时显示「画像待生成」占位。
+ * monochrome：9 级 ink token，不用红色；--shadow-popover 投影。
+ */
+function PortraitCard({
+  portrait,
+}: {
+  portrait: Record<string, unknown> | null
+}) {
+  if (!portrait) {
+    return (
+      <div
+        className="pointer-events-none absolute left-0 top-full z-50 mt-1 hidden w-56 rounded-[var(--radius-lg)] border border-ink-400 bg-ink-100 p-3 text-xs text-ink-600 group-hover:block"
+        style={{ boxShadow: "var(--shadow-popover)" }}
+      >
+        画像待生成
+      </div>
+    )
+  }
+
+  const rows: { label: string; value: string }[] = [
+    {
+      label: "账户类型",
+      value: ACCOUNT_TYPE_LABEL[String(portrait.account_type ?? "unknown")] ?? "未知",
+    },
+    { label: "持有人", value: String(portrait.account_holder ?? "") || "—" },
+    { label: "机构", value: String(portrait.institution ?? "") || "—" },
+    { label: "对账期间", value: String(portrait.statement_period ?? "") || "—" },
+    {
+      label: "收支规则",
+      value:
+        AMOUNT_SIGN_RULE_LABEL[String(portrait.amount_sign_rule ?? "unknown")] ?? "未知",
+    },
+  ]
+  const headerAttrs = Array.isArray(portrait.header_attributes)
+    ? (portrait.header_attributes as unknown[]).map(String)
+    : []
+
+  return (
+    <div
+      className="pointer-events-none absolute left-0 top-full z-50 mt-1 hidden w-72 rounded-[var(--radius-lg)] border border-ink-400 bg-ink-100 p-3 group-hover:block"
+      style={{ boxShadow: "var(--shadow-popover)" }}
+    >
+      <div className="mb-2 text-[11px] font-bold uppercase tracking-wider text-ink-700">
+        文档画像
+      </div>
+      <dl className="grid grid-cols-[80px_1fr] gap-x-3 gap-y-1.5 font-mono text-xs">
+        {rows.map((r) => (
+          <React.Fragment key={r.label}>
+            <dt className="text-ink-700">{r.label}</dt>
+            <dd className="truncate text-ink-900" title={r.value}>
+              {r.value}
+            </dd>
+          </React.Fragment>
+        ))}
+      </dl>
+      {headerAttrs.length > 0 && (
+        <div className="mt-2 border-t border-ink-400 pt-2">
+          <div className="mb-1 text-[11px] font-bold uppercase tracking-wider text-ink-700">
+            表头
+          </div>
+          <div className="flex flex-wrap gap-1">
+            {headerAttrs.slice(0, 8).map((h, i) => (
+              <span
+                key={i}
+                className="rounded-[var(--radius-DEFAULT)] bg-ink-200 px-1.5 py-0.5 font-mono text-[11px] text-ink-900"
+              >
+                {h}
+              </span>
+            ))}
+            {headerAttrs.length > 8 && (
+              <span className="px-1 py-0.5 font-mono text-[11px] text-ink-700">
+                +{headerAttrs.length - 8}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

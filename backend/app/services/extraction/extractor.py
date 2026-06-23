@@ -44,6 +44,12 @@ class ExtractionResult:
         # downstream review/report/export services that still read
         # Document.flow_tables["records"].
         self.extracted_records: List[Dict[str, Any]] = []
+        # Per-document portrait (account_type/holder/institution/...), keyed by
+        # filename. Generated at stage 1 and carried through so the runner can
+        # persist it onto the Document row (import page hover card reads it).
+        # 不删减: a doc whose portrait extraction failed still gets an entry
+        # with value None so the runner can clear / leave the column.
+        self.per_document_portraits: Dict[str, Optional[Dict[str, Any]]] = {}
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
@@ -62,6 +68,7 @@ class ExtractionResult:
             "per_document_stats": self.per_document_stats,
             "processed_document_paths": self.processed_document_paths,
             "extracted_records": self.extracted_records,
+            "per_document_portraits": self.per_document_portraits,
         }
 
 
@@ -250,11 +257,18 @@ class FlowExtractor:
         batch_size: int = 20,
         confidence_threshold: int = 70,
         documents: Optional[List[Path]] = None,
+        mineru_concurrency: int = 1,
+        llm_concurrency: int = 2,
     ) -> ExtractionResult:
         """Extract flow records from documents.
 
         When ``documents`` is supplied (append path), scanning is skipped and
         only those pre-filtered documents are processed.
+
+        ``mineru_concurrency`` caps stage-1 document parsing (MinerU fetch +
+        classify + portrait) via an asyncio.Semaphore; ``llm_concurrency``
+        caps stage-2 normalization. Defaults (1 / 2) start conservative —
+        public MinerU is easily rate-limited.
         """
         self._cancel_requested = False
         self._pause_requested = False
@@ -279,77 +293,101 @@ class FlowExtractor:
         self.progress_reporter.report(
             task_id, "scanning", 1, 1, f"Found {len(documents)} documents"
         )
+        logger.info("扫描完成，共发现 %d 个文档", len(documents))
 
-        # Stage 2: Process documents (serial for classification)
-        stage2_docs = []
-        for idx, doc_path in enumerate(documents):
-            await self._check_pause()
-            if self._cancel_requested:
-                break
+        # Stage 1: 逐文档解析 + 分类 + 画像（受 mineru_concurrency 信号量限流的并发）
+        logger.info("阶段1开始：逐文档表格识别与流水判定（并发=%d）", mineru_concurrency)
+        stage1_sem = asyncio.Semaphore(max(1, mineru_concurrency))
+        total_docs = len(documents)
+        # Shared progress counter — documents complete out of order under
+        # concurrency, so we just advance a running count rather than the loop
+        # index.
+        progress_counter = {"done": 0}
 
-            self.progress_reporter.report(
-                task_id,
-                "parsing",
-                idx + 1,
-                len(documents),
-                f"Processing: {doc_path.name}",
-            )
-
-            try:
-                checkpoint = self.checkpoint_manager.load_checkpoint(
-                    task_id, doc_path.name, document_path=str(doc_path)
+        async def _stage1_one(doc_path: Path) -> Optional[Dict[str, Any]]:
+            async with stage1_sem:
+                await self._check_pause()
+                if self._cancel_requested:
+                    return None
+                logger.info("阶段1处理文档: %s", doc_path.name)
+                progress_counter["done"] += 1
+                self.progress_reporter.report(
+                    task_id,
+                    "parsing",
+                    progress_counter["done"],
+                    total_docs,
+                    f"Processing: {doc_path.name}",
                 )
-                if checkpoint and checkpoint.get("status") in ("stage1_done", "completed"):
-                    doc_result = self._stage1_result_from_checkpoint(doc_path, checkpoint)
-                else:
-                    doc_result = await self._process_document_stage1(
+                try:
+                    checkpoint = self.checkpoint_manager.load_checkpoint(
+                        task_id, doc_path.name, document_path=str(doc_path)
+                    )
+                    if checkpoint and checkpoint.get("status") in ("stage1_done", "completed"):
+                        return self._stage1_result_from_checkpoint(doc_path, checkpoint)
+                    return await self._process_document_stage1(
                         doc_path, task_id, confidence_threshold
                     )
-                if doc_result:
-                    completed_records = doc_result.get("completed_records")
-                    if completed_records is not None:
-                        result.flow_records.extend(completed_records)
-                        result.per_document_stats[doc_path.name] = {
-                            "record_count": len(completed_records)
-                        }
-                    else:
-                        stage2_docs.append(doc_result)
-                    # S5 不删减: carry excluded rows (classifier-rejected tables)
-                    # into the unified record list even at stage 1, so they are
-                    # persisted regardless of whether stage 2 runs.
-                    excluded_records = doc_result.get("excluded_records") or []
-                    if excluded_records:
-                        result.extracted_records.extend(excluded_records)
-                    result.processed_documents += 1
-                    result.processed_document_paths.append(str(doc_path))
-                    result.total_tables += int(doc_result.get("total_tables", 0) or 0)
-                    result.flow_tables += len(doc_result.get("flow_tables", []))
-            except Exception as e:
-                logger.error("Failed to process document %s: %s", doc_path.name, e)
-                result.failed_documents.append(doc_path.name)
-                result.errors.append(
-                    {"document": doc_path.name, "stage": "stage1", "error": str(e)}
-                )
+                except Exception as e:
+                    logger.error("Failed to process document %s: %s", doc_path.name, e)
+                    result.failed_documents.append(doc_path.name)
+                    result.errors.append(
+                        {"document": doc_path.name, "stage": "stage1", "error": str(e)}
+                    )
+                    return None
+
+        stage1_results = await asyncio.gather(*[_stage1_one(p) for p in documents])
+
+        stage2_docs: List[Dict[str, Any]] = []
+        for doc_path, doc_result in zip(documents, stage1_results):
+            if self._cancel_requested:
+                break
+            if not doc_result:
+                continue
+            completed_records = doc_result.get("completed_records")
+            if completed_records is not None:
+                result.flow_records.extend(completed_records)
+                result.per_document_stats[doc_path.name] = {
+                    "record_count": len(completed_records)
+                }
+            else:
+                stage2_docs.append(doc_result)
+            # Capture the stage-1 portrait (may be None when extraction
+            # failed) so the runner can persist it onto the Document row.
+            result.per_document_portraits[doc_path.name] = doc_result.get("portrait")
+            # S5 不删减: carry excluded rows (classifier-rejected tables)
+            # into the unified record list even at stage 1, so they are
+            # persisted regardless of whether stage 2 runs.
+            excluded_records = doc_result.get("excluded_records") or []
+            if excluded_records:
+                result.extracted_records.extend(excluded_records)
+            result.processed_documents += 1
+            result.processed_document_paths.append(str(doc_path))
+            result.total_tables += int(doc_result.get("total_tables", 0) or 0)
+            result.flow_tables += len(doc_result.get("flow_tables", []))
 
         if self._cancel_requested:
             self.progress_reporter.report(task_id, "completed", 1, 1, "Extraction cancelled")
             return result
 
-        # Stage 3: Normalize flow tables (parallel)
+        # Stage 2: 流水行标准化（受 llm_concurrency 信号量限流的并发）
+        logger.info("阶段2开始：流水行标准化（并发=%d）", llm_concurrency)
         self.progress_reporter.report(
             task_id, "normalizing", 0, len(stage2_docs), "Starting normalization"
         )
 
-        # Create parallel normalization tasks
-        tasks = []
-        for doc_result in stage2_docs:
-            task = asyncio.create_task(
-                self._process_document_stage2(doc_result, task_id, batch_size)
-            )
-            tasks.append(task)
+        # Create parallel normalization tasks, each gated by the llm semaphore.
+        stage2_sem = asyncio.Semaphore(max(1, llm_concurrency))
 
-        # Wait for all normalization tasks
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        async def _stage2_one(doc_result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+            async with stage2_sem:
+                await self._check_pause()
+                if self._cancel_requested:
+                    return None
+                return await self._process_document_stage2(doc_result, task_id, batch_size)
+
+        results = await asyncio.gather(
+            *[_stage2_one(dr) for dr in stage2_docs], return_exceptions=True
+        )
 
         for res in results:
             if isinstance(res, Exception):
@@ -363,6 +401,11 @@ class FlowExtractor:
                 result.extracted_records.extend(res.get("extracted_records", []))
 
         result.total_records = len(result.flow_records)
+        logger.info(
+            "提取完成：%d 条流水，失败文档 %d 个",
+            result.total_records,
+            len(result.failed_documents),
+        )
 
         self.progress_reporter.report(
             task_id,
@@ -381,6 +424,8 @@ class FlowExtractor:
         batch_size: int = 20,
         confidence_threshold: int = 70,
         existing_document_paths: Optional[List[str]] = None,
+        mineru_concurrency: int = 1,
+        llm_concurrency: int = 2,
     ) -> ExtractionResult:
         """Append extraction by processing an additional folder under an existing task.
 
@@ -409,6 +454,8 @@ class FlowExtractor:
             batch_size=batch_size,
             confidence_threshold=confidence_threshold,
             documents=new_documents,
+            mineru_concurrency=mineru_concurrency,
+            llm_concurrency=llm_concurrency,
         )
 
     async def _process_document_stage1(
@@ -437,6 +484,8 @@ class FlowExtractor:
                     None, parser.extract_non_table_context, doc_path
                 )
 
+        logger.info("文档 %s 解析完成，抽取到表格 %d 个", doc_path.name, len(raw_tables))
+
         if not raw_tables:
             self.checkpoint_manager.save_checkpoint(
                 task_id,
@@ -459,9 +508,11 @@ class FlowExtractor:
             table.get_preview(4) for table in raw_tables if table.get_preview(4)
         )
 
+        logger.info("开始提取文档画像: %s", doc_path.name)
         portrait = await self.portrait_extractor.extract(
             doc_path.name, non_table_context, content_preview
         )
+        logger.info("文档画像提取完成: %s", doc_path.name)
 
         # Classify tables
         flow_tables = []

@@ -362,6 +362,9 @@ export interface DocumentItem {
   channel?: string | null
   status: DocumentStatus
   size_bytes?: number | null
+  /** Stage-1 document portrait (account_type/holder/institution/...). Null
+   *  when not yet generated — the hover card shows 「画像待生成」. */
+  portrait?: Record<string, unknown> | null
   created_at: string
   error_log?: string | null
 }
@@ -432,6 +435,15 @@ export function createTaskFromUpload(
 /** DELETE /api/tasks/{taskId}/documents/{docId} — soft-delete (status → deleted). */
 export function deleteDocument(taskId: number, docId: number): Promise<void> {
   return api.delete<void>(`/tasks/${taskId}/documents/${docId}`)
+}
+
+/**
+ * POST /api/tasks/{taskId}/start — manually kick off extraction for a draft task
+ * (uploads no longer auto-start). Body optional; backend falls back to the
+ * saved document_folder. Returns the running task.
+ */
+export function startExtraction(taskId: number): Promise<TaskItem> {
+  return api.post<TaskItem>(`/tasks/${taskId}/start`, {})
 }
 
 /* =========================================================================

@@ -270,11 +270,11 @@ function AccountTab() {
 // Schema-driven Tab（审查参数 / 渠道与解析 / 集成与模型）
 // ---------------------------------------------------------------------------
 
-/** MinerU category 也归到「渠道与解析」Tab. */
+/** MinerU + extraction concurrency 归到「渠道与解析」Tab. */
 const CATEGORY_ALIASES: Record<TabKey, string[]> = {
   account: [],
   audit: ["audit"],
-  channel: ["channel", "mineru"],
+  channel: ["channel", "mineru", "extraction"],
   integration: ["llm"],
 }
 

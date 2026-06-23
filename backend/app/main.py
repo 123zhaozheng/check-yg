@@ -1,5 +1,6 @@
 """FastAPI application entry point."""
 
+import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -11,6 +12,16 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
 from app.database import init_db
+
+# 日志初始化：解封 INFO 级别的阶段性中文日志（extractor/llm/parsers 已有大量
+# logger.info 调用，但未配置 root logger 导致被默认 WARNING 吞掉）。
+# 注：logging-guidelines.md 范式含 FileHandler 落盘 ~/.check-yg/logs/，本任务
+# 按用户决策暂只做控制台输出（StreamHandler），不落盘。
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    handlers=[logging.StreamHandler()],
+)
 
 
 @asynccontextmanager

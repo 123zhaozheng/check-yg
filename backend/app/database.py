@@ -139,6 +139,7 @@ async def _run_lightweight_migrations(conn) -> None:
     docs_additions = {
         "channel": "VARCHAR(50)",
         "size_bytes": "INTEGER",
+        "portrait": "JSON",
     }
     for column, column_type in docs_additions.items():
         if column not in docs_existing:

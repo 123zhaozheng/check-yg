@@ -31,6 +31,11 @@ class Document(Base):
     size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     extracted_tables: Mapped[dict | None] = mapped_column(jsonb(), nullable=True)
     flow_tables: Mapped[dict | None] = mapped_column(jsonb(), nullable=True)
+    # Document portrait (account_type/holder/institution/statement_period/
+    # amount_sign_rule/header_attributes/...). Generated at stage 1 and
+    # persisted so the import page's hover card can show it without a second
+    # LLM call. Nullable so legacy / pre-stage-1 rows stay compatible.
+    portrait: Mapped[dict | None] = mapped_column(jsonb(), nullable=True)
     error_log: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

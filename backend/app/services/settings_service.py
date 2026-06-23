@@ -97,6 +97,21 @@ DEFAULT_SETTINGS: Dict[str, Dict[str, Any]] = {
         "label": "MinerU 超时（秒）",
         "description": "PDF 解析超时时间。",
     },
+    # --- 抽取并发（extraction） ---
+    "extraction.mineru_concurrency": {
+        "value": "1",
+        "category": "extraction",
+        "type": "number",
+        "label": "MinerU 解析并发",
+        "description": "stage1 文档解析并发数，public mineru 建议保持低值。",
+    },
+    "extraction.llm_concurrency": {
+        "value": "2",
+        "category": "extraction",
+        "type": "number",
+        "label": "大模型并发",
+        "description": "stage2 标准化文档级并发数。",
+    },
     # --- 审查参数（audit） ---
     "audit.fuzzy_threshold": {
         "value": "0.6",

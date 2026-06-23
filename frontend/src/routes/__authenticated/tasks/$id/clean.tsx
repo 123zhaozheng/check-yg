@@ -149,37 +149,20 @@ function CleanPage() {
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Header */}
-      <div className="flex flex-col gap-2 pb-2 md:flex-row md:items-end md:justify-between">
-        <div className="min-w-0">
-          <div className="flex items-center gap-1.5 text-xs text-ink-700">
-            <span>任务</span>
-            <ChevronRight className="size-3" />
-            <span>{id}</span>
-            <ChevronRight className="size-3" />
-            <span className="text-ink-900">清洗与标准化</span>
-          </div>
-          <h1 className="mt-1 font-sans text-2xl font-bold leading-tight tracking-tight text-ink-900">
-            清洗与标准化
-          </h1>
-          <p className="mt-1 text-sm text-ink-700">
-            将多渠道异构流水清洗为统一标准 schema，展示规则与清洗前后对照。
-          </p>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <div className="relative">
-            <Button variant="secondary" onClick={() => handleExport("csv")}>
-              <Download className="size-4" />
-              导出日志
-            </Button>
-          </div>
-          <Button
-            onClick={() => commit.mutate()}
-            disabled={commit.isPending || committed}
-          >
-            {committed ? "已提交" : "提交清洗数据"}
-          </Button>
-        </div>
+      {/* Control bar: 导出日志 + 提交清洗数据 (title/h1 dropped — layout shell
+       * PageHeader already shows the task name + sub-page is signaled by the
+       * tab nav highlight). */}
+      <div className="flex items-center justify-end gap-2">
+        <Button variant="secondary" onClick={() => handleExport("csv")}>
+          <Download className="size-4" />
+          导出日志
+        </Button>
+        <Button
+          onClick={() => commit.mutate()}
+          disabled={commit.isPending || committed}
+        >
+          {committed ? "已提交" : "提交清洗数据"}
+        </Button>
       </div>
 
       {/* 4 KPI cards */}

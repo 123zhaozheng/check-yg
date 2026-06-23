@@ -5,9 +5,11 @@ import {
   createTask,
   getTask,
   listTasks,
+  startExtraction,
   type TaskCreatePayload,
   type TaskListParams,
 } from "@/lib/api"
+import { DOCUMENTS_QUERY_KEY } from "@/hooks/use-documents"
 
 /**
  * Task list query key — namespace + the filter params object. `invalidateQueries`
@@ -54,6 +56,22 @@ export function useArchiveTask() {
     mutationFn: (taskId: number) => archiveTask(taskId),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: TASKS_QUERY_KEY })
+    },
+  })
+}
+
+/**
+ * Manually start extraction for a task (uploads no longer auto-start). On
+ * success invalidate both the task detail (so status flips to running) and the
+ * documents list (so polling resumes and parse status updates in real time).
+ */
+export function useStartExtraction(taskId: number) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () => startExtraction(taskId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: TASKS_QUERY_KEY })
+      void queryClient.invalidateQueries({ queryKey: DOCUMENTS_QUERY_KEY })
     },
   })
 }
