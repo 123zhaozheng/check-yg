@@ -115,7 +115,17 @@ class FlowTableClassifier:
         try:
             result = await self._agent().run(user_message)
         except Exception as exc:
-            logger.warning("Classifier agent.run 失败: %s", exc)
+            # 失败诊断要够厚：分类失败的根因有好几种（reasoning 模型烧光 token
+            # 未输出 tool_call / 端点返回空壳 choices / 网络超时 / schema 校验
+            # 失败），光打 exc 看不出来。把类型+消息都打上，方便定位为什么整张
+            # 表被判「classifier: not flow table」（全排除项）。
+            logger.warning(
+                "表格分类失败（兜底 is_flow_table=False → 该表所有行落为排除项）: "
+                "document_name=%s, 异常类型=%s, 异常=%s",
+                document_name,
+                type(exc).__name__,
+                exc,
+            )
             return dict(self.FALLBACK_RESULT)
 
         classification: FlowClassification = result.output

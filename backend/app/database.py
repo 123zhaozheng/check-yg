@@ -95,20 +95,42 @@ async def init_db() -> None:
 async def _run_alembic_upgrade() -> None:
     """Run Alembic migrations to head against the configured (non-sqlite) DB.
 
-    Alembic 的迁移走同步路径（env.py 用 psycopg 同步驱动），所以在独立
-    线程里执行同步 ``command.upgrade``，避免阻塞 async 事件循环，也避免在
-    运行中的事件循环里嵌套 ``asyncio.run``。
+    在 asyncio 事件循环里直接跑同步 ``command.upgrade``（含原先的
+    ``run_in_executor`` 与直接同步调用两种写法）都会卡死：alembic env.py 的
+    ``fileConfig`` 会重配 root logging，与 uvicorn/asyncio 正在使用的 logging
+    handler 冲突，导致 ``upgrade`` 永不返回 → lifespan 卡在 ``Waiting for
+    application startup`` → 应用不接请求 → 无任何接口/业务日志。
+
+    根因是「在运行中的 asyncio 事件循环所在进程里跑 alembic」，与线程池无关
+    （已实测：纯 ``python -c`` 跑 ~0.3s 正常；带 asyncio/uvicorn 跑即卡；
+    子进程跑 ~1s 正常）。修法：用同步 ``subprocess.run`` 起独立子进程跑
+    ``alembic upgrade head``，把迁移完全隔离到独立进程，不碰当前进程的
+    logging 与事件循环。
+
+    不用 ``asyncio.create_subprocess_exec``：Windows 上 uvicorn 用的
+    ``SelectorEventLoop`` 不支持子进程（``NotImplementedError``）。同步
+    ``subprocess.run`` 阻塞 ~1s，在 lifespan 启动期可接受。
+
+    env.py 从 settings 读连接串并切到 psycopg 同步驱动，子进程继承环境变量即可。
     """
-    import asyncio
     import pathlib
+    import subprocess
+    import sys
 
-    from alembic import command
-    from alembic.config import Config
-
-    cfg = Config(str(pathlib.Path(__file__).resolve().parent.parent / "alembic.ini"))
-    # env.py 会从 settings 读连接串并切到 psycopg 同步驱动，这里不覆盖。
-    loop = asyncio.get_running_loop()
-    await loop.run_in_executor(None, lambda: command.upgrade(cfg, "head"))
+    backend_dir = pathlib.Path(__file__).resolve().parent.parent
+    alembic_ini = backend_dir / "alembic.ini"
+    result = subprocess.run(
+        [sys.executable, "-m", "alembic", "-c", str(alembic_ini), "upgrade", "head"],
+        cwd=str(backend_dir),
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"alembic upgrade head 失败 (exit {result.returncode}): "
+            f"{result.stderr or result.stdout}"
+        )
 
 
 async def _run_lightweight_migrations(conn) -> None:

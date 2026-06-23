@@ -201,7 +201,16 @@ class FlowDataNormalizer:
         try:
             result = await self._get_agent().run(user_message)
         except Exception as exc:
-            logger.warning("Normalizer agent.run 失败: source_file=%s, %s", source_file, exc)
+            # 失败诊断要够厚：标准化失败的根因有好几种（reasoning 模型烧光
+            # token / 端点返回空壳 / 网络超时 / schema 校验失败），把类型+消息
+            # 都打上，方便定位为什么流水行没被标准化。
+            logger.warning(
+                "流水行标准化失败（返回空列表，本批行不标准化）: "
+                "source_file=%s, 异常类型=%s, 异常=%s",
+                source_file,
+                type(exc).__name__,
+                exc,
+            )
             return []
 
         normalized: NormalizedRows = result.output

@@ -23,6 +23,19 @@ logging.basicConfig(
     handlers=[logging.StreamHandler()],
 )
 
+# 降噪：basicConfig(level=INFO) 是全局的，会把一批第三方库的 INFO 一并解封，
+# 刷屏淹没我们自己的阶段性中文日志。逐个压回 WARNING：
+#   watchfiles.main  —— uvicorn --reload 热重载监视器，文件一改刷 "N changes detected"
+#   pikepdf._core    —— mineru 依赖，启动时打 "C++ to Python logger bridge initialized"
+#   alembic.runtime.*—— 迁移插件枚举，启动时刷 7 条 "setup plugin ..."
+# 注意：uvicorn.access（每个 HTTP 请求的访问日志）保留 INFO，开发时需要看接口
+# 通讯；uvicorn.error（启动/错误）也是 INFO，正常。只压上面三个噪音源。
+for _noisy in ("watchfiles.main", "pikepdf._core", "alembic.runtime"):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
+# 显式给业务与 LLM logger 留 INFO（root 已是 INFO，此处仅为可读性）。
+logging.getLogger("app").setLevel(logging.INFO)
+logging.getLogger("pydantic_ai").setLevel(logging.INFO)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

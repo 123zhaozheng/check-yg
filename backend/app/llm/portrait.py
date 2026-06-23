@@ -138,6 +138,11 @@ class DocumentPortraitExtractor:
             画像 dict（成功）或 None（失败）
         """
         if not self.api_key:
+            logger.warning(
+                "文档画像提取跳过（未配置 LLM api_key → 返回 None，hover 将显示「画像待生成」）: "
+                "document_name=%s",
+                document_name,
+            )
             return None
 
         logger.info(
@@ -158,7 +163,17 @@ class DocumentPortraitExtractor:
         try:
             result = await self._agent().run(user_message)
         except Exception as exc:
-            logger.warning("Portrait agent.run 失败: document_name=%s, %s", document_name, exc)
+            # 失败诊断要够厚：画像生成失败的根因有好几种（reasoning 模型烧光
+            # token 未输出 tool_call / 端点返回空壳 choices / 网络超时 / schema
+            # 校验失败），光打 exc 看不出来。把类型+消息都打上，方便从控制台
+            # 直接定位为什么 hover 还是「画像待生成」。
+            logger.warning(
+                "文档画像提取失败（将返回 None → hover 显示「画像待生成」）: "
+                "document_name=%s, 异常类型=%s, 异常=%s",
+                document_name,
+                type(exc).__name__,
+                exc,
+            )
             return None
 
         portrait: DocumentPortrait = result.output
