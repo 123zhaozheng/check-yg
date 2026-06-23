@@ -1,0 +1,5 @@
+{"file": "docs/web-pages-design.md", "reason": "§C6 导出页单色要点(toggle灰阶关浅灰/开黑底白圆不用彩色+预览单色渲染) + §D1 设置页安静(分组标题字重层级) + §D2 空状态(线框1px灰线不加填充) + §D3 错误黑白不用红色避免慌乱感"}
+{"file": "docs/zhixing-delivery-plan.md", "reason": "硬底线核对 — Chrome108(禁裸oklch/lab/color-mix)、单色原则(9级ink禁红黄绿,错误页禁红)、不删减(导出不删原数据只读+复制产物)、不污染主分支(feat/web-split)"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "ExportFile 加 scope 列迁移(revises S7 a8f4c2e1b9d3)、Setting 默认种子扩展、三处登记、导出产物文件不删(历史可重新下载)"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "测试覆盖与构建验证 — pytest 全绿(导出/设置/改密码/辅助页路由)+pnpm build(tsc+vite chrome108)"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "owner-only 403、导出/报告不存在 404、change-password 旧密码错 400/401、设置项校验 422"}
