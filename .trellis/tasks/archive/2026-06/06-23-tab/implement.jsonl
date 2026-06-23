@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "backend spec 总索引:FastAPI+SQLAlchemy async+Alembic+pydantic-ai 栈、入口、迁移、测试约定,关键词库后端 CRUD/导入 + 关键词审查匹配引擎落地必读"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "PostgreSQL + Alembic + JSONB + checkpoint 模式:新增 keyword_cards/keyword_terms/keyword_hits 三表的迁移写法、FK/ondelete 策略、唯一约束"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "错误类型与 UI 错误展示:删已引用卡片返 409、excel 导入非法行处理、匹配失败的兜底语义"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "结构化日志 + 中文消息:关键词审查 run/匹配/导入的阶段性日志写法(对齐 web-4 加厚失败诊断的风格)"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "代码标准 + 禁止模式 + 测试:matcher 三层单测、keyword_library CRUD/权限测试、chrome108 前端约束"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "跨层数据流:关键词库(全局)→ 任务关键词审查(任务级)→ 命中表 → 前端展示,跨 API/Service/Component/DB 四层,必读"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "复用 legacy matcher 三层引擎 + 复用 LLM 模型卡的 CRUD/权限/409 模式 + 复用 settings tab 的 admin gating,避免重复造轮子"}
