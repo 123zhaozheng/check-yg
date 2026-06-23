@@ -778,3 +778,177 @@ export function toggleAnnotation(
 export function finalizeReport(reportId: number): Promise<ReportDetail> {
   return api.post<ReportDetail>(`/reports/${reportId}/finalize`)
 }
+
+/* =========================================================================
+ * Export API — S8 导出扩展（报告多格式 + 数据多范围 + 历史 + 预览）.
+ * Appended only; the apiFetch core above is unchanged.
+ * Mirrors `backend/app/routers/exports.py` + `app/schemas/review.py`.
+ * 不删减精神：导出只读原数据 + 复制产物；导出历史产物保留可重新下载.
+ * ======================================================================= */
+
+/** 导出范围：report=报告多格式 / raw=原始流 / standard=标准化流 / findings=异常. */
+export type ExportScope = "report" | "raw" | "standard" | "findings"
+
+/** 报告导出格式：pdf / docx / html. */
+export type ReportExportFormat = "pdf" | "docx" | "html"
+
+/** 数据导出格式：excel / csv. */
+export type DataExportFormat = "excel" | "csv"
+
+/** ExportResponse — mirrors backend ExportResponse（含 scope）. */
+export interface ExportItem {
+  id: number
+  task_id: number
+  review_id?: number | null
+  format: string
+  scope?: ExportScope | null
+  file_path: string
+  created_at: string
+}
+
+/** POST /tasks/{id}/export/report 请求体. */
+export interface ReportExportBody {
+  format: ReportExportFormat
+  include_annotations: boolean
+}
+
+/** POST /tasks/{id}/export/data 请求体. */
+export interface DataExportBody {
+  scope: "raw" | "standard" | "findings"
+  format: DataExportFormat
+}
+
+/** 导出历史列表单项（GET /tasks/{id}/exports）. */
+export interface ExportListItem {
+  id: number
+  task_id: number
+  review_id?: number | null
+  format: string
+  scope?: ExportScope | null
+  file_path: string
+  created_at: string
+}
+
+/** 预览取样响应（GET /tasks/{id}/export/preview）. */
+export interface ExportPreview {
+  scope: ExportScope
+  sample: unknown
+  annotation_count?: number | null
+}
+
+/** POST /tasks/{taskId}/export/report — 报告多格式导出（pdf/docx/html）. */
+export function exportTaskReport(
+  taskId: number,
+  body: ReportExportBody,
+): Promise<ExportItem> {
+  return api.post<ExportItem>(`/tasks/${taskId}/export/report`, body)
+}
+
+/** POST /tasks/{taskId}/export/data — 数据多范围导出（raw/standard/findings × excel/csv）. */
+export function exportTaskData(
+  taskId: number,
+  body: DataExportBody,
+): Promise<ExportItem> {
+  return api.post<ExportItem>(`/tasks/${taskId}/export/data`, body)
+}
+
+/** GET /tasks/{taskId}/exports — 导出历史列表（按 created_at 降序）. */
+export function listTaskExports(taskId: number): Promise<ExportListItem[]> {
+  return api.get<ExportListItem[]>(`/tasks/${taskId}/exports`)
+}
+
+/** GET /tasks/{taskId}/export/preview?scope=... — 取样预览（不生成产物）. */
+export function previewTaskExport(
+  taskId: number,
+  scope: ExportScope,
+): Promise<ExportPreview> {
+  return api.get<ExportPreview>(
+    `/tasks/${taskId}/export/preview`,
+    { scope } as ApiRequestOptions["params"],
+  )
+}
+
+/** GET /api/exports/{exportId}/download — 下载产物（返 raw Response，调用方触发浏览器下载）. */
+export function downloadExport(exportId: number): Promise<Response> {
+  return apiFetch<Response>(`/exports/${exportId}/download`, { method: "GET" })
+}
+
+/* =========================================================================
+ * Settings + User API — S8 设置页（4 Tab）+ 改密码 + 改个人信息.
+ * Appended only; the apiFetch core above is unchanged.
+ * Mirrors `backend/app/routers/settings.py` + `auth.py` + `users.py`.
+ * ======================================================================= */
+
+/** 设置项 type：string | number | boolean | select. */
+export type SettingType = "string" | "number" | "boolean" | "select"
+
+/** GET /api/settings/schema 单项元数据. */
+export interface SettingSchemaItem {
+  key: string
+  category: string
+  type: SettingType
+  label: string
+  description: string
+  value: string
+  options?: string[]
+}
+
+/** GET /api/settings/ 单项（已存值）. */
+export interface SettingItem {
+  key: string
+  value: string
+  category: string
+  updated_at: string
+  updated_by: number
+}
+
+/** POST /api/auth/change-password 请求体. */
+export interface ChangePasswordBody {
+  old_password: string
+  new_password: string
+}
+
+/** PATCH /api/users/me 请求体（个人信息，当前用户改自己）. */
+export interface UpdateMeBody {
+  username?: string
+  email?: string
+}
+
+/** GET /api/auth/me + PATCH /api/users/me 响应 — mirrors UserResponse.
+ *  (Duplicates the shape in use-current-user.ts to avoid a circular import;
+ *  the hook re-exports its own CurrentUser that is structurally identical.) */
+export interface UserMeResponse {
+  id: number
+  username: string
+  email: string
+  role: string
+  is_active: boolean
+}
+
+/** GET /api/settings/schema — 设置项元数据列表（供前端表单渲染）. */
+export function getSettingsSchema(): Promise<SettingSchemaItem[]> {
+  return api.get<SettingSchemaItem[]>("/settings/schema")
+}
+
+/** GET /api/settings/ — 所有设置项已存值. */
+export function listSettings(): Promise<SettingItem[]> {
+  return api.get<SettingItem[]>("/settings/")
+}
+
+/** PUT /api/settings/{key} — 更新单个设置项. */
+export function updateSetting(
+  key: string,
+  value: string,
+): Promise<SettingItem> {
+  return api.put<SettingItem>(`/settings/${encodeURIComponent(key)}`, { value })
+}
+
+/** POST /api/auth/change-password — 改密码（校验旧密码 + 新密码长度≥8）. */
+export function changePassword(body: ChangePasswordBody): Promise<{ ok: boolean }> {
+  return api.post<{ ok: boolean }>("/auth/change-password", body)
+}
+
+/** PATCH /api/users/me — 当前用户改个人信息（username/email，非 admin-only）. */
+export function updateMe(body: UpdateMeBody): Promise<UserMeResponse> {
+  return api.patch<UserMeResponse>("/users/me", body)
+}

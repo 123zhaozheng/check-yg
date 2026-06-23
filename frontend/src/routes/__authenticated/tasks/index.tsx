@@ -3,6 +3,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router"
 import { ChevronLeft, ChevronRight, Plus, Search } from "lucide-react"
 
 import { PageHeader } from "@/components/layout/page-header"
+import { EmptyState } from "@/components/layout/empty-state"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { StatusPill } from "@/components/ui/status-pill"
@@ -197,8 +198,18 @@ function TasksPage() {
               )}
               {!isLoading && !isError && items.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="px-4 py-10 text-center text-ink-600">
-                    暂无任务。
+                  <td colSpan={8} className="px-4 py-10">
+                    <EmptyState
+                      title="暂无审查任务"
+                      description="新建第一个审查任务，开始导入流水并进行标准化与 AI 分析。"
+                      icon="folder"
+                      action={
+                        <Button size="sm" onClick={() => setDialogOpen(true)}>
+                          <Plus className="size-4" />
+                          新建任务
+                        </Button>
+                      }
+                    />
                   </td>
                 </tr>
               )}
