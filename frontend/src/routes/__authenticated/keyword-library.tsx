@@ -29,6 +29,7 @@ import {
   useDeleteKeywordCard,
   useExportKeywordLibrary,
   useImportKeywordLibrary,
+  useKeywordCard,
   useKeywordCards,
   useUpdateKeywordCard,
 } from "@/hooks/use-keyword-library"
@@ -74,6 +75,7 @@ function KeywordCardsCard({ isAdmin }: { isAdmin: boolean }) {
   const [editing, setEditing] = React.useState<KeywordCardListItem | null>(null)
   const [creating, setCreating] = React.useState(false)
   const [importing, setImporting] = React.useState(false)
+  const [viewingTerms, setViewingTerms] = React.useState<KeywordCardListItem | null>(null)
   const [error, setError] = React.useState<string | null>(null)
 
   const cards = cardsQuery.data ?? []
@@ -153,7 +155,15 @@ function KeywordCardsCard({ isAdmin }: { isAdmin: boolean }) {
               <tbody>
                 {cards.map((c) => (
                   <tr key={c.id} className="border-b border-ink-300">
-                    <Td className="font-medium text-ink-900">{c.name}</Td>
+                    <Td className="font-medium text-ink-900">
+                      <button
+                        onClick={() => setViewingTerms(c)}
+                        className="text-left underline decoration-ink-400 underline-offset-2 hover:text-ink-700 hover:decoration-ink-900"
+                        title="点击查看/管理关键词列表"
+                      >
+                        {c.name}
+                      </button>
+                    </Td>
                     <Td className="font-mono text-xs">{c.term_count}</Td>
                     <Td>
                       <RiskBadge level={c.risk_level} />
@@ -208,6 +218,13 @@ function KeywordCardsCard({ isAdmin }: { isAdmin: boolean }) {
         {importing && (
           <ImportDialog onClose={() => setImporting(false)} />
         )}
+        {viewingTerms && (
+          <KeywordTermsDialog
+            card={viewingTerms}
+            isAdmin={isAdmin}
+            onClose={() => setViewingTerms(null)}
+          />
+        )}
       </CardContent>
     </Card>
   )
@@ -232,7 +249,13 @@ function RiskBadge({ level }: { level: KeywordRiskLevel }) {
   )
 }
 
-/** 卡片新建/编辑对话框. */
+/** 卡片新建/编辑对话框.
+ *
+ * 编辑模式只改卡片名/风险等级/备注——关键词列表已移到独立的「关键词列表」大弹窗
+ * （点卡片名打开，KeywordTermsDialog），编辑 dialog 不再展示/改动 terms，避免两处
+ * 都改 terms 互相覆盖。编辑保存时 terms 传空数组（后端空数组=不改动现有词）。
+ * 新建模式仍在此处一并录入初始关键词。
+ */
 function KeywordCardDialog({
   mode,
   initial,
@@ -251,16 +274,6 @@ function KeywordCardDialog({
   const [note, setNote] = React.useState(initial?.note ?? "")
   const [terms, setTerms] = React.useState<string[]>([""])
   const [error, setError] = React.useState<string | null>(null)
-
-  // 编辑模式：拉卡片详情取现有 terms（列表项只有 term_count）。
-  // 简单起见：编辑时 terms 先留空行让用户重填（全量替换语义）。若需预填可加 useKeywordCard。
-  // 此处保持简单——编辑卡片时 terms 字段不传（仅改 name/risk/note），除非用户填了新词。
-  React.useEffect(() => {
-    if (mode === "edit") {
-      // 编辑模式默认不展示旧 terms（避免额外请求）；用户填词则全量替换。
-      setTerms([""])
-    }
-  }, [mode])
 
   function setTerm(idx: number, value: string) {
     setTerms((prev) => prev.map((t, i) => (i === idx ? value : t)))
@@ -286,12 +299,16 @@ function KeywordCardDialog({
       name: cleanName,
       risk_level: riskLevel,
       note: note.trim() || null,
-      terms: cleanTerms,
+    }
+    if (mode === "create") {
+      // 新建：带初始 terms。
+      body.terms = cleanTerms
     }
     try {
       if (mode === "create") {
         await createCard.mutateAsync(body)
       } else if (initial) {
+        // 编辑：不传 terms（后端 None=不改现有词，由 KeywordTermsDialog 管理）。
         await updateCard.mutateAsync({ id: initial.id, body })
       }
       onClose()
@@ -312,7 +329,7 @@ function KeywordCardDialog({
         <div className="flex flex-col gap-4">
           {mode === "edit" && (
             <p className="rounded-[var(--radius-DEFAULT)] bg-ink-200 p-2 text-[11px] text-ink-700">
-              提示：编辑时若填写关键词将全量替换原有词（旧词删除）；留空则仅改卡片名/风险/备注。
+              提示：此处只改卡片名/风险等级/备注。关键词列表请点表格中的卡片名，在弹出的「关键词列表」中增删。
             </p>
           )}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -345,33 +362,35 @@ function KeywordCardDialog({
             </label>
             <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="可选" />
           </div>
-          <div className="flex flex-col gap-1">
-            <label className="text-xs font-bold uppercase tracking-widest text-ink-600">
-              关键词列表
-            </label>
-            <div className="flex flex-col gap-2">
-              {terms.map((term, idx) => (
-                <div key={idx} className="flex items-center gap-2">
-                  <Input
-                    value={term}
-                    onChange={(e) => setTerm(idx, e.target.value)}
-                    placeholder={`关键词 ${idx + 1}`}
-                  />
-                  <Button
-                    variant="tertiary"
-                    size="sm"
-                    onClick={() => removeTerm(idx)}
-                    disabled={terms.length === 1}
-                  >
-                    删除
-                  </Button>
-                </div>
-              ))}
-              <Button variant="secondary" size="sm" onClick={addTerm} className="self-start">
-                + 添加关键词
-              </Button>
+          {mode === "create" && (
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-bold uppercase tracking-widest text-ink-600">
+                关键词列表
+              </label>
+              <div className="flex flex-col gap-2">
+                {terms.map((term, idx) => (
+                  <div key={idx} className="flex items-center gap-2">
+                    <Input
+                      value={term}
+                      onChange={(e) => setTerm(idx, e.target.value)}
+                      placeholder={`关键词 ${idx + 1}`}
+                    />
+                    <Button
+                      variant="tertiary"
+                      size="sm"
+                      onClick={() => removeTerm(idx)}
+                      disabled={terms.length === 1}
+                    >
+                      删除
+                    </Button>
+                  </div>
+                ))}
+                <Button variant="secondary" size="sm" onClick={addTerm} className="self-start">
+                  + 添加关键词
+                </Button>
+              </div>
             </div>
-          </div>
+          )}
         </div>
         {error && <p className="mt-4 font-mono text-xs font-bold text-ink-900">{error}</p>}
       </DialogBody>
@@ -382,6 +401,135 @@ function KeywordCardDialog({
         <Button onClick={handleSave} disabled={pending}>
           {pending ? "保存中…" : "保存"}
         </Button>
+      </DialogFooter>
+    </Dialog>
+  )
+}
+
+/**
+ * 关键词列表大弹窗 —— 点卡片名打开，展示该卡片的所有关键词，可增/删/改（admin）。
+ * 非 admin 只读。保存时用 PUT 卡片（terms 全量替换），卡片名/风险/备注保持原值。
+ */
+function KeywordTermsDialog({
+  card,
+  isAdmin,
+  onClose,
+}: {
+  card: KeywordCardListItem
+  isAdmin: boolean
+  onClose: () => void
+}) {
+  const cardDetailQuery = useKeywordCard(card.id)
+  const updateCard = useUpdateKeywordCard()
+  const [terms, setTerms] = React.useState<string[]>([])
+  const [loaded, setLoaded] = React.useState(false)
+  const [error, setError] = React.useState<string | null>(null)
+  const [savedMsg, setSavedMsg] = React.useState<string | null>(null)
+
+  // 拉到详情后初始化本地 terms 编辑态（仅在首次加载时，避免覆盖用户编辑）。
+  React.useEffect(() => {
+    if (!loaded && cardDetailQuery.data) {
+      setTerms(cardDetailQuery.data.terms.map((t) => t.term))
+      setLoaded(true)
+    }
+  }, [cardDetailQuery.data, loaded])
+
+  function setTerm(idx: number, value: string) {
+    setTerms((prev) => prev.map((t, i) => (i === idx ? value : t)))
+  }
+
+  function addTerm() {
+    setTerms((prev) => [...prev, ""])
+  }
+
+  function removeTerm(idx: number) {
+    setTerms((prev) => prev.filter((_, i) => i !== idx))
+  }
+
+  async function handleSave() {
+    setError(null)
+    setSavedMsg(null)
+    const cleanTerms = terms.map((t) => t.trim()).filter(Boolean)
+    try {
+      // PUT 全量替换 terms，卡片名/风险/备注保持原值。
+      await updateCard.mutateAsync({
+        id: card.id,
+        body: {
+          name: card.name,
+          risk_level: card.risk_level,
+          note: card.note ?? null,
+          terms: cleanTerms,
+        },
+      })
+      setSavedMsg("关键词列表已保存")
+    } catch (err) {
+      setError(extractDetail(err) ?? "保存失败")
+    }
+  }
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()} className="max-w-3xl">
+      <DialogHeader>
+        <DialogTitle>
+          关键词列表 · {card.name}
+          <span className="ml-2 font-normal text-ink-600">
+            （风险等级 {card.risk_level}{card.note ? ` · ${card.note}` : ""}）
+          </span>
+        </DialogTitle>
+        <DialogClose onOpenChange={(o) => !o && onClose()} />
+      </DialogHeader>
+      <DialogBody className="max-h-[65vh] overflow-y-auto">
+        {cardDetailQuery.isLoading && (
+          <p className="text-sm text-ink-600">加载中…</p>
+        )}
+        {cardDetailQuery.isError && (
+          <p className="text-sm text-ink-600">关键词加载失败，请稍后重试。</p>
+        )}
+        {loaded && (
+          <div className="flex flex-col gap-2">
+            {terms.length === 0 && (
+              <p className="text-sm text-ink-600">
+                暂无关键词，{isAdmin ? "点击下方「添加关键词」录入。" : "请联系 admin 录入。"}
+              </p>
+            )}
+            {terms.map((term, idx) => (
+              <div key={idx} className="flex items-center gap-2">
+                <Input
+                  value={term}
+                  onChange={(e) => setTerm(idx, e.target.value)}
+                  placeholder={`关键词 ${idx + 1}`}
+                  disabled={!isAdmin}
+                />
+                {isAdmin && (
+                  <Button
+                    variant="tertiary"
+                    size="sm"
+                    onClick={() => removeTerm(idx)}
+                  >
+                    删除
+                  </Button>
+                )}
+              </div>
+            ))}
+            {isAdmin && (
+              <Button variant="secondary" size="sm" onClick={addTerm} className="self-start">
+                + 添加关键词
+              </Button>
+            )}
+          </div>
+        )}
+        {error && <p className="mt-4 font-mono text-xs font-bold text-ink-900">{error}</p>}
+        {savedMsg && <p className="mt-4 font-mono text-xs text-ink-700">{savedMsg}</p>}
+      </DialogBody>
+      <DialogFooter>
+        <Button variant="tertiary" onClick={onClose}>
+          关闭
+        </Button>
+        {isAdmin && (
+          <Button onClick={handleSave} disabled={updateCard.isPending || !loaded}>
+            {updateCard.isPending ? "保存中…" : "保存关键词列表"}
+          </Button>
+        )}
       </DialogFooter>
     </Dialog>
   )

@@ -161,13 +161,18 @@ class FlowExtractor:
         llm_timeout: int,
         fallback_max_tokens: int,
     ) -> Dict[str, Any]:
-        """Resolve per-stage LLM params (priority: card > runtime llm.* > module fallback).
+        """Resolve per-stage LLM params (priority: card > env settings > module fallback).
+
+        06-23-tab 决策：去掉 runtime ``llm.*`` 设置项中间兜底层（前端「集成与模型」
+        底部 llm.* 容器已删，extractor 不再读 runtime llm.* 作 fallback）。卡片未
+        指派时回退到环境变量 ``settings.LLM_*`` + 模块硬编码常量。``llm.timeout`` 仍
+        从 runtime 读（超时不是卡片字段）。
 
         Args:
-            model: 该阶段指派的卡片（None → 全部回退 runtime settings / 模块常量）。
-            runtime_settings: runtime ``llm.*`` 设置项（兜底层1）。
+            model: 该阶段指派的卡片（None → 回退 env settings / 模块常量）。
+            runtime_settings: runtime 设置项（仅读 ``llm.timeout``，已由调用方解析）。
             llm_timeout: LLM 超时（从 runtime settings 读，不来自卡片）。
-            fallback_max_tokens: 模块硬编码兜底常量（兜底层2，runtime 也缺时）。
+            fallback_max_tokens: 模块硬编码兜底常量（卡片 max_tokens 缺时用）。
 
         Returns:
             ``{api_url, api_key, model, timeout, max_tokens, thinking}`` 供三模块
@@ -175,50 +180,29 @@ class FlowExtractor:
             时传 low/medium/high；否则 None（不给非 reasoning 模型发
             reasoning_effort，research §3）。
         """
-        # 兜底层：runtime llm.* 设置项。
-        rt_base_url = runtime_settings.get("llm.base_url") or settings.LLM_API_ENDPOINT
-        rt_api_key = runtime_settings.get("llm.api_key") or settings.LLM_API_KEY
-        rt_model = runtime_settings.get("llm.model_name") or settings.LLM_MODEL_NAME
-        # runtime llm.max_tokens：未指派卡片时用；缺失/无效则退到模块硬编码常量
-        # （最后一层兜底）。生产环境 load_runtime_settings 用 DEFAULT_SETTINGS
-        # 填充 llm.max_tokens=16000，所以缺失只在测试/裸调用时发生。
-        rt_max_tokens: Optional[int] = None
-        try:
-            rt_value = runtime_settings.get("llm.max_tokens")
-            if rt_value:
-                rt_max_tokens = int(rt_value)
-        except (TypeError, ValueError):
-            rt_max_tokens = None
-        # runtime llm.temperature 兜底（空则 None → agent_factory 用内置 0.1）。
-        rt_temperature: Optional[float] = None
-        try:
-            rt_temp_value = runtime_settings.get("llm.temperature")
-            if rt_temp_value:
-                rt_temperature = float(rt_temp_value)
-        except (TypeError, ValueError):
-            rt_temperature = None
+        # 兜底层：环境变量 settings.LLM_*（不再读 runtime llm.* 中间层）。
+        env_base_url = settings.LLM_API_ENDPOINT
+        env_api_key = settings.LLM_API_KEY
+        env_model = settings.LLM_MODEL_NAME
 
         if model is None:
-            # 未指派卡片 → runtime llm.* + 模块常量兜底。max_tokens 取 runtime
-            # 值，缺失/无效则退到模块常量（保留旧行为）。
-            max_tokens = rt_max_tokens if rt_max_tokens and rt_max_tokens > 0 else fallback_max_tokens
+            # 未指派卡片 → env settings + 模块常量兜底。
             return {
-                "api_url": rt_base_url,
-                "api_key": rt_api_key,
-                "model": rt_model,
+                "api_url": env_base_url,
+                "api_key": env_api_key,
+                "model": env_model,
                 "timeout": llm_timeout,
-                "max_tokens": max_tokens,
+                "max_tokens": fallback_max_tokens,
                 "thinking": None,
-                "temperature": rt_temperature,
+                "temperature": None,
             }
 
-        # 指派了卡片：从卡片读（api_url/api_key/model/max_tokens/thinking）。
-        # temperature：卡片 default_temperature 空则回退 runtime llm.temperature。
+        # 指派了卡片：从卡片读（卡片字段空时回退 env settings）。
         thinking = model.default_thinking
         if thinking == _MODEL_THINKING_OFF or not model.is_reasoning:
             thinking = None
         card_temperature = (
-            model.default_temperature if model.default_temperature is not None else rt_temperature
+            model.default_temperature if model.default_temperature is not None else None
         )
         logger.info(
             "阶段使用模型卡片: display_name=%s, model=%s, max_tokens=%d, thinking=%s, is_reasoning=%s",
@@ -229,9 +213,9 @@ class FlowExtractor:
             model.is_reasoning,
         )
         return {
-            "api_url": model.provider_base_url or rt_base_url,
-            "api_key": model.api_key or rt_api_key,
-            "model": model.model_name or rt_model,
+            "api_url": model.provider_base_url or env_base_url,
+            "api_key": model.api_key or env_api_key,
+            "model": model.model_name or env_model,
             "timeout": llm_timeout,
             "max_tokens": model.default_max_tokens or fallback_max_tokens,
             "thinking": thinking,

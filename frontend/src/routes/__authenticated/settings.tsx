@@ -532,8 +532,6 @@ function IntegrationTab() {
     <div className="flex flex-col gap-4">
       <ModelCardsCard isAdmin={isAdmin} />
       <StageAssignmentCard isAdmin={isAdmin} />
-      {/* llm.* 兜底配置（阶段未指派卡片时用）—— 沿用 schema 表单. */}
-      <SchemaTab category="integration" />
     </div>
   )
 }
@@ -551,9 +549,26 @@ function ModelCardsCard({ isAdmin }: { isAdmin: boolean }) {
   async function handleDelete(model: LLMModel) {
     setError(null)
     try {
-      await deleteModel.mutateAsync(model.id)
+      await deleteModel.mutateAsync({ id: model.id })
     } catch (err) {
-      setError(extractDetail(err) ?? "删除失败")
+      const detail = extractDetail(err)
+      // 409 = 被阶段指派：弹确认框，一键解除指派并删除（force=true）。
+      if (err instanceof ApiError && err.status === 409) {
+        const ok = window.confirm(
+          `${detail ?? "该卡片被阶段指派"}\n\n是否解除所有指派并删除该卡片？`,
+        )
+        if (ok) {
+          try {
+            await deleteModel.mutateAsync({ id: model.id, force: true })
+            return
+          } catch (err2) {
+            setError(extractDetail(err2) ?? "删除失败")
+            return
+          }
+        }
+        return
+      }
+      setError(detail ?? "删除失败")
     }
   }
 

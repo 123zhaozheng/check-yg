@@ -62,11 +62,12 @@ export function useUpdateLLMModel() {
   })
 }
 
-/** DELETE /api/llm-models/{id} — 删除模型卡片（admin；被指派返 409）. */
+/** DELETE /api/llm-models/{id} — 删除模型卡片（admin；被指派返 409，force=true 解除指派后删）. */
 export function useDeleteLLMModel() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: (id: number) => deleteLLMModel(id),
+    mutationFn: ({ id, force }: { id: number; force?: boolean }) =>
+      deleteLLMModel(id, force ?? false),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: [...LLM_MODELS_QUERY_KEY] })
     },

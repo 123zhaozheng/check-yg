@@ -1053,9 +1053,9 @@ export function updateLLMModel(id: number, body: LLMModelUpsertBody): Promise<LL
   return api.put<LLMModel>(`/llm-models/${id}`, body)
 }
 
-/** DELETE /api/llm-models/{id} — 删除模型卡片（admin；被指派返 409）. */
-export function deleteLLMModel(id: number): Promise<void> {
-  return api.delete<void>(`/llm-models/${id}`)
+/** DELETE /api/llm-models/{id} — 删除模型卡片（admin；被指派返 409，force=true 解除指派后删）. */
+export function deleteLLMModel(id: number, force: boolean = false): Promise<void> {
+  return api.delete<void>(`/llm-models/${id}${force ? "?force=true" : ""}`)
 }
 
 /** GET /api/llm-model-assignments — 列出 6 阶段 + 各自指派. */
@@ -1119,12 +1119,12 @@ export interface KeywordCardDetail {
   updated_at: string
 }
 
-/** 新建/编辑卡片请求体（terms 全量替换）. */
+/** 新建/编辑卡片请求体（terms 全量替换；编辑时可不传 terms = 不改现有词）. */
 export interface KeywordCardUpsertBody {
   name: string
   risk_level: KeywordRiskLevel
   note?: string | null
-  terms: string[]
+  terms?: string[]
 }
 
 /** excel 导入统计. */

@@ -142,10 +142,16 @@ async def update_llm_model(
 @router.delete("/llm-models/{model_id}", status_code=204)
 async def delete_llm_model(
     model_id: int,
+    force: bool = False,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """删除模型卡片（admin）。被某阶段指派的卡片拒绝删除，返 409。"""
+    """删除模型卡片（admin）。
+
+    被某阶段指派的卡片默认拒绝删除，返 409 提示先解除指派。``force=true``
+    时先解除所有引用该卡片的阶段指派（llm_model_id 置 null）再删除——供
+    前端「解除指派并删除」一键操作调用，避免用户手动逐阶段解绑。
+    """
     if not await _require_admin(db, current_user):
         raise HTTPException(status_code=403, detail="Admin permission required")
 
@@ -154,17 +160,23 @@ async def delete_llm_model(
     if model is None:
         raise HTTPException(status_code=404, detail="LLM model not found")
 
-    # 检查是否被某阶段指派——拒绝删除（grill 决策：返 409 提示先解除指派）。
+    # 检查是否被某阶段指派。
     assigned_result = await db.execute(
         select(LLMModelAssignment).where(LLMModelAssignment.llm_model_id == model_id)
     )
     assigned = assigned_result.scalars().all()
     if assigned:
         stages = ", ".join(a.stage for a in assigned)
-        raise HTTPException(
-            status_code=409,
-            detail="该卡片被阶段 [%s] 指派，请先解除指派再删除" % stages,
-        )
+        if not force:
+            # 默认拒绝删除（grill 决策：返 409 提示先解除指派）。
+            raise HTTPException(
+                status_code=409,
+                detail="该卡片被阶段 [%s] 指派，请先解除指派再删除" % stages,
+            )
+        # force=true：先解除所有引用该卡片的阶段指派，再删除。
+        for a in assigned:
+            a.llm_model_id = None
+        await db.flush()
 
     await db.delete(model)
     await db.commit()

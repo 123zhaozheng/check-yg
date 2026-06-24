@@ -244,6 +244,57 @@ async def test_delete_llm_model_assigned_rejected_409(db_session, client):
     assert gone is None
 
 
+@pytest.mark.asyncio
+async def test_delete_llm_model_force_unassigns_then_deletes(db_session, client):
+    """DELETE ?force=true on an assigned card → unassigns all referencing stages
+    then deletes (204); the assignment rows remain with llm_model_id=None."""
+    session, _user = db_session
+    model = LLMModel(
+        display_name="card-force",
+        model_name="m-force",
+        provider_base_url="https://x/v1",
+        api_key="",
+        context_length=8000,
+        max_output=4000,
+        default_max_tokens=4000,
+    )
+    session.add(model)
+    await session.commit()
+    await session.refresh(model)
+    mid = model.id
+
+    # Assign to two stages.
+    session.add(LLMModelAssignment(stage=STAGE_PORTRAIT, llm_model_id=mid))
+    session.add(LLMModelAssignment(stage=STAGE_CLASSIFICATION, llm_model_id=mid))
+    await session.commit()
+
+    async for c in _admin_client(db_session, client):
+        # Default (no force) → still 409.
+        resp = await c.delete(f"/api/llm-models/{mid}")
+        assert resp.status_code == 409
+
+        # force=true → 204, unassigns first.
+        resp2 = await c.delete(f"/api/llm-models/{mid}?force=true")
+        assert resp2.status_code == 204
+
+    # Card gone.
+    gone = (
+        await session.execute(select(LLMModel).where(LLMModel.id == mid))
+    ).scalar_one_or_none()
+    assert gone is None
+
+    # Assignment rows remain but llm_model_id nulled.
+    assigns = (
+        await session.execute(
+            select(LLMModelAssignment).where(
+                LLMModelAssignment.stage.in_([STAGE_PORTRAIT, STAGE_CLASSIFICATION])
+            )
+        )
+    ).scalars().all()
+    assert len(assigns) == 2
+    assert all(a.llm_model_id is None for a in assigns)
+
+
 # ---------------------------------------------------------------------------
 # 阶段指派 GET/PUT（2）
 # ---------------------------------------------------------------------------
@@ -368,24 +419,26 @@ def test_extractor_portrait_uses_card_max_tokens_and_thinking():
     assert extractor.normalizer.max_tokens != 6000
 
 
-def test_extractor_unassigned_falls_back_to_runtime_then_module_constant():
-    """Unassigned stage → max_tokens from runtime llm.max_tokens, else module constant."""
-    # runtime llm.max_tokens=12000 → used (not module constant).
+def test_extractor_unassigned_falls_back_to_module_constant():
+    """Unassigned stage → module hardcoded constants (runtime llm.* 中间兜底层
+    已于 06-23-tab 去除：extractor 不再读 runtime llm.max_tokens 作 fallback)。"""
+    # runtime llm.max_tokens=12000 现在被忽略（中间兜底层已删）→ 用模块常量。
     extractor = FlowExtractor(
         runtime_settings={"llm.max_tokens": "12000"},
         stage_models={},
     )
-    assert extractor.classifier.max_tokens == 12000
-    assert extractor.portrait_extractor.max_tokens == 12000
-    assert extractor.normalizer.max_tokens == 12000
-    # No thinking when unassigned.
-    assert extractor.portrait_extractor.thinking is None
-
-    # runtime empty → module hardcoded constants (classifier/portrait 1500, normalizer 4000).
-    extractor2 = FlowExtractor(runtime_settings={}, stage_models={})
     from app.llm.classifier import _MAX_TOKENS_CLASSIFIER
     from app.llm.normalizer import _MAX_TOKENS_NORMALIZER
     from app.llm.portrait import _MAX_TOKENS_PORTRAIT
+
+    assert extractor.classifier.max_tokens == _MAX_TOKENS_CLASSIFIER
+    assert extractor.portrait_extractor.max_tokens == _MAX_TOKENS_PORTRAIT
+    assert extractor.normalizer.max_tokens == _MAX_TOKENS_NORMALIZER
+    # No thinking when unassigned.
+    assert extractor.portrait_extractor.thinking is None
+
+    # runtime empty → 同样模块硬编码常量。
+    extractor2 = FlowExtractor(runtime_settings={}, stage_models={})
 
     assert extractor2.classifier.max_tokens == _MAX_TOKENS_CLASSIFIER
     assert extractor2.portrait_extractor.max_tokens == _MAX_TOKENS_PORTRAIT
