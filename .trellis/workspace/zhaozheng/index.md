@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 18
-- **Last Active**: 2026-06-23
+- **Total Sessions**: 19
+- **Last Active**: 2026-06-26
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~615 | Active |
+| `journal-1.md` | ~649 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 19 | 2026-06-26 | 精简前端UI过度的技术性说明文案 + greenlet依赖修复 | `ad548fa`, `d5306b9` | `feat/web-split` |
 | 18 | 2026-06-23 | 关键词库 + 关键词审查阶段 + 删概览 + 清洗规则折叠 | `fa2a380f`, `07e4cada` | `feat/web-split` |
 | 17 | 2026-06-23 | web-4 收尾修复 + LLM 模型卡片按阶段选模型 | `4e1e4713`, `3a63a3e0`, `091dc294` | `feat/web-split` |
 | 16 | 2026-06-22 | S7 审查报告闭环 | `ebf5dfd9`, `73cacc1e`, `1bd06d26` | `feat/web-split` |

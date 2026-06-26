@@ -613,3 +613,37 @@ S7 审查报告闭环完成 (umbrella 8/10→9/10)。后端：新建 ReportChapt
 ### Next Steps
 
 - None - task complete
+
+
+## Session 19: 精简前端UI过度的技术性说明文案 + greenlet依赖修复
+
+**Date**: 2026-06-26
+**Task**: 精简前端UI过度的技术性说明文案 + greenlet依赖修复
+**Branch**: `feat/web-split`
+
+### Summary
+
+删除关键词库/审计维度/工作台/审查任务/设置页中面向开发者的规格式说明文案（卡片=…、维度=purpose+steps…、各 PageHeader description），仅保留导入Excel表头提示；另修后端缺 greenlet 依赖导致异步 ORM 启动报错。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ad548fa` | (see git log) |
+| `d5306b9` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
