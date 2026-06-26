@@ -71,10 +71,7 @@ function SettingsPage() {
 
   return (
     <>
-      <PageHeader
-        title="设置"
-        description="系统级配置：账户、审查参数、渠道与解析、集成与模型。"
-      />
+      <PageHeader title="设置" />
 
       {/* Tab bar */}
       <div className="mb-4 flex space-x-1 border-b border-ink-400">

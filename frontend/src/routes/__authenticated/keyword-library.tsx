@@ -58,10 +58,7 @@ function KeywordLibraryPage() {
 
   return (
     <>
-      <PageHeader
-        title="关键词库"
-        description="全局关键词卡片：供任务「关键词审查」阶段多选使用。admin 可管理卡片与导入导出。"
-      />
+      <PageHeader title="关键词库" />
       <KeywordCardsCard isAdmin={isAdmin} />
     </>
   )
@@ -104,10 +101,6 @@ function KeywordCardsCard({ isAdmin }: { isAdmin: boolean }) {
         <div className="flex items-center justify-between">
           <div>
             <h2 className="font-sans text-base font-bold text-ink-900">关键词卡片</h2>
-            <p className="mt-1 text-xs text-ink-600">
-              卡片 = 卡片名 + 卡片级风险等级（高/中/低）+ 备注；词 = 关键词。导入同名卡片
-              合并追加去重（新词加入、重复词跳过、风险/备注新值覆盖）。
-            </p>
           </div>
           <div className="flex items-center gap-2">
             {isAdmin && (
@@ -565,9 +558,7 @@ function ImportDialog({ onClose }: { onClose: () => void }) {
       </DialogHeader>
       <DialogBody className="flex flex-col gap-4">
         <p className="text-xs text-ink-600">
-          表头规范：<span className="font-mono">卡片名称,关键词,风险等级,备注</span>。一行一个
-          关键词；卡片名称相同的行合并为同一张卡。同名卡片合并追加去重（新词加入、重复词跳过、
-          风险/备注新值覆盖）。风险等级合法值：高/中/低（非法值行跳过并记入拒绝）。
+          表头规范：<span className="font-mono">卡片名称,关键词,风险等级,备注</span>。
         </p>
         <input
           type="file"

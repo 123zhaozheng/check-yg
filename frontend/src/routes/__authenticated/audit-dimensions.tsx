@@ -72,10 +72,7 @@ function AuditDimensionsPage() {
 
   return (
     <>
-      <PageHeader
-        title="审查维度"
-        description="全局 AI 审查维度：维度 = 结构化提示词，「开始分析」时每个启用维度各跑一次。admin 可管理维度，沉淀新维度零代码。"
-      />
+      <PageHeader title="审查维度" />
       <AuditDimensionsCard isAdmin={isAdmin} />
     </>
   )
@@ -121,10 +118,6 @@ function AuditDimensionsCard({ isAdmin }: { isAdmin: boolean }) {
             <h2 className="font-sans text-base font-bold text-ink-900">
               审查维度卡片
             </h2>
-            <p className="mt-1 text-xs text-ink-600">
-              维度 = 维度名 + purpose + steps（调哪些只读工具）+ judgment + severity；
-              后端按固定模板拼成 prompt 存库。「开始分析」串行跑所有启用维度。
-            </p>
           </div>
           {isAdmin && (
             <Button size="sm" onClick={() => setCreating(true)}>

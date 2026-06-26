@@ -36,7 +36,6 @@ function DashboardPage() {
     <>
       <PageHeader
         title="工作台"
-        description="实时审查进展与待办队列。"
         actions={
           <>
             <span className="hidden text-xs text-ink-600 sm:inline">

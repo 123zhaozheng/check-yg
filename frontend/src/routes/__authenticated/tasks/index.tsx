@@ -99,7 +99,6 @@ function TasksPage() {
     <>
       <PageHeader
         title="审查任务"
-        description="检索、筛选并进入历史审查任务。"
         actions={
           <Button size="sm" onClick={() => setDialogOpen(true)}>
             <Plus className="size-4" />
