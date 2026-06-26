@@ -34,6 +34,8 @@ async def init_db() -> None:
     不依赖 Alembic。
     """
     from app.models import (  # noqa: F401
+        AuditConversation,
+        AuditDimension,
         Collaborator,
         CustomerList,
         CustomerListItem,

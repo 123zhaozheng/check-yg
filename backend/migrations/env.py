@@ -14,6 +14,8 @@ from app.config import settings
 
 # 导入所有模型，确保 metadata 完整
 from app.models import (  # noqa: F401
+    AuditConversation,
+    AuditDimension,
     Collaborator,
     CustomerList,
     CustomerListItem,

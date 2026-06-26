@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import Optional
+from typing import Optional, Sequence
 
 import httpx
 from pydantic_ai import Agent, ModelSettings
@@ -66,6 +66,7 @@ def _build_agent(
     temperature: Optional[float] = None,
     retries: int = 3,
     deps_type: type | None = None,
+    toolsets: Optional[Sequence] = None,
 ) -> Agent:
     """构造一个 pydantic-ai agent（模块级单例，按调用方参数缓存）。"""
     # AsyncOpenAI(max_retries=3) 处理瞬时 HTTP 429/5xx 重试，与旧 httpx 实现的
@@ -119,6 +120,7 @@ def _build_agent(
         retries={"tools": retries, "output": retries},
         model_settings=model_settings,
         deps_type=deps_type,
+        toolsets=list(toolsets) if toolsets else None,
     )
 
 
@@ -134,6 +136,7 @@ def get_agent(
     thinking: Optional[str] = None,
     temperature: Optional[float] = None,
     deps_type: type | None = None,
+    toolsets: Optional[Sequence] = None,
 ) -> Agent:
     """按连接参数取/建缓存 agent。
 
@@ -149,6 +152,12 @@ def get_agent(
     会报错——research §3）。
 
     ``temperature`` 计入缓存 key；``None`` 时保留旧默认 0.1。
+
+    ``toolsets``：附加 ``FunctionToolset``（conventions.md Toolset 用法），如
+    AI 审查的只读工具集。**不计入缓存 key**——toolset 是可变容器（同 key 复用
+    一个 agent 时，工具集已挂在该 agent 上，重复传同一 toolset 实例即可）。
+    首次为某 key 建 agent 时挂上；后续同 key 命中缓存直接返回已挂工具集的 agent。
+    调用方应传**同一个 toolset 实例**（模块级单例），避免每次重建。
     """
     base_url = base_url or settings.LLM_API_ENDPOINT
     api_key = api_key or settings.LLM_API_KEY
@@ -181,6 +190,7 @@ def get_agent(
                 thinking=thinking,
                 temperature=temperature,
                 deps_type=deps_type,
+                toolsets=toolsets,
             )
             _agent_cache[key] = agent
         return agent

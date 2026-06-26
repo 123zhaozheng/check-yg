@@ -563,7 +563,9 @@ export type Severity = "high" | "medium" | "low"
 export type FindingStatus = "pending" | "accepted" | "ignored"
 
 /** One findings row — AI-surfaced anomaly + 人工复核状态.
- *  Mirrors `backend/app/routers/tasks.py::FindingResponse`. */
+ *  Mirrors `backend/app/routers/tasks.py::FindingResponse`.
+ *  06-26-ai-agent additive 字段（dimension_id / detail_text /
+ *  evidence_record_ids / source）向后兼容，历史 finding 为空. */
 export interface FindingItem {
   id: number
   task_id: number
@@ -575,6 +577,14 @@ export interface FindingItem {
   confidence: number
   status: FindingStatus
   comment?: string | null
+  /** 命中的维度 id（维度 agent 跑出，source='rule'）. */
+  dimension_id?: number | null
+  /** 维度 agent 的自然语言分析正文（右侧详情正文）. */
+  detail_text?: string | null
+  /** 命中的 flow_record id 列表（关联记录下钻）. */
+  evidence_record_ids?: number[] | null
+  /** 来源：rule（维度跑出）| 历史占位. */
+  source?: string | null
   created_at: string
   updated_at: string
 }
@@ -590,36 +600,66 @@ export interface FindingListParams {
   status?: FindingStatus
 }
 
-/** AnalysisResult.findings 项（对齐 backend AnalysisFindingItem / app.llm.types.FindingItem）. */
-export interface AnalysisFinding {
-  type: string
-  severity: Severity
-  description: string
-  counterparty?: string | null
-  amount?: string | null
-  confidence: number
+/** POST /api/tasks/{id}/analyze 响应：异步启动确认（status=started + 维度数）.
+ *  后台串行跑 enabled 维度，进度走 WebSocket event=analysis.progress（前端
+ *  无 WS token 通道时改轮询 findings + task.config.last_analysis_summary）. */
+export interface AnalyzeResponse {
+  status: string
+  task_id: number
+  total_dimensions: number
 }
 
-/** POST /api/tasks/{id}/analyze 响应：summary + findings 列表. */
-export interface AnalysisResultResponse {
-  summary: string
-  findings: AnalysisFinding[]
-}
-
-/** POST /api/tasks/{id}/analyze 请求体. */
+/** POST /api/tasks/{id}/analyze 请求体（占位，无必填字段；mode 兼容旧前端）. */
 export interface AnalyzeRequest {
   mode?: "quick" | "deep"
 }
 
-/** POST /api/tasks/{id}/analyze/chat 响应. */
+/** 单次工具调用痕迹（追问 agent 调只读工具时，前端气泡小字「🔍 已查询：…」）.
+ *  Mirrors `backend/app/schemas/audit.py::ChatToolTrace`. */
+export interface ChatToolTrace {
+  tool: string
+  summary: string
+}
+
+/** 本轮流问沉淀出的草稿维度（前端气泡「已沉淀维度：XXX（草稿，待启用）」）.
+ *  Mirrors `backend/app/schemas/audit.py::ChatSedimentedDimension`. */
+export interface ChatSedimentedDimension {
+  name: string
+  severity: DimensionSeverity
+}
+
+/** POST /api/tasks/{id}/analyze/chat 响应（含 conversation_id，多会话）.
+ *  ``tool_traces`` / ``sedimented_dimension`` 为 06-26-ai-agent 新增（向后
+ *  兼容旧前端：均可选，缺省空/None）。Mirrors `ChatResponse`. */
 export interface ChatResponse {
   reply: string
+  conversation_id: number
+  tool_traces?: ChatToolTrace[]
+  sedimented_dimension?: ChatSedimentedDimension | null
+}
+
+/** POST /api/tasks/{id}/analyze/chat 请求体（message + conversation_id）. */
+export interface ChatRequest {
+  message: string
+  conversation_id?: number | null
 }
 
 /** PATCH /api/findings/{id} 请求体（status / comment，均可选）. */
 export interface PatchFindingRequest {
   status?: FindingStatus
   comment?: string
+}
+
+/** task.config.last_analysis_summary —— 后台跑分析回填的进度摘要.
+ *  后端每跑完一个维度增量写 {total_dimensions, completed, findings, status}，
+ *  跑完写 status=finished + details. 前端进度条按 completed/total_dimensions
+ *  算百分比（PRD §十一 确定式进度条），status=finished 满格收尾. */
+export interface LastAnalysisSummary {
+  total_dimensions: number
+  completed: number
+  findings: number
+  status?: "running" | "finished"
+  details?: string[]
 }
 
 /** GET /api/tasks/{taskId}/findings — severity + status filter, severity-desc sorted. */
@@ -633,12 +673,14 @@ export function listFindings(
   )
 }
 
-/** POST /api/tasks/{taskId}/analyze — trigger AI analysis (placeholder建 finding + 写 last_analysis_at). */
+/** POST /api/tasks/{taskId}/analyze — 异步触发 AI 分析（立即返 started + 维度数）.
+ *  后台串行跑 enabled 维度，进度走 WS analysis.progress；finding 实时增量入库.
+ *  重跑只删 pending finding，保留 accepted/ignored 人工结论. */
 export function startAnalysis(
   taskId: number,
   body?: AnalyzeRequest,
-): Promise<AnalysisResultResponse> {
-  return api.post<AnalysisResultResponse>(`/tasks/${taskId}/analyze`, body ?? {})
+): Promise<AnalyzeResponse> {
+  return api.post<AnalyzeResponse>(`/tasks/${taskId}/analyze`, body ?? {})
 }
 
 /** PATCH /api/findings/{findingId} — update finding status/comment (top-level, no /tasks prefix). */
@@ -649,12 +691,15 @@ export function patchFinding(
   return api.patch<FindingItem>(`/findings/${findingId}`, body)
 }
 
-/** POST /api/tasks/{taskId}/analyze/chat — 多轮对话（占位回复 + history 存回）. */
+/** POST /api/tasks/{taskId}/analyze/chat — 多轮追问（带 conversation_id；首轮流建会话）. */
 export function chatAnalyze(
   taskId: number,
   message: string,
+  conversationId?: number | null,
 ): Promise<ChatResponse> {
-  return api.post<ChatResponse>(`/tasks/${taskId}/analyze/chat`, { message })
+  const body: ChatRequest = { message }
+  if (conversationId != null) body.conversation_id = conversationId
+  return api.post<ChatResponse>(`/tasks/${taskId}/analyze/chat`, body)
 }
 
 /* =========================================================================
@@ -1263,5 +1308,147 @@ export function patchKeywordHit(
   return api.patch<KeywordHitItem>(
     `/tasks/${taskId}/keyword-review/hits/${hitId}`,
     body,
+  )
+}
+
+/* =========================================================================
+ * Audit Dimensions + Analysis Conversations API — 06-26-ai-agent.
+ * Appended only; the apiFetch core above is unchanged.
+ * Mirrors `backend/app/routers/audit_dimensions.py` + `tasks.py` analyze block
+ * + `app/schemas/audit.py`. 维度 = 结构化提示词（CRUD 落库）；追问会话多轮.
+ * ======================================================================= */
+
+/** 维度 severity（对齐 backend DIMENSION_SEVERITIES）. */
+export type DimensionSeverity = "high" | "medium" | "low"
+
+/** 维度来源：system（迁移 seed）/ agent（create_dimension 沉淀草稿）. */
+export type DimensionSource = "system" | "agent"
+
+/** 维度步骤项 {tool, params}（steps.tool 限只读工具白名单）. */
+export interface DimensionStep {
+  tool: string
+  params?: Record<string, unknown>
+}
+
+/** 维度列表项. */
+export interface AuditDimensionListItem {
+  id: number
+  name: string
+  source: DimensionSource
+  purpose: string
+  severity: DimensionSeverity
+  enabled: boolean
+  created_by?: number | null
+  created_at: string
+  updated_at: string
+}
+
+/** 维度详情（含 steps / judgment / prompt 成品缓存）. */
+export interface AuditDimensionDetail {
+  id: number
+  name: string
+  source: DimensionSource
+  purpose: string
+  steps: DimensionStep[]
+  judgment: string
+  severity: DimensionSeverity
+  prompt: string
+  enabled: boolean
+  created_by?: number | null
+  created_at: string
+  updated_at: string
+}
+
+/** 新建维度请求体（admin；source 默认 system，enabled 默认 true）. */
+export interface AuditDimensionCreateBody {
+  name: string
+  purpose: string
+  steps: DimensionStep[]
+  judgment: string
+  severity: DimensionSeverity
+  source?: DimensionSource
+  enabled?: boolean
+}
+
+/** 编辑维度请求体（所有字段可选；任一字段变化时后端重拼 prompt）. */
+export interface AuditDimensionUpdateBody {
+  name?: string
+  purpose?: string
+  steps?: DimensionStep[]
+  judgment?: string
+  severity?: DimensionSeverity
+  enabled?: boolean
+}
+
+/** 追问会话列表项. */
+export interface ConversationItem {
+  id: number
+  title: string
+  created_at: string
+  updated_at: string
+}
+
+/** 会话列表响应. */
+export interface ConversationListResponse {
+  items: ConversationItem[]
+  total: number
+}
+
+/** GET /api/audit-dimensions — 列维度（所有登录用户可读）. */
+export function listAuditDimensions(): Promise<AuditDimensionListItem[]> {
+  return api.get<AuditDimensionListItem[]>("/audit-dimensions")
+}
+
+/** GET /api/audit-dimensions/{id} — 维度详情（含 steps / judgment / prompt）. */
+export function getAuditDimension(id: number): Promise<AuditDimensionDetail> {
+  return api.get<AuditDimensionDetail>(`/audit-dimensions/${id}`)
+}
+
+/** POST /api/audit-dimensions — 新建维度（admin）. */
+export function createAuditDimension(
+  body: AuditDimensionCreateBody,
+): Promise<AuditDimensionDetail> {
+  return api.post<AuditDimensionDetail>("/audit-dimensions", body)
+}
+
+/** PUT /api/audit-dimensions/{id} — 编辑维度（admin）. */
+export function updateAuditDimension(
+  id: number,
+  body: AuditDimensionUpdateBody,
+): Promise<AuditDimensionDetail> {
+  return api.put<AuditDimensionDetail>(`/audit-dimensions/${id}`, body)
+}
+
+/** DELETE /api/audit-dimensions/{id} — 删维度（admin；删 system 需 admin，
+ *  删 agent 建的需 owner/admin；已被 finding 引用返 409）. */
+export function deleteAuditDimension(id: number): Promise<void> {
+  return api.delete<void>(`/audit-dimensions/${id}`)
+}
+
+/** GET /api/tasks/{taskId}/analyze/conversations — 列追问会话（按 id 升序）. */
+export function listConversations(taskId: number): Promise<ConversationListResponse> {
+  return api.get<ConversationListResponse>(
+    `/tasks/${taskId}/analyze/conversations`,
+  )
+}
+
+/** POST /api/tasks/{taskId}/analyze/conversations — 新建会话（title 缺省由首问题定）. */
+export function createConversation(
+  taskId: number,
+  title?: string,
+): Promise<ConversationItem> {
+  return api.post<ConversationItem>(
+    `/tasks/${taskId}/analyze/conversations`,
+    { title: title ?? null },
+  )
+}
+
+/** DELETE /api/tasks/{taskId}/analyze/conversations/{id} — 删会话（只删历史，不影响沉淀维度）. */
+export function deleteConversation(
+  taskId: number,
+  conversationId: number,
+): Promise<void> {
+  return api.delete<void>(
+    `/tasks/${taskId}/analyze/conversations/${conversationId}`,
   )
 }

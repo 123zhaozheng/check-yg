@@ -1,85 +1,131 @@
 import * as React from "react"
 import { createFileRoute, useParams } from "@tanstack/react-router"
-import { Send } from "lucide-react"
+import { useQueryClient } from "@tanstack/react-query"
+import { MessageSquare, Plus, Send, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import type { FindingItem, Severity } from "@/lib/api"
 import {
+  useAnalysisProgress,
   useChatAnalyze,
-  useFindings,
+  useConversations,
+  useCreateConversation,
+  useDeleteConversation,
+  useFindingsLive,
   usePatchFinding,
   useStartAnalysis,
 } from "@/hooks/use-analysis"
 import { useTask } from "@/hooks/use-tasks"
+import type { ChatSedimentedDimension, ChatToolTrace, LastAnalysisSummary } from "@/lib/api"
 
 /**
- * AI 分析 /tasks/:id/analyze (docs §C4).
+ * AI 分析 /tasks/:id/analyze (06-26-ai-agent).
  *
- * Monochrome AI analysis page (无 stitch 源稿，按 prd + docs §C4 自创，单色):
- * - Header: 面包屑 + "AI 分析" + 副标题.
- * - 分析控制条: 开始分析黑底主按钮 + 快速/深度描边单选(segmented) +
- *   上次分析时间灰文 + 模型参数灰文.
- * - 分析中: 灰阶进度条 + 阶段文字（占位快速完成）.
- * - 左侧异常发现列表 (w-96): 按 severity 降序，severity 灰阶+形状双编码
- *   (高=黑底白字方块 bg-ink-900 text-ink-100 / 中=深灰 bg-ink-700 text-ink-100
- *   / 低=浅灰 bg-ink-300 text-ink-700)，选中项 border-l-2 border-ink-900 +
- *   bg-ink-300. 每项显 severity 标 + description 摘要 + confidence.
- * - 右侧异常详情: AI 推理摘要 + 关联记录列表（占位）+ 时间分布黑白灰小 bar
- *   + 置信度灰阶水平条 (bg-ink-200 底 bg-ink-900 填充) + 三按钮
- *   (采纳为告警/忽略/添加备注 → PATCH).
- * - 底部多轮对话区: 气泡 (AI bg-ink-200 text-ink-900 / 用户 bg-ink-900
- *   text-ink-100) + 输入框 + 发送 → POST chat → 占位回复追加.
- * - TanStack Query 拉 findings，mutation 跑 analyze/patch/chat.
+ * 维度 = 结构化提示词；跑分析 = 每个 enabled 维度各跑一次 agentic agent.run。
+ * 单色 AI 分析页（无 stitch 源稿，按 prd §十 + docs §C4，单色硬底线）:
+ * - 控制条：「开始分析」黑底主按钮 + 上次分析时间灰文 + 维度数灰文（去快速/深度单选）.
+ * - 跑分析异步化：POST /analyze 立即返 started → 订阅 WebSocket ``analysis.progress``
+ *   事件（后端 cookie 鉴权通了，前端浏览器握手自动带 access_token cookie）：
+ *   每跑完一个维度推一条 → 确定式进度条 (completed/total_dimensions) + 触发
+ *   findings 轮询增量入左列。WS 断时降级轮询（useFindingsLive，兜底，不全开）.
+ *   跑完（status=finished 或 completed>=total）停轮询 + 满格收尾.
+ * - 左侧「维度详情」列表 (w-96): 按 severity 降序，severity 灰阶+形状双编码,
+ *   选中项 border-l-2 + bg-ink-300. finding 实时增量（不等全跑完）.
+ * - 右侧维度详情: detail_text 替代占位 description + 关联记录读 evidence_record_ids
+ *   下钻 + 置信度灰阶水平条 + 三按钮（采纳为告警/忽略/保存备注 → PATCH）.
+ *   （删 seeded 假时间分布 bar——MVP 直删假数据更干净.）
+ * - 悬浮 AI 追问球（右下 fixed）：收起态圆球 → hover 扇形展开会话标题列表
+ *   （首项固定 ＋新建会话，后续 = 会话首问题前 10 字）→ 点进会话展开面板（多轮 + 输入）.
+ *   切任务自动收起 + 清 echo. 工具调用痕迹/沉淀可视化：每条 AI 气泡下方小字
+ *   「🔍 已查询：…」（tool_traces，单色），sedimented_dimension 非空时气泡内嵌
+ *   「已沉淀维度：XXX（草稿，待启用）」小卡（PRD §十）.
  *
  * agent 接入点结构遵循 docs/research/pydantic-ai-conventions.md (v1.107.0)
  * （后端 app/llm/analysis.py：AuditDeps + @agent.tool + ModelMessagesTypeAdapter
- * + message_history）。本切片 agent.run/chat 走占位实现。
+ * + message_history）.
  */
 export const Route = createFileRoute("/__authenticated/tasks/$id/analyze")({
   component: AnalyzePage,
 })
 
-type AnalysisMode = "quick" | "deep"
-
 function AnalyzePage() {
   const { id } = useParams({ from: "/__authenticated/tasks/$id/analyze" })
   const taskId = Number(id)
 
-  const [mode, setMode] = React.useState<AnalysisMode>("quick")
   const [selectedId, setSelectedId] = React.useState<number | null>(null)
-  const [progressStage, setProgressStage] = React.useState<string | null>(null)
+  // 跑分析中：true 时开 findings 轮询 + 进度条.
+  const [running, setRunning] = React.useState(false)
 
-  const findingsQuery = useFindings(taskId)
   const taskQuery = useTask(taskId)
+  const queryClient = useQueryClient()
+  // WS analysis.progress 订阅（RVP 主通道）：跑分析中开。每跑完一个维度推一条：
+  //   - 确定式进度条 (completed/total_dimensions)
+  //   - invalidate findings → 左列实时增量（WS-primary，不等全跑完）
+  // WS 断 → healthy=false → useFindingsLive 轮询接手（兜底，不全开防重复）.
+  const { progress, healthy: wsHealthy } = useAnalysisProgress(taskId, running, () => {
+    void queryClient.invalidateQueries({ queryKey: ["findings", "list", taskId] })
+  })
+  const findingsLive = useFindingsLive(taskId, running && !wsHealthy)
   const startAnalysis = useStartAnalysis(taskId)
   const patchFinding = usePatchFinding(taskId)
-  const chatAnalyze = useChatAnalyze(taskId)
 
-  const findings = findingsQuery.data?.items ?? []
-  const lastAnalysisAt = (taskQuery.data?.config as
-    | { last_analysis_at?: string }
-    | undefined)?.last_analysis_at
+  const findings = findingsLive.data?.items ?? []
+  const config = taskQuery.data?.config as
+    | {
+        last_analysis_at?: string
+        last_analysis_summary?: LastAnalysisSummary
+        active_conversation_id?: number | null
+      }
+    | undefined
+  const lastAnalysisAt = config?.last_analysis_at
+  const summary = config?.last_analysis_summary
+  // 确定式进度：WS progress.completed（每维度增量）优先；WS 未通时回退
+  // task.config.last_analysis_summary.completed（后端每维度也增量写库）.
+  const wsCompleted = progress?.completed ?? 0
+  const wsTotal = progress?.total ?? 0
+  const totalDimensions = wsTotal || (summary?.total_dimensions ?? 0)
+  const completed = wsCompleted || (summary?.completed ?? 0)
+  // finished：WS 推到 completed>=total，或后端 summary.status=finished（双保险）.
+  const finished =
+    totalDimensions > 0 &&
+    (completed >= totalDimensions || summary?.status === "finished")
+  const findingsCount = findings.length
 
   // Auto-select the first finding when the list loads or changes.
   React.useEffect(() => {
     if (findings.length > 0 && !findings.some((f) => f.id === selectedId)) {
       setSelectedId(findings[0].id)
     }
-    if (findings.length === 0) {
+    if (findings.length === 0 && !running) {
       setSelectedId(null)
     }
-  }, [findings, selectedId])
+  }, [findings, selectedId, running])
+
+  // 跑完收尾：后端在跑完时回填 last_analysis_summary.completed>=total → 停轮询.
+  React.useEffect(() => {
+    if (running && finished) {
+      setRunning(false)
+    }
+  }, [running, finished])
+
+  // WS 降级兜底：WS 断（!wsHealthy）时定时 refetch task，让 summary.completed
+  // （后端每维度增量写库）跟上，进度条确定式仍可走。WS 通时 progress 直接驱动，不轮询.
+  React.useEffect(() => {
+    if (!running || wsHealthy) return
+    const handle = setInterval(() => {
+      void taskQuery.refetch()
+    }, 1500)
+    return () => clearInterval(handle)
+  }, [running, wsHealthy, taskQuery])
 
   const selected = findings.find((f) => f.id === selectedId) ?? null
 
   async function handleAnalyze() {
-    setProgressStage("正在分析…")
+    setRunning(true)
     try {
-      await startAnalysis.mutateAsync(mode)
-    } finally {
-      // 占位快速完成（真实接入后可按阶段更新）.
-      setProgressStage("完成")
-      window.setTimeout(() => setProgressStage(null), 1200)
+      await startAnalysis.mutateAsync()
+    } catch {
+      setRunning(false)
     }
   }
 
@@ -97,70 +143,86 @@ function AnalyzePage() {
         <div className="flex flex-wrap items-center gap-3">
           <Button
             onClick={handleAnalyze}
-            disabled={startAnalysis.isPending || progressStage !== null}
+            disabled={startAnalysis.isPending || running}
           >
-            {startAnalysis.isPending || progressStage !== null
-              ? "分析中…"
-              : "开始分析"}
+            {startAnalysis.isPending || running ? "分析中…" : "开始分析"}
           </Button>
-          {/* 快速/深度 描边单选 (segmented) */}
-          <div className="flex items-center gap-0 rounded-[var(--radius-DEFAULT)] border border-ink-500 bg-ink-100 p-0.5">
-            <SegmentedButton
-              active={mode === "quick"}
-              onClick={() => setMode("quick")}
-            >
-              快速
-            </SegmentedButton>
-            <SegmentedButton
-              active={mode === "deep"}
-              onClick={() => setMode("deep")}
-            >
-              深度
-            </SegmentedButton>
-          </div>
         </div>
         <div className="flex flex-col gap-0.5 text-xs text-ink-700 md:items-end">
           <span>
             上次分析：{lastAnalysisAt ? formatTime(lastAnalysisAt) : "未分析"}
           </span>
-          <span>模型参数：占位骨架（真实模型待接入）</span>
+          <span>
+            启用维度：{totalDimensions > 0 ? `${totalDimensions} 个` : "—"}
+            {running ? ` · 已发现 ${findingsCount} 条` : ""}
+          </span>
         </div>
       </div>
 
-      {/* 分析进度条（占位快速完成） */}
-      {progressStage !== null && (
+      {/* 分析进度条（跑分析中显示；确定式：completed/total_dimensions 算百分比.
+          WS progress.completed 每维度增量推送 → 进度条按维度数跳格. WS 未通时
+          回退 task.config.last_analysis_summary.completed（每维度也写库）.
+          totalDimensions 还没拿到（WS 首条未到 + summary 未回填）走不定 pulse.） */}
+      {running && (
         <div className="flex flex-col gap-1.5 rounded-[var(--radius-lg)] border border-ink-400 bg-ink-100 p-3">
           <div className="flex items-center justify-between text-xs text-ink-700">
-            <span>{progressStage}</span>
-            <span className="font-mono">100%</span>
+            <span>
+              {totalDimensions > 0
+                ? `已完成 ${completed}/${totalDimensions} 个维度，已发现 ${findingsCount} 条`
+                : "正在启动分析…"}
+            </span>
+            <span className="font-mono">
+              {finished
+                ? "100%"
+                : totalDimensions > 0
+                  ? `${Math.round((completed / totalDimensions) * 100)}%`
+                  : "…"}
+            </span>
           </div>
           <div className="h-1.5 w-full overflow-hidden rounded-[var(--radius-full)] bg-ink-300">
-            <div className="h-full w-full bg-ink-900 transition-all duration-500" />
+            {totalDimensions > 0 ? (
+              <div
+                className="h-full bg-ink-900 transition-all duration-500"
+                style={{
+                  width: `${Math.min(
+                    100,
+                    Math.round((completed / totalDimensions) * 100),
+                  )}%`,
+                }}
+              />
+            ) : (
+              <div className="h-full w-1/3 animate-pulse rounded-[var(--radius-full)] bg-ink-700" />
+            )}
           </div>
         </div>
       )}
 
       {/* 主区：左 findings 列表 + 右详情 */}
       <div className="flex min-h-[420px] gap-4">
-        {/* 左：异常发现列表 */}
+        {/* 左：维度详情列表 */}
         <aside className="flex w-96 flex-shrink-0 flex-col rounded-[var(--radius-lg)] border border-ink-400 bg-ink-100">
           <div className="border-b border-ink-400 p-4">
             <h3 className="font-sans text-base font-semibold text-ink-900">
-              异常发现
+              维度详情
               <span className="ml-1.5 font-mono text-xs font-normal text-ink-700">
                 ({findings.length})
               </span>
             </h3>
           </div>
           <div className="scroll-thin flex-1 overflow-y-auto p-2">
-            {findingsQuery.isLoading && (
+            {findingsLive.isLoading && findings.length === 0 && (
               <div className="px-3 py-10 text-center text-sm text-ink-700">
                 加载中…
               </div>
             )}
-            {!findingsQuery.isLoading && findings.length === 0 && (
+            {!findingsLive.isLoading && findings.length === 0 && !running && (
               <div className="px-3 py-10 text-center text-sm text-ink-700">
-                暂无异常发现。点击「开始分析」运行 AI 审查。
+                暂无维度发现。点击「开始分析」运行 AI 审查。
+              </div>
+            )}
+            {findings.length === 0 && running && (
+              <div className="px-3 py-10 text-center text-sm text-ink-700">
+                正在跑维度分析，发现将实时显示…
               </div>
             )}
             {findings.length > 0 && (
@@ -178,7 +240,7 @@ function AnalyzePage() {
           </div>
         </aside>
 
-        {/* 右：异常详情 */}
+        {/* 右：维度详情 */}
         <section className="flex min-w-0 flex-1 flex-col rounded-[var(--radius-lg)] border border-ink-400 bg-ink-100">
           {selected ? (
             <FindingDetail
@@ -188,23 +250,22 @@ function AnalyzePage() {
             />
           ) : (
             <div className="flex flex-1 items-center justify-center p-10 text-sm text-ink-700">
-              选择左侧异常发现查看详情。
+              选择左侧维度发现查看详情。
             </div>
           )}
         </section>
       </div>
 
-      {/* 底部多轮对话区 */}
-      <ChatPanel taskId={taskId} chat={chatAnalyze} />
-
-      {(startAnalysis.isError || patchFinding.isError || chatAnalyze.isError) && (
+      {(startAnalysis.isError || patchFinding.isError) && (
         <p className="text-sm text-ink-900">
           {(startAnalysis.error as Error)?.message ??
             (patchFinding.error as Error)?.message ??
-            (chatAnalyze.error as Error)?.message ??
             "操作失败，请重试"}
         </p>
       )}
+
+      {/* 悬浮 AI 追问球（任务详情页内，非全局） */}
+      <FloatingChatBall taskId={taskId} activeConversationId={config?.active_conversation_id ?? null} />
     </div>
   )
 }
@@ -221,8 +282,7 @@ const SEVERITY_LABEL: Record<Severity, string> = {
 }
 
 /** Severity 标 — 形状 + 灰阶双编码（docs §C4 单色硬底线）：
- *  高=黑底白字方块（rounded-none，最锐利） / 中=深灰圆角条 / 低=浅灰全圆胶囊.
- *  灰阶：高 bg-ink-900 text-ink-100 / 中 bg-ink-700 text-ink-100 / 低 bg-ink-300 text-ink-700. */
+ *  高=黑底白字方块（rounded-none，最锐利） / 中=深灰圆角条 / 低=浅灰全圆胶囊. */
 function SeverityBadge({ severity }: { severity: Severity }) {
   const styles: Record<Severity, string> = {
     high: "bg-ink-900 text-ink-100 rounded-none",
@@ -242,7 +302,7 @@ function SeverityBadge({ severity }: { severity: Severity }) {
 }
 
 /* ---------------------------------------------------------------------------
- * 左侧异常发现列表项.
+ * 左侧维度详情列表项.
  * ------------------------------------------------------------------------- */
 
 function FindingListItem({
@@ -275,14 +335,15 @@ function FindingListItem({
         {finding.type}
       </div>
       <p className="mt-0.5 line-clamp-2 text-xs text-ink-700">
-        {finding.description}
+        {finding.detail_text || finding.description}
       </p>
     </button>
   )
 }
 
 /* ---------------------------------------------------------------------------
- * 右侧异常详情.
+ * 右侧维度详情.
+ * detail_text 替代占位 description；关联记录读 evidence_record_ids 下钻.
  * ------------------------------------------------------------------------- */
 
 function FindingDetail({
@@ -300,14 +361,7 @@ function FindingDetail({
     setCommentDraft(finding.comment ?? "")
   }, [finding.id, finding.comment])
 
-  // 时间分布小 bar（占位：8 根黑白灰 bar，按 severity 深浅映射）.
-  const timeBars = React.useMemo(() => {
-    const seed = finding.id
-    return Array.from({ length: 8 }, (_, i) => {
-      const v = ((seed * (i + 1)) % 5) / 4 // 0–1
-      return v
-    })
-  }, [finding.id])
+  const evidenceIds = finding.evidence_record_ids ?? []
 
   return (
     <>
@@ -335,41 +389,48 @@ function FindingDetail({
         <h3 className="mt-2 font-sans text-lg font-bold text-ink-900">
           {finding.type}
         </h3>
+        {(finding.counterparty || finding.amount) && (
+          <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-ink-700">
+            {finding.counterparty && (
+              <span>对手方：{finding.counterparty}</span>
+            )}
+            {finding.amount && <span>合计金额：{finding.amount}</span>}
+          </div>
+        )}
       </div>
 
       <div className="scroll-thin flex-1 space-y-5 overflow-y-auto p-4">
-        {/* AI 推理摘要 */}
+        {/* 维度分析正文（detail_text） */}
         <section>
           <h4 className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-ink-700">
-            AI 推理摘要
+            维度分析
           </h4>
-          <p className="text-sm text-ink-800">{finding.description}</p>
+          <p className="whitespace-pre-wrap text-sm text-ink-800">
+            {finding.detail_text || finding.description}
+          </p>
         </section>
 
-        {/* 关联记录（占位） */}
+        {/* 关联记录（evidence_record_ids 下钻） */}
         <section>
           <h4 className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-ink-700">
-            关联记录
+            关联记录（命中流水行）
           </h4>
-          <div className="rounded-[var(--radius-DEFAULT)] border border-ink-400 bg-ink-200 p-3 text-xs text-ink-700">
-            关联记录引用待接入（真实 agent 工具产出后展示 flow_record id）。
-          </div>
-        </section>
-
-        {/* 时间分布黑白灰小 bar */}
-        <section>
-          <h4 className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-ink-700">
-            时间分布
-          </h4>
-          <div className="flex h-16 items-end gap-1.5">
-            {timeBars.map((v, i) => (
-              <div
-                key={i}
-                className="flex-1 bg-ink-800"
-                style={{ height: `${Math.max(8, v * 100)}%` }}
-              />
-            ))}
-          </div>
+          {evidenceIds.length > 0 ? (
+            <div className="flex flex-wrap gap-1.5">
+              {evidenceIds.map((rid) => (
+                <span
+                  key={rid}
+                  className="rounded-[var(--radius-DEFAULT)] border border-ink-400 bg-ink-200 px-2 py-0.5 font-mono text-xs text-ink-900"
+                >
+                  #{rid}
+                </span>
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-[var(--radius-DEFAULT)] border border-ink-400 bg-ink-200 p-3 text-xs text-ink-700">
+              该维度未关联具体流水行。
+            </div>
+          )}
         </section>
 
         {/* 置信度灰阶水平条 */}
@@ -405,7 +466,7 @@ function FindingDetail({
         </section>
       </div>
 
-      {/* 三按钮：采纳为告警 / 忽略 / 添加备注 */}
+      {/* 三按钮：采纳为告警 / 忽略 / 保存备注 */}
       <div className="flex items-center gap-2 border-t border-ink-400 p-3">
         <Button
           size="sm"
@@ -436,30 +497,189 @@ function FindingDetail({
 }
 
 /* ---------------------------------------------------------------------------
- * 底部多轮对话区.
- * AI 气泡 bg-ink-200 text-ink-900 / 用户气泡 bg-ink-900 text-ink-100.
+ * 悬浮 AI 追问球（Q9 UX）.
+ * 收起态：右下 fixed 圆球。hover 球：扇形展开会话标题列表（首项固定 ＋新建会话，
+ *   后续 = 会话首问题前 10 字，显示 #N · 前10字）。点标题进会话；点 ＋ 新建.
+ * 展开态：固定右下面板（消息流 + 输入）。切任务自动收起 + 清 echo.
+ * 工具调用痕迹/沉淀可视化降级不显示（后端 chat 响应只返 reply，未暴露工具调用明细）.
  * ------------------------------------------------------------------------- */
 
+function FloatingChatBall({
+  taskId,
+  activeConversationId,
+}: {
+  taskId: number
+  activeConversationId: number | null
+}) {
+  // open = 面板展开；hoverBall = 球被 hover（扇形展开会话列表）.
+  const [open, setOpen] = React.useState(false)
+  const [hoverBall, setHoverBall] = React.useState(false)
+  const [activeConvId, setActiveConvId] = React.useState<number | null>(null)
+
+  const conversationsQuery = useConversations(taskId)
+  const conversations = conversationsQuery.data?.items ?? []
+
+  // 切任务：收起 + 清激活会话 + 关扇形.
+  React.useEffect(() => {
+    setOpen(false)
+    setHoverBall(false)
+    setActiveConvId(null)
+  }, [taskId])
+
+  // 后端 active_conversation_id 变化时同步激活（首次加载 / 跑 chat 后）.
+  React.useEffect(() => {
+    if (activeConversationId != null && activeConvId == null) {
+      setActiveConvId(activeConversationId)
+    }
+  }, [activeConversationId, activeConvId])
+
+  function openConversation(convId: number | null) {
+    setActiveConvId(convId)
+    setOpen(true)
+    setHoverBall(false)
+  }
+
+  return (
+    <div className="pointer-events-none fixed bottom-6 right-6 z-40 flex flex-col items-end gap-2">
+      {/* 扇形展开会话标题列表（球 hover 时显示，未展开面板时） */}
+      {hoverBall && !open && (
+        <ConversationFan
+          conversations={conversations}
+          activeConvId={activeConvId}
+          onPick={openConversation}
+        />
+      )}
+
+      {/* 展开态面板 */}
+      {open && (
+        <ChatPanel
+          taskId={taskId}
+          conversationId={activeConvId}
+          onClose={() => setOpen(false)}
+          onConversationCreated={(convId) => setActiveConvId(convId)}
+        />
+      )}
+
+      {/* 收起态圆球（hover 扇形展开；点击展开当前会话面板） */}
+      {!open && (
+        <button
+          onMouseEnter={() => setHoverBall(true)}
+          onMouseLeave={() => setHoverBall(false)}
+          onClick={() => setOpen(true)}
+          aria-label="AI 追问"
+          className="pointer-events-auto flex size-12 items-center justify-center rounded-[var(--radius-full)] bg-ink-900 text-ink-100 shadow-[var(--shadow-popover)] transition-transform hover:scale-105"
+        >
+          <MessageSquare className="size-5" />
+        </button>
+      )}
+    </div>
+  )
+}
+
+/** 扇形展开会话标题列表 — 首项固定「＋ 新建会话」，后续 = 会话首问题前 10 字. */
+function ConversationFan({
+  conversations,
+  activeConvId,
+  onPick,
+}: {
+  conversations: { id: number; title: string }[]
+  activeConvId: number | null
+  onPick: (convId: number | null) => void
+}) {
+  return (
+    <div className="pointer-events-auto flex flex-col items-end gap-1.5 pb-1">
+      {/* ＋ 新建会话（固定首项） */}
+      <FanItem
+        label="＋ 新建会话"
+        active={false}
+        onClick={() => onPick(null)}
+        icon
+      />
+      {/* 已有会话（按 id 升序，显示 #N · 前10字） */}
+      {conversations.map((c, idx) => (
+        <FanItem
+          key={c.id}
+          label={`#${idx + 1} · ${c.title || "未命名"}`}
+          active={c.id === activeConvId}
+          onClick={() => onPick(c.id)}
+        />
+      ))}
+    </div>
+  )
+}
+
+function FanItem({
+  label,
+  active,
+  onClick,
+  icon,
+}: {
+  label: string
+  active: boolean
+  onClick: () => void
+  icon?: boolean
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        "flex max-w-[14rem] items-center gap-1.5 rounded-[var(--radius-DEFAULT)] border px-3 py-1.5 text-xs transition-colors",
+        active
+          ? "border-ink-900 bg-ink-300 font-semibold text-ink-900"
+          : "border-ink-400 bg-ink-100 text-ink-800 hover:bg-ink-300",
+      )}
+    >
+      {icon && <Plus className="size-3.5 shrink-0" />}
+      <span className="truncate">{label}</span>
+    </button>
+  )
+}
+
+/** 展开态追问面板 — 消息流 + 输入；conversationId=null 时首轮流建会话. */
+
+/** 一条追问面板消息（echo）。AI 消息可带 tool_traces + sedimented_dimension
+ *  （后端 ChatResponse 新字段，PRD §十 工具痕迹/沉淀可视化）. */
 interface ChatMessage {
   role: "user" | "ai"
   text: string
+  toolTraces?: ChatToolTrace[]
+  sedimentedDimension?: ChatSedimentedDimension | null
 }
 
 function ChatPanel({
   taskId,
-  chat,
+  conversationId,
+  onClose,
+  onConversationCreated,
 }: {
   taskId: number
-  chat: ReturnType<typeof useChatAnalyze>
+  conversationId: number | null
+  onClose: () => void
+  onConversationCreated: (convId: number) => void
 }) {
+  const chat = useChatAnalyze(taskId)
+  const createConv = useCreateConversation(taskId)
+  const deleteConv = useDeleteConversation(taskId)
   const [messages, setMessages] = React.useState<ChatMessage[]>([])
   const [input, setInput] = React.useState("")
+  const [currentConvId, setCurrentConvId] = React.useState<number | null>(
+    conversationId,
+  )
+  const scrollRef = React.useRef<HTMLDivElement>(null)
 
-  // taskId 变化时清空本地对话（切任务场景）.
+  // 切会话（conversationId prop 变化）→ 清 echo（多会话历史在后端，前端只存当前 echo）.
   React.useEffect(() => {
     setMessages([])
     setInput("")
-  }, [taskId])
+    setCurrentConvId(conversationId)
+  }, [conversationId, taskId])
+
+  // 自动滚到底.
+  React.useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+    }
+  }, [messages])
 
   async function handleSend() {
     const text = input.trim()
@@ -467,13 +687,51 @@ function ChatPanel({
     setInput("")
     setMessages((prev) => [...prev, { role: "user", text }])
     try {
-      const res = await chat.mutateAsync(text)
-      setMessages((prev) => [...prev, { role: "ai", text: res.reply }])
+      const res = await chat.mutateAsync({
+        message: text,
+        conversationId: currentConvId,
+      })
+      // 首轮流建会话 → 后端返新 conversation_id，记下来供后续多轮.
+      if (currentConvId == null) {
+        setCurrentConvId(res.conversation_id)
+        onConversationCreated(res.conversation_id)
+      }
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "ai",
+          text: res.reply,
+          toolTraces: res.tool_traces,
+          sedimentedDimension: res.sedimented_dimension ?? null,
+        },
+      ])
     } catch {
       setMessages((prev) => [
         ...prev,
         { role: "ai", text: "请求失败，请重试。" },
       ])
+    }
+  }
+
+  async function handleNewConversation() {
+    try {
+      const conv = await createConv.mutateAsync(undefined)
+      setCurrentConvId(conv.id)
+      setMessages([])
+      onConversationCreated(conv.id)
+    } catch {
+      // 新建失败时停留在当前会话.
+    }
+  }
+
+  async function handleDeleteConversation() {
+    if (currentConvId == null) return
+    try {
+      await deleteConv.mutateAsync(currentConvId)
+      setCurrentConvId(null)
+      setMessages([])
+    } catch {
+      // 删失败时停留.
     }
   }
 
@@ -485,28 +743,73 @@ function ChatPanel({
   }
 
   return (
-    <div className="flex flex-col gap-3 rounded-[var(--radius-lg)] border border-ink-400 bg-ink-100 p-4">
-      <div className="flex items-center justify-between">
-        <h3 className="font-sans text-base font-semibold text-ink-900">
-          对话追问
-        </h3>
-        <span className="text-xs text-ink-700">
-          占位回复（真实推理待接入）
-        </span>
+    <div className="pointer-events-auto flex h-[28rem] w-96 flex-col rounded-[var(--radius-lg)] border border-ink-400 bg-ink-100 shadow-[var(--shadow-popover)]">
+      {/* header：标题 + 新建/删除/收起 */}
+      <div className="flex items-center justify-between border-b border-ink-400 px-4 py-2.5">
+        <div className="min-w-0">
+          <h3 className="font-sans text-sm font-semibold text-ink-900">
+            AI 追问
+          </h3>
+          <p className="truncate font-mono text-[11px] text-ink-700">
+            {currentConvId != null ? `会话 #${currentConvId}` : "新会话（首问后创建）"}
+          </p>
+        </div>
+        <div className="flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label="新建会话"
+            title="新建会话"
+            onClick={handleNewConversation}
+            disabled={createConv.isPending}
+          >
+            <Plus className="size-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label="删除会话"
+            title="删除会话"
+            onClick={handleDeleteConversation}
+            disabled={deleteConv.isPending || currentConvId == null}
+          >
+            <X className="size-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label="收起"
+            title="收起"
+            onClick={onClose}
+          >
+            <X className="size-4" />
+          </Button>
+        </div>
       </div>
 
-      <div className="scroll-thin flex max-h-64 flex-col gap-2.5 overflow-y-auto p-1">
+      {/* 消息流 */}
+      <div
+        ref={scrollRef}
+        className="scroll-thin flex flex-1 flex-col gap-2.5 overflow-y-auto p-3"
+      >
         {messages.length === 0 && (
           <div className="py-6 text-center text-xs text-ink-700">
-            向 AI 提问关于异常的细节（占位骨架，真实推理待接入）。
+            向 AI 提问关于维度发现的细节，或让它沉淀新审查维度。
           </div>
         )}
         {messages.map((m, i) => (
-          <ChatBubble key={i} message={m} />
+          <ChatBubble
+            key={i}
+            role={m.role}
+            text={m.text}
+            toolTraces={m.toolTraces}
+            sedimentedDimension={m.sedimentedDimension}
+          />
         ))}
       </div>
 
-      <div className="flex items-end gap-2 border-t border-ink-400 pt-3">
+      {/* 输入框 + 发送 */}
+      <div className="flex items-end gap-2 border-t border-ink-400 p-3">
         <textarea
           value={input}
           onChange={(e) => setInput(e.target.value)}
@@ -528,52 +831,60 @@ function ChatPanel({
   )
 }
 
-function ChatBubble({ message }: { message: ChatMessage }) {
-  const isUser = message.role === "user"
+function ChatBubble({
+  role,
+  text,
+  toolTraces,
+  sedimentedDimension,
+}: {
+  role: "user" | "ai"
+  text: string
+  toolTraces?: ChatToolTrace[]
+  sedimentedDimension?: ChatSedimentedDimension | null
+}) {
+  const isUser = role === "user"
+  const traces = toolTraces ?? []
+  const hasTraces = traces.length > 0
+  const hasSediment = sedimentedDimension != null
+  // AI 气泡有工具痕迹/沉淀卡时，下方再叠一小块放这些副信息（单色，紧贴气泡）.
   return (
-    <div
-      className={cn("flex", isUser ? "justify-end" : "justify-start")}
-    >
+    <div className={cn("flex flex-col gap-1", isUser ? "items-end" : "items-start")}>
       <div
         className={cn(
-          "max-w-[80%] whitespace-pre-wrap rounded-[var(--radius-lg)] px-3 py-2 text-sm",
-          isUser
-            ? "bg-ink-900 text-ink-100"
-            : "bg-ink-200 text-ink-900",
+          "max-w-[85%] whitespace-pre-wrap rounded-[var(--radius-lg)] px-3 py-2 text-sm",
+          isUser ? "bg-ink-900 text-ink-100" : "bg-ink-200 text-ink-900",
         )}
       >
-        {message.text}
+        {text}
       </div>
+      {/* 工具调用痕迹：每条 trace 一行小字「🔍 已查询：{summary}」（PRD §十，单色） */}
+      {hasTraces && (
+        <div className="flex max-w-[85%] flex-col gap-0.5 pl-1">
+          {traces.map((t, i) => (
+            <span
+              key={i}
+              className="text-ink-700 text-[11px] leading-tight"
+            >
+              🔍 已查询：{t.summary}
+            </span>
+          ))}
+        </div>
+      )}
+      {/* 沉淀可视化：本轮流问沉淀出草稿维度 → 小卡「已沉淀维度：XXX（草稿，待启用）」 */}
+      {hasSediment && sedimentedDimension && (
+        <div className="max-w-[85%] rounded-[var(--radius-DEFAULT)] border border-ink-400 bg-ink-200 px-2.5 py-1.5 text-[11px] text-ink-900">
+          已沉淀维度：{sedimentedDimension.name}（
+          {SEVERITY_LABEL[severityKey(sedimentedDimension.severity)]}，草稿，待启用）
+          <span className="ml-1 text-ink-700">— 去维度管理页启用</span>
+        </div>
+      )}
     </div>
   )
 }
 
-/* ---------------------------------------------------------------------------
- * Segmented 单选按钮（快速/深度描边单选）.
- * ------------------------------------------------------------------------- */
-
-function SegmentedButton({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean
-  onClick: () => void
-  children: React.ReactNode
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={cn(
-        "rounded-[var(--radius-DEFAULT)] px-3 py-1 text-xs transition-colors",
-        active
-          ? "bg-ink-900 font-bold text-ink-100"
-          : "text-ink-700 hover:text-ink-900",
-      )}
-    >
-      {children}
-    </button>
-  )
+/** 把后端 severity (high|medium|low) 映射成 SEVERITY_LABEL 的 key（同值，类型守卫）. */
+function severityKey(s: string): Severity {
+  return s === "high" || s === "medium" || s === "low" ? s : "medium"
 }
 
 /** ISO → 本地时间字符串（YYYY-MM-DD HH:MM）. */

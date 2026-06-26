@@ -97,3 +97,45 @@ class AnalysisResult(BaseModel):
 
     findings: list[FindingItem] = Field(default_factory=list)
     summary: str = Field(description="整体推理摘要，供前端右侧详情区展示")
+
+
+# ---------------------------------------------------------------------------
+# 06-26-ai-agent 维度 agent output_type.
+# 维度 agent 一次 run 产出**一条聚合 finding**（PRD §五 Q2）；零命中 → 不建
+# finding，由 service 层据 output 判断。detail_text 是右侧详情区正文，引用
+# 真实笔数与样本；evidence_record_ids 是命中 flow_record id（关联记录下钻）。
+# ---------------------------------------------------------------------------
+
+
+class DimensionFinding(BaseModel):
+    """维度 agent 输出的单条聚合异常发现（PRD §五结构体）。
+
+    字段是 agent 推理产物；复核状态（status/comment）由人工在 Finding 表维护，
+    不属于 agent 输出。服务端落库时映射成 Finding 行（含 dimension_id /
+    detail_text / evidence_record_ids / source='rule'）。
+    """
+
+    type: str = Field(description="异常类型，如 夜间交易/大额交易/整数金额")
+    severity: Severity
+    counterparty: str | None = None
+    amount: str | None = Field(default=None, description="合计金额")
+    detail_text: str = Field(description="自然语言分析，引用真实笔数与样本")
+    evidence_record_ids: list[int] = Field(
+        default_factory=list, description="命中 flow_record id"
+    )
+    confidence: float = Field(ge=0.0, le=1.0)
+
+
+class DimensionFindingResult(BaseModel):
+    """维度 agent 输出容器：findings 列表（零命中为空）+ 摘要。
+
+    agent.run 的 output_type 用此容器（list 形式以便零命中返空列表，避免 union
+    类型注解复杂度）。跑分析 service 取 ``findings``：非空 → 落一条聚合 finding；
+    空 → 不建 finding，记 task.config 摘要。
+    """
+
+    findings: list[DimensionFinding] = Field(default_factory=list)
+    summary: str = Field(
+        default="",
+        description="本维度推理摘要（零命中时为「未发现X异常」）",
+    )

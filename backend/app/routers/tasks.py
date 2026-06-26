@@ -17,8 +17,14 @@ from sqlalchemy.orm import selectinload
 from ..auth.dependencies import get_current_user
 from ..config import settings
 from ..database import get_db
-from ..llm.analysis import AuditDeps, chat as analysis_chat, run_analysis
 from ..models import Document, Finding, FlowRecordRow, KeywordHit, Task, TaskLog, User
+from ..schemas.audit import (
+    ChatRequest as AuditChatRequest,
+    ChatResponse as AuditChatResponse,
+    ConversationItem,
+    ConversationListResponse,
+    CreateConversationRequest,
+)
 from ..schemas.keyword import (
     KeywordHitItem,
     KeywordHitListResponse,
@@ -26,6 +32,7 @@ from ..schemas.keyword import (
     KeywordReviewRunRequest,
     KeywordReviewRunStats,
 )
+from ..services.audit.analysis_service import analysis_service
 from ..services.extraction.runner import runner
 from ..services.extraction.scanner import DocumentScanner
 from ..services.keyword.keyword_review_service import KeywordReviewService
@@ -1114,6 +1121,11 @@ class FindingResponse(BaseModel):
     confidence: float
     status: str
     comment: Optional[str] = None
+    # 06-26-ai-agent additive 字段（向后兼容，历史 finding 为 None/空）。
+    dimension_id: Optional[int] = None
+    detail_text: Optional[str] = None
+    evidence_record_ids: Optional[list[int]] = None
+    source: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
@@ -1126,40 +1138,19 @@ class FindingListResponse(BaseModel):
     total: int
 
 
-class AnalysisFindingItem(BaseModel):
-    """AnalysisResult.findings 项的响应视图（对齐 app.llm.types.FindingItem）."""
+class AnalyzeResponse(BaseModel):
+    """POST /tasks/{id}/analyze 响应：异步启动确认。"""
 
-    type: str
-    severity: str
-    description: str
-    counterparty: Optional[str] = None
-    amount: Optional[str] = None
-    confidence: float
-
-
-class AnalysisResultResponse(BaseModel):
-    """POST /analyze 响应：摘要 + findings 列表."""
-
-    summary: str
-    findings: List[AnalysisFindingItem]
+    status: str = "started"
+    task_id: int
+    # 本次跑的 enabled 维度数（后台串行跑，进度走 WebSocket event=analysis.progress）。
+    total_dimensions: int
 
 
 class AnalyzeRequest(BaseModel):
-    """POST /tasks/{id}/analyze 请求体."""
+    """POST /tasks/{id}/analyze 请求体（占位，无必填字段）."""
 
-    mode: Optional[str] = None  # "quick" | "deep"（占位，本切片不区分行为）
-
-
-class ChatRequest(BaseModel):
-    """POST /tasks/{id}/analyze/chat 请求体."""
-
-    message: str
-
-
-class ChatResponse(BaseModel):
-    """POST /tasks/{id}/analyze/chat 响应."""
-
-    reply: str
+    mode: Optional[str] = None  # 兼容旧前端，本切片不区分行为
 
 
 class PatchFindingRequest(BaseModel):
@@ -1181,6 +1172,10 @@ def _finding_response(f: Finding) -> FindingResponse:
         confidence=f.confidence,
         status=f.status,
         comment=f.comment,
+        dimension_id=f.dimension_id,
+        detail_text=f.detail_text,
+        evidence_record_ids=f.evidence_record_ids,
+        source=f.source,
         created_at=f.created_at,
         updated_at=f.updated_at,
     )
@@ -1194,69 +1189,46 @@ def _sorted_findings(rows: list[Finding]) -> list[Finding]:
     )
 
 
-@router.post("/{task_id}/analyze", response_model=AnalysisResultResponse)
+@router.post("/{task_id}/analyze", response_model=AnalyzeResponse)
 async def analyze_task(
     task_id: int,
     request: AnalyzeRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """触发 AI 分析（占位）。建占位 Finding 行 + 写 task.config.last_analysis_at。
+    """触发 AI 分析（异步 background task）。
 
-    占位实现：调 ``run_analysis`` 返占位 AnalysisResult（不调真实 LLM），把
-    findings 落库成 Finding 行（status=pending），并在 task.config 记录
-    last_analysis_at 时间戳。返 {summary, findings}。
+    立即返回 200（``status=started`` + 本次跑的维度数），后台串行跑所有 enabled
+    维度，每跑完一个 WebSocket 推进度（event=``analysis.progress``）+ finding
+    实时增量入左侧列表。重跑只删 ``status='pending'`` 的 finding，保留
+    accepted/ignored 人工结论（呼应「清洗不删减」硬底线）。单维度失败 try/except
+    跳过 + log（容错 spec）。最后写 ``task.config.last_analysis_at``。
 
-    TODO 用户后续接真实 agent.run 后，findings 来自 agent 输出而非占位。
+    PRD §一：维度 = 结构化提示词；跑分析 = 每个 enabled 维度各跑一次 agentic
+    agent.run。维度 prompt 注入维度 agent 的 instructions。
     """
     task = await _load_owned_task(db, task_id, current_user)
-    deps = AuditDeps(db=db, task_id=task.id)
-    result = await run_analysis(deps)
+    if analysis_service.is_running(task_id):
+        raise HTTPException(status_code=409, detail="分析正在运行中")
 
-    # 落库 findings（占位：来自 run_analysis 的占位输出；真实接入后来自 agent）。
-    new_rows: list[Finding] = []
-    for item in result.findings:
-        row = Finding(
-            task_id=task.id,
-            type=item.type,
-            severity=item.severity,
-            description=item.description,
-            counterparty=item.counterparty,
-            amount=item.amount,
-            confidence=item.confidence,
-            status="pending",
-        )
-        db.add(row)
-        new_rows.append(row)
-    await db.flush()
+    # 取 enabled 维度数（响应里返；后台串行跑）。
+    from ..models import AuditDimension
 
-    # 记录上次分析时间（task.config jsonb）。
-    config = dict(task.config or {})
-    config["last_analysis_at"] = datetime.now(timezone.utc).isoformat()
-    task.config = config
-    db.add(
-        TaskLog(
-            task_id=task.id,
-            level="info",
-            message=f"AI analysis run (mode={request.mode or 'quick'}): {len(new_rows)} findings",
-        )
-    )
-    await db.commit()
-
-    return AnalysisResultResponse(
-        summary=result.summary,
-        findings=[
-            AnalysisFindingItem(
-                type=f.type,
-                severity=f.severity,
-                description=f.description,
-                counterparty=f.counterparty,
-                amount=f.amount,
-                confidence=f.confidence,
+    dims_count = (
+        await db.execute(
+            select(func.count())
+            .select_from(
+                select(AuditDimension).where(AuditDimension.enabled.is_(True)).subquery()
             )
-            for f in new_rows
-        ],
-    )
+        )
+    ).scalar() or 0
+
+    try:
+        await analysis_service.start_analysis(db, task_id, current_user)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    return AnalyzeResponse(status="started", task_id=task.id, total_dimensions=int(dims_count))
 
 
 @router.get("/{task_id}/findings", response_model=FindingListResponse)
@@ -1333,30 +1305,101 @@ async def patch_finding(
     return _finding_response(finding)
 
 
-@router.post("/{task_id}/analyze/chat", response_model=ChatResponse)
+@router.post("/{task_id}/analyze/chat", response_model=AuditChatResponse)
 async def analyze_chat(
     task_id: int,
-    request: ChatRequest,
+    request: AuditChatRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """多轮对话：读 Task.config.analysis_chat_history → chat() → 存回 + 返回复。
+    """多轮追问：取/建 AuditConversation → agent.run(msg, message_history) → 存回 + 返 (conv_id, reply)。
 
-    占位实现：chat() 返占位回复 + 用 ModelMessagesTypeAdapter 序列化占位
-    message_history 存回（结构通了即可，不调真实 LLM）。
+    ``conversation_id`` 为空时新建会话（title=首问题前 10 字）。追问 agent 挂只读
+    Toolset + query_findings + create_dimension；调 create_dimension 时沉淀草稿维度
+    （enabled=false）。阶段卡 STAGE_AI_QA。
     """
-    task = await _load_owned_task(db, task_id, current_user)
-    config = dict(task.config or {})
-    history_json = config.get("analysis_chat_history") or None
+    await _load_owned_task(db, task_id, current_user)
+    try:
+        conv_id, reply, tool_traces, sedimented = await analysis_service.chat(
+            db, task_id, request.conversation_id, request.message, current_user
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return AuditChatResponse(
+        reply=reply,
+        conversation_id=conv_id,
+        tool_traces=tool_traces,
+        sedimented_dimension=sedimented,
+    )
 
-    deps = AuditDeps(db=db, task_id=task.id)
-    reply, new_history_json = await analysis_chat(deps, history_json, request.message)
 
-    config["analysis_chat_history"] = new_history_json
-    task.config = config
+# ---------------------------------------------------------------------------
+# 追问会话 列表 / 新建 / 删除（06-26-ai-agent, PRD §九 Q9）.
+# owner-only，复用 _load_owned_task。删会话只删对话历史，不影响已沉淀维度
+# （沉淀落 audit_dimensions，跟会话独立）。
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/{task_id}/analyze/conversations", response_model=ConversationListResponse
+)
+async def list_analyze_conversations(
+    task_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """列出任务的所有追问会话（owner-only）。"""
+    await _load_owned_task(db, task_id, current_user)
+    convs = await analysis_service.list_conversations(db, task_id)
+    return ConversationListResponse(
+        items=[ConversationItem(**c) for c in convs],
+        total=len(convs),
+    )
+
+
+@router.post(
+    "/{task_id}/analyze/conversations",
+    response_model=ConversationItem,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_analyze_conversation(
+    task_id: int,
+    request: CreateConversationRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """新建追问会话（owner-only）。title 缺省由首问题前 10 字定（前端可传空）。"""
+    await _load_owned_task(db, task_id, current_user)
+    conv = await analysis_service.create_conversation(
+        db, task_id, (request.title or "")[:10]
+    )
     await db.commit()
+    return ConversationItem(
+        id=conv.id,
+        title=conv.title,
+        created_at=conv.created_at,
+        updated_at=conv.updated_at,
+    )
 
-    return ChatResponse(reply=reply)
+
+@router.delete(
+    "/{task_id}/analyze/conversations/{conversation_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_analyze_conversation(
+    task_id: int,
+    conversation_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """删追问会话（owner-only，只删对话历史，不影响已沉淀维度）。"""
+    await _load_owned_task(db, task_id, current_user)
+    try:
+        await analysis_service.delete_conversation(db, task_id, conversation_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    await db.commit()
+    return None
 
 
 # ---------------------------------------------------------------------------

@@ -15,6 +15,7 @@ import { Route as SplatRouteImport } from './routes/$'
 import { Route as _authenticatedIndexRouteImport } from './routes/__authenticated/index'
 import { Route as _authenticatedSettingsRouteImport } from './routes/__authenticated/settings'
 import { Route as _authenticatedKeywordLibraryRouteImport } from './routes/__authenticated/keyword-library'
+import { Route as _authenticatedAuditDimensionsRouteImport } from './routes/__authenticated/audit-dimensions'
 import { Route as _authenticatedTasksIndexRouteImport } from './routes/__authenticated/tasks/index'
 import { Route as _authenticatedTasksIdRouteImport } from './routes/__authenticated/tasks/$id'
 import { Route as _authenticatedTasksIdIndexRouteImport } from './routes/__authenticated/tasks/$id/index'
@@ -53,6 +54,12 @@ const _authenticatedKeywordLibraryRoute =
   _authenticatedKeywordLibraryRouteImport.update({
     id: '/keyword-library',
     path: '/keyword-library',
+    getParentRoute: () => _authenticatedRoute,
+  } as any)
+const _authenticatedAuditDimensionsRoute =
+  _authenticatedAuditDimensionsRouteImport.update({
+    id: '/audit-dimensions',
+    path: '/audit-dimensions',
     getParentRoute: () => _authenticatedRoute,
   } as any)
 const _authenticatedTasksIndexRoute =
@@ -113,6 +120,7 @@ export interface FileRoutesByFullPath {
   '/$': typeof SplatRoute
   '/': typeof _authenticatedIndexRoute
   '/login': typeof LoginRoute
+  '/audit-dimensions': typeof _authenticatedAuditDimensionsRoute
   '/keyword-library': typeof _authenticatedKeywordLibraryRoute
   '/settings': typeof _authenticatedSettingsRoute
   '/tasks/$id': typeof _authenticatedTasksIdRouteWithChildren
@@ -128,6 +136,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/$': typeof SplatRoute
   '/login': typeof LoginRoute
+  '/audit-dimensions': typeof _authenticatedAuditDimensionsRoute
   '/keyword-library': typeof _authenticatedKeywordLibraryRoute
   '/settings': typeof _authenticatedSettingsRoute
   '/': typeof _authenticatedIndexRoute
@@ -145,6 +154,7 @@ export interface FileRoutesById {
   '/$': typeof SplatRoute
   '/__authenticated': typeof _authenticatedRouteWithChildren
   '/login': typeof LoginRoute
+  '/__authenticated/audit-dimensions': typeof _authenticatedAuditDimensionsRoute
   '/__authenticated/keyword-library': typeof _authenticatedKeywordLibraryRoute
   '/__authenticated/settings': typeof _authenticatedSettingsRoute
   '/__authenticated/': typeof _authenticatedIndexRoute
@@ -164,6 +174,7 @@ export interface FileRouteTypes {
     | '/$'
     | '/'
     | '/login'
+    | '/audit-dimensions'
     | '/keyword-library'
     | '/settings'
     | '/tasks/$id'
@@ -179,6 +190,7 @@ export interface FileRouteTypes {
   to:
     | '/$'
     | '/login'
+    | '/audit-dimensions'
     | '/keyword-library'
     | '/settings'
     | '/'
@@ -195,6 +207,7 @@ export interface FileRouteTypes {
     | '/$'
     | '/__authenticated'
     | '/login'
+    | '/__authenticated/audit-dimensions'
     | '/__authenticated/keyword-library'
     | '/__authenticated/settings'
     | '/__authenticated/'
@@ -257,6 +270,13 @@ declare module '@tanstack/react-router' {
       path: '/keyword-library'
       fullPath: '/keyword-library'
       preLoaderRoute: typeof _authenticatedKeywordLibraryRouteImport
+      parentRoute: typeof _authenticatedRoute
+    }
+    '/__authenticated/audit-dimensions': {
+      id: '/__authenticated/audit-dimensions'
+      path: '/audit-dimensions'
+      fullPath: '/audit-dimensions'
+      preLoaderRoute: typeof _authenticatedAuditDimensionsRouteImport
       parentRoute: typeof _authenticatedRoute
     }
     '/__authenticated/tasks/': {
@@ -352,6 +372,7 @@ const _authenticatedTasksIdRouteWithChildren =
   )
 
 interface _authenticatedRouteChildren {
+  _authenticatedAuditDimensionsRoute: typeof _authenticatedAuditDimensionsRoute
   _authenticatedKeywordLibraryRoute: typeof _authenticatedKeywordLibraryRoute
   _authenticatedSettingsRoute: typeof _authenticatedSettingsRoute
   _authenticatedIndexRoute: typeof _authenticatedIndexRoute
@@ -360,6 +381,7 @@ interface _authenticatedRouteChildren {
 }
 
 const _authenticatedRouteChildren: _authenticatedRouteChildren = {
+  _authenticatedAuditDimensionsRoute: _authenticatedAuditDimensionsRoute,
   _authenticatedKeywordLibraryRoute: _authenticatedKeywordLibraryRoute,
   _authenticatedSettingsRoute: _authenticatedSettingsRoute,
   _authenticatedIndexRoute: _authenticatedIndexRoute,

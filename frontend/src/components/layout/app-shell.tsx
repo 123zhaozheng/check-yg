@@ -4,6 +4,7 @@ import {
   LayoutDashboard,
   ClipboardList,
   Library,
+  Layers,
   Settings as SettingsIcon,
   Shield,
   Search,
@@ -38,6 +39,7 @@ const NAV_ITEMS: ReadonlyArray<{
   { to: "/", label: "工作台", icon: LayoutDashboard, exact: true },
   { to: "/tasks", label: "审查任务", icon: ClipboardList },
   { to: "/keyword-library", label: "关键词库", icon: Library },
+  { to: "/audit-dimensions", label: "审查维度", icon: Layers },
   { to: "/settings", label: "设置", icon: SettingsIcon },
 ]
 

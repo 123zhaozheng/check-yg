@@ -28,12 +28,17 @@ class DummyWebSocket:
 
 
 class DummyAuthWebSocket:
-    """Minimal WebSocket double for auth tests."""
+    """Minimal WebSocket double for auth tests.
 
-    def __init__(self, token=None):
+    ``cookies`` mirrors Starlette's ``WebSocket.cookies`` mapping so the cookie
+    auth branch can be exercised (PRD §十一 WS 前端走 httpOnly cookie).
+    """
+
+    def __init__(self, token=None, cookies=None):
         self.query_params = {}
         if token is not None:
             self.query_params["token"] = token
+        self.cookies = cookies or {}
 
 
 class DummyUser:
@@ -108,6 +113,39 @@ async def test_authenticate_websocket_loads_active_user(monkeypatch):
 
     assert user is not None
     assert user.id == 1
+
+
+@pytest.mark.asyncio
+async def test_authenticate_websocket_accepts_cookie_token(monkeypatch):
+    """WS 鉴权支持 access_token httpOnly cookie（PRD §十一 前端走 WS 的唯一路径）.
+
+    无 query token、仅 cookie 带有效 access_token → 鉴权通过。query token 路径
+    保留（向后兼容），两者并存。
+    """
+    monkeypatch.setattr(
+        "app.websocket.router.verify_token",
+        lambda token: {"type": "access", "sub": "1"},
+    )
+    monkeypatch.setattr("app.websocket.router.async_session", lambda: DummySession())
+
+    user = await _authenticate_websocket(
+        DummyAuthWebSocket(cookies={"access_token": "cookie-token"})
+    )
+
+    assert user is not None
+    assert user.id == 1
+
+
+@pytest.mark.asyncio
+async def test_authenticate_websocket_rejects_when_no_token_anywhere(monkeypatch):
+    """无 query token 且无 access_token cookie → 拒（cookie 鉴权分支不放松安全）."""
+    monkeypatch.setattr(
+        "app.websocket.router.verify_token",
+        lambda token: {"type": "access", "sub": "1"},
+    )
+    monkeypatch.setattr("app.websocket.router.async_session", lambda: DummySession())
+
+    assert await _authenticate_websocket(DummyAuthWebSocket()) is None
 
 
 @pytest.mark.asyncio

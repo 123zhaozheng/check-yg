@@ -1,43 +1,68 @@
 # -*- coding: utf-8 -*-
-"""AI analysis agent skeleton using pydantic-ai (S6).
+"""AI 审查 agent —— 维度跑分析 + 悬浮追问（06-26-ai-agent）.
 
-这是 S6 的新 agent（非 legacy 搬运）——``SYSTEM_PROMPT_ANALYSIS`` 是**占位
-instructions**，明确标注"用户后续接真实审查逻辑"。本切片 agent 接入点结构
-按 ``docs/research/pydantic-ai-conventions.md`` (v1.107.0) 落地：
+核心范式（PRD §一）：**维度 = 结构化提示词**（不是工具、不是代码规则）；一套
+固化的只读表访问工具被所有维度共享；跑分析 = 每个 enabled 维度各跑一次
+agentic ``agent.run``；追问 = 悬浮框多轮对话；沉淀 = ``create_dimension`` 工具
+填字段 → 服务端拼模板 → 落库。新维度沉淀零代码。
 
-* ``AuditDeps`` dataclass：``db: AsyncSession`` + ``task_id: int``。
-* ``get_analysis_agent()``：复用 ``agent_factory.get_agent``（模块级单例）。
-* ``@agent.tool`` 工具签名（留接口，实现查 flow_records ``record_type="standard"``
-  记录，**只读不改**——呼应"不删减"底线）：
-  - ``query_transactions(ctx, *, channel?, limit?)``
-  - ``query_by_counterparty(ctx, *, counterparty)``
-  - ``query_by_amount_range(ctx, *, min_amount, max_amount)``
-  每个工具 docstring 成工具描述，参数成 JSON schema。
-* ``run_analysis(deps)``：**占位返回** AnalysisResult（不调真实 LLM——占位 prompt
-  会产生垃圾输出，结构对了即可；TODO 用户后续接真实 agent.run）。
-* ``chat(deps, message_history_json, user_msg)``：用 ``ModelMessagesTypeAdapter``
-  反序列化 history → 占位回复 + 序列化新 history 存回 Task.config
-  (决策3)。本切片不强制调真实 LLM。
+落地严格遵循 ``docs/research/pydantic-ai-conventions.md`` (v1.107.0)：
+* ``AuditDeps`` dataclass：``db: AsyncSession`` + ``task_id: int`` + ``user_id: int``
+  （user_id 供 create_dimension 落 created_by）。
+* 5 个只读工具用 ``FunctionToolset`` 打包成 ``ReadAuditToolset``（两 agent 共享）。
+  底层查 ``flow_records WHERE task_id=? AND record_type='standard'``，金额/时间
+  解析复用 ``app.services.audit.parsing``（legacy ``_parse_amount``/``_parse_datetime``）。
+  所有工具带 limit（明细默认 200，硬上限 1000）防爆 context。
+* 维度 agent：``output_type=DimensionFindingResult``，instructions=该维度 prompt
+  （动态），挂 ``ReadAuditToolset``，agentic 单次 run 内多步工具循环，阶段卡
+  ``STAGE_AI_ANALYSIS``。
+* 追问 agent：``output_type=str``，instructions=静态通用 QA，挂 ``ReadAuditToolset``
+  + ``query_findings`` + ``create_dimension``，阶段卡 ``STAGE_AI_QA``，多轮走
+  ``message_history`` + ``ModelMessagesTypeAdapter``。
+* 复用 ``agent_factory.get_agent``（模块级单例，缓存 key 含 instructions → 每个
+  维度 prompt 各自一个缓存 agent 单例）。
+* ``create_dimension`` 限 ``steps.tool`` 白名单（5 个只读 + query_findings），
+  编造 → ``ModelRetry``；服务端拼 prompt 落 ``AuditDimension``（source=agent,
+  enabled=false, created_by=当前用户）。**agent 无删除工具**。
 
-提示词保真：本文件**不触碰** normalizer/classifier/portrait 的 SYSTEM_PROMPT。
+硬底线（不删减）：只读工具不改任何记录；重跑只删 pending finding 保留人工结论
+（在 service 层）。
 """
 
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Optional
+from datetime import timedelta
+from typing import Any, Optional
 
-from pydantic_ai import Agent, ModelMessagesTypeAdapter, RunContext
+from pydantic import BaseModel
+from pydantic_ai import (
+    Agent,
+    ModelMessagesTypeAdapter,
+    ModelRetry,
+    RunContext,
+)
+from pydantic_ai.messages import (
+    ModelRequest,
+    ModelResponse,
+    ToolCallPart,
+    ToolReturnPart,
+)
+from pydantic_ai.toolsets import FunctionToolset
 from pydantic_core import to_json
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.llm.agent_factory import get_agent
-from app.llm.types import AnalysisResult
-from app.models import FlowRecordRow
+from app.llm.types import DimensionFindingResult
+from app.models import AuditDimension, Finding, FlowRecordRow
+from app.models.audit_dimension import DIMENSION_SEVERITIES, SOURCE_AGENT
 from app.models.llm_model import LLMModel
 from app.models.llm_model_assignment import STAGE_AI_ANALYSIS, STAGE_AI_QA
+from app.services.audit.dimension_prompt import build_dimension_prompt
+from app.services.audit.parsing import parse_amount, parse_datetime
 from app.services.llm_model_service import get_stage_model
 
 logger = logging.getLogger(__name__)
@@ -50,196 +75,122 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class AuditDeps:
-    """per-request deps for the analysis agent (conventions.md)."""
+    """per-request deps for the audit agents (conventions.md).
+
+    ``user_id`` 供 ``create_dimension`` 落 ``created_by``（追问 agent 沉淀维度时）。
+    """
 
     db: AsyncSession
     task_id: int
+    user_id: int
 
 
 # ---------------------------------------------------------------------------
-# 占位 instructions — 结构对齐 conventions.md（任务/工具说明/输出格式）。
-# 明确标注"占位"，用户后续接真实审查逻辑。**禁改** normalizer/classifier/portrait
-# 的 SYSTEM_PROMPT（本文件只新增此常量）。
+# 常量
 # ---------------------------------------------------------------------------
 
-SYSTEM_PROMPT_ANALYSIS = """你是银行/支付流水审计异常发现助手（占位骨架）。
+# 明细类工具默认 / 硬上限 limit（PRD §二，防爆 context）。
+_DEFAULT_DETAIL_LIMIT = 200
+_HARD_DETAIL_LIMIT = 1000
+
+# 只读工具白名单 —— create_dimension 的 steps.tool 限此集合 + query_findings。
+READONLY_TOOL_WHITELIST = frozenset(
+    {
+        "get_task_summary",
+        "query_by_time",
+        "query_by_amount",
+        "query_by_counterparty",
+        "query_burst",
+        "query_findings",
+    }
+)
+
+# 追问 agent 静态通用 QA instructions（多轮；挂只读 Toolset + query_findings +
+# create_dimension）。
+_QA_INSTRUCTIONS = """你是银行/支付流水审计问答助手（悬浮追问）。
 
 ## 任务
-对标准化流水（flow_records.record_type="standard"）运行审计异常发现，输出
-异常发现列表 + 整体摘要。
+针对当前审查任务的标准化流水，回答审计人员的追问。可调用只读查询工具获取真实
+数据，不要编造。回答要先给结论，再补充依据；引用记录时带上对手名、金额、交易
+时间、流水行号等可追溯信息。
 
-## 工具说明
-你可以调用以下只读查询工具获取标准化流水（不修改任何记录）：
-- query_transactions: 查询标准化交易记录，可按渠道过滤、限制返回条数。
-- query_by_counterparty: 按交易对手名称查询。
-- query_by_amount_range: 按金额区间查询。
+## 可用工具（只读，已剔除无时分秒记录，均带limit防爆context）
+- get_task_summary / query_by_time / query_by_amount / query_by_counterparty /
+  query_burst：查标准化流水（standard 记录）。
+- query_findings：查本任务已有的异常发现（findings）。
+- create_dimension：当审计人员在追问中提出一个**新的、可复用的审查维度**时，
+  调此工具沉淀它（填 name/purpose/steps/judgment/severity）。日常问答不要调。
 
-## 输出格式
-输出 AnalysisResult：findings 列表（每项 type/severity/description/counterparty/
-amount/confidence）+ summary（整体推理摘要）。severity 取 high|medium|low。
+## 沉淀维度（create_dimension）
+仅当审计人员明确说「沉淀/保存/加成一个维度」时才调 create_dimension。steps.tool
+限白名单（上述只读工具 + query_findings），不要编造工具名。沉淀出的维度是草稿
+（enabled=false），需人在维度管理页启用才进 analyze。
 
-## 注意
-本 instructions 为占位骨架，用户后续接入真实审查逻辑（异常检测规则、风险
-阈值、推理链路等）。
+## 输出
+纯文本回答。若上下文不足以回答，明确说明「根据当前数据无法确定」，并说明缺了什么。
 """
 
-_MAX_TOKENS_ANALYSIS = 2000
+_MAX_TOKENS_DIMENSION = 4000
+_MAX_TOKENS_QA = 2000
 
 
 # ---------------------------------------------------------------------------
-# 阶段模型卡片预留接线（06-23-llm-model-card）
+# 阶段模型卡片接线（STAGE_AI_ANALYSIS / STAGE_AI_QA）
 # ---------------------------------------------------------------------------
-# ai_analysis / ai_qa 阶段当前是占位（不调真实 LLM）。本切片只确保它们**能**
-# 按阶段读卡片（预留接线函数），等后续任务接真实 agent.run 时生效。
 
 
 async def get_analysis_model(db: AsyncSession) -> Optional[LLMModel]:
-    """ai_analysis 阶段指派的卡片（预留接线，占位阶段当前不调真实 LLM）。
-
-    Returns:
-        指派的 ``LLMModel`` 或 None（未指派 → 后续接真实 LLM 时回退兜底）。
-    """
+    """ai_analysis 阶段指派的卡片（维度跑分析用）。未指派返 None → 回退 env settings。"""
     return await get_stage_model(db, STAGE_AI_ANALYSIS)
 
 
 async def get_ai_qa_model(db: AsyncSession) -> Optional[LLMModel]:
-    """ai_qa 阶段指派的卡片（预留接线，占位阶段当前不调真实 LLM）。"""
+    """ai_qa 阶段指派的卡片（追问 agent 用）。未指派返 None → 回退 env settings。"""
     return await get_stage_model(db, STAGE_AI_QA)
 
 
-# ---------------------------------------------------------------------------
-# Agent 构造 + @agent.tool 注册（只读查 flow_records standard 记录）
-# ---------------------------------------------------------------------------
+def _resolve_agent_params(
+    model: Optional[LLMModel], *, fallback_max_tokens: int
+) -> dict[str, Any]:
+    """解析 agent 连接参数（优先级：阶段卡片 > env settings > 模块常量）。
 
-
-def get_analysis_agent() -> Agent:
-    """复用 agent_factory.get_agent 建模块级单例 agent，首调注册只读 tools。
-
-    工具在 agent 上只能注册一次（pydantic-ai 会抛 Tool name conflicts），
-    而 ``get_agent`` 按 (base_url, api_key, model, timeout, max_tokens,
-    output_type, instructions, deps_type) 缓存——同 key 返回同一个 agent
-    实例。所以用 agent 实例上的 ``_analysis_tools_registered`` sentinel 避免
-    重复注册。``deps_type=AuditDeps`` 传类型（conventions.md），运行时
-    ``agent.run(..., deps=AuditDeps(...))`` 传实例。
+    对齐 extractor ``_resolve_stage_llm_params``：卡片字段空时回退 env settings。
+    ``thinking``：卡片是 reasoning 且 default_thinking≠off 时传 low/medium/high；
+    否则 None（不给非 reasoning 模型发 reasoning_effort，research §3）。
     """
-    agent = get_agent(
-        AnalysisResult,
-        SYSTEM_PROMPT_ANALYSIS,
-        max_tokens=_MAX_TOKENS_ANALYSIS,
-        deps_type=AuditDeps,
-    )
-    if getattr(agent, "_analysis_tools_registered", False):
-        return agent
-    _register_analysis_tools(agent)
-    agent._analysis_tools_registered = True  # type: ignore[attr-defined]
-    return agent
+    env_base_url = settings.LLM_API_ENDPOINT
+    env_api_key = settings.LLM_API_KEY
+    env_model = settings.LLM_MODEL_NAME
+    env_timeout = settings.LLM_TIMEOUT
+
+    if model is None:
+        return {
+            "base_url": None,  # None → get_agent 回退 env settings
+            "api_key": None,
+            "model": None,
+            "timeout": None,
+            "max_tokens": fallback_max_tokens,
+            "thinking": None,
+            "temperature": None,
+        }
+
+    thinking = model.default_thinking
+    if thinking == "off" or not model.is_reasoning:
+        thinking = None
+    return {
+        "base_url": model.provider_base_url or None,
+        "api_key": model.api_key or None,
+        "model": model.model_name or None,
+        "timeout": None,  # timeout 不来自卡片，用 env settings
+        "max_tokens": model.default_max_tokens or fallback_max_tokens,
+        "thinking": thinking,
+        "temperature": model.default_temperature,
+    }
 
 
-def _register_analysis_tools(agent: Agent) -> None:
-    """在 agent 上注册 3 个只读查询工具（查 flow_records standard 记录）。
-
-    工具只读不改（不增删改任何 flow_records 行）——呼应"不删减"底线。
-    docstring 成工具描述，参数成 JSON schema（conventions.md）。
-    """
-
-    @agent.tool
-    async def query_transactions(
-        ctx: RunContext[AuditDeps],
-        *,
-        channel: str | None = None,
-        limit: int = 50,
-    ) -> list[dict]:
-        """查询标准化流水交易记录（record_type="standard"）。
-
-        可选按渠道过滤，默认最多返回 50 条。只读不改。
-
-        Args:
-            channel: 可选，按渠道过滤（如"银行流水"/"支付渠道"），为空则不限。
-            limit: 返回条数上限，默认 50。
-        """
-        db = ctx.deps.db
-        task_id = ctx.deps.task_id
-        stmt = (
-            select(FlowRecordRow)
-            .where(
-                FlowRecordRow.task_id == task_id,
-                FlowRecordRow.record_type == "standard",
-            )
-            .order_by(FlowRecordRow.id.asc())
-            .limit(limit)
-        )
-        if channel:
-            stmt = stmt.where(FlowRecordRow.channel == channel)
-        result = await db.execute(stmt)
-        rows = result.scalars().all()
-        return [_row_to_dict(r) for r in rows]
-
-    @agent.tool
-    async def query_by_counterparty(
-        ctx: RunContext[AuditDeps],
-        *,
-        counterparty: str,
-    ) -> list[dict]:
-        """按交易对手名称查询标准化流水记录（record_type="standard"）。
-
-        只读不改。
-
-        Args:
-            counterparty: 交易对手名称（精确匹配 counterparty_name）。
-        """
-        db = ctx.deps.db
-        task_id = ctx.deps.task_id
-        stmt = (
-            select(FlowRecordRow)
-            .where(
-                FlowRecordRow.task_id == task_id,
-                FlowRecordRow.record_type == "standard",
-                FlowRecordRow.counterparty_name == counterparty,
-            )
-            .order_by(FlowRecordRow.id.asc())
-        )
-        result = await db.execute(stmt)
-        rows = result.scalars().all()
-        return [_row_to_dict(r) for r in rows]
-
-    @agent.tool
-    async def query_by_amount_range(
-        ctx: RunContext[AuditDeps],
-        *,
-        min_amount: float,
-        max_amount: float,
-    ) -> list[dict]:
-        """按金额区间查询标准化流水记录（record_type="standard"）。
-
-        金额存为字符串，工具在 Python 侧 parse 成 float 做区间过滤。只读不改。
-
-        Args:
-            min_amount: 金额下限（含）。
-            max_amount: 金额上限（含）。
-        """
-        db = ctx.deps.db
-        task_id = ctx.deps.task_id
-        stmt = (
-            select(FlowRecordRow)
-            .where(
-                FlowRecordRow.task_id == task_id,
-                FlowRecordRow.record_type == "standard",
-            )
-            .order_by(FlowRecordRow.id.asc())
-        )
-        result = await db.execute(stmt)
-        rows = result.scalars().all()
-        out: list[dict] = []
-        for r in rows:
-            try:
-                amt = float(r.amount) if r.amount else None
-            except (TypeError, ValueError):
-                amt = None
-            if amt is None:
-                continue
-            if min_amount <= amt <= max_amount:
-                out.append(_row_to_dict(r))
-        return out
+# ---------------------------------------------------------------------------
+# 只读工具 —— 行→dict 快照 + 5 个工具（FunctionToolset 打包）
+# ---------------------------------------------------------------------------
 
 
 def _row_to_dict(row: FlowRecordRow) -> dict:
@@ -257,71 +208,719 @@ def _row_to_dict(row: FlowRecordRow) -> dict:
     }
 
 
-# ---------------------------------------------------------------------------
-# run_analysis — 占位返回（不调真实 LLM，结构对了即可）
-# ---------------------------------------------------------------------------
+def _has_hms(tx_time: Optional[str]) -> bool:
+    """交易时间是否带非零时分秒（剔除「只记日期」噪音，PRD §二）。
 
-
-async def run_analysis(deps: AuditDeps) -> AnalysisResult:
-    """运行 AI 分析，返 AnalysisResult。
-
-    占位实现：直接返占位 findings 结构，不调真实 agent.run（避免占位 prompt
-    产生垃圾输出）。结构对了即可，TODO 用户后续接真实审查逻辑（调
-    ``get_analysis_agent().run(user_prompt, deps=deps)`` 并据 result.output 落库）。
+    ``00:00:00`` 视为「只记日期」噪音（不可关）。带时分秒且非全 0 → True。
     """
-    # TODO(用户): 接入真实审查逻辑，例如：
-    #   agent = get_analysis_agent()
-    #   result = await agent.run(user_prompt, deps=deps)
-    #   return result.output
-    return AnalysisResult(
-        findings=[],
-        summary="AI 分析骨架已就绪，真实推理待接入。",
+    if not tx_time:
+        return False
+    # 形如 "YYYY-MM-DD HH:MM:SS" / "YYYY-MM-DDTHH:MM:SS"。
+    parts = tx_time.replace("T", " ").split(" ", 1)
+    if len(parts) != 2:
+        return False
+    hms = parts[1].strip()
+    if not hms:
+        return False
+    # 全 0（00:00:00 / 00:00）→ 噪音。
+    return any(ch != "0" and ch != ":" for ch in hms)
+
+
+def _clamp_limit(limit: int | None) -> int:
+    """limit 夹到 [1, _HARD_DETAIL_LIMIT]。"""
+    if limit is None:
+        return _DEFAULT_DETAIL_LIMIT
+    try:
+        n = int(limit)
+    except (TypeError, ValueError):
+        return _DEFAULT_DETAIL_LIMIT
+    if n < 1:
+        return 1
+    if n > _HARD_DETAIL_LIMIT:
+        return _HARD_DETAIL_LIMIT
+    return n
+
+
+async def _load_standard_rows(db: AsyncSession, task_id: int) -> list[FlowRecordRow]:
+    """取该 task 所有 standard flow_records（按 id 升序）。"""
+    result = await db.execute(
+        select(FlowRecordRow)
+        .where(
+            FlowRecordRow.task_id == task_id,
+            FlowRecordRow.record_type == "standard",
+        )
+        .order_by(FlowRecordRow.id.asc())
     )
+    return list(result.scalars().all())
+
+
+def build_read_audit_toolset() -> FunctionToolset[AuditDeps]:
+    """构造 5 个只读工具打包的 ``FunctionToolset``（两 agent 共享）。
+
+    每个工具 docstring 成工具描述，参数成 JSON schema（conventions.md）。
+    所有工具底层查 ``flow_records WHERE task_id=? AND record_type='standard'``，
+    金额/时间解析复用 ``app.services.audit.parsing``。明细类带 limit（默认 200，
+    硬上限 1000）。**只读不改**（不删减底线）。
+    """
+
+    toolset: FunctionToolset[AuditDeps] = FunctionToolset()
+
+    @toolset.tool
+    async def get_task_summary(ctx: RunContext[AuditDeps]) -> dict:
+        """任务标准化流水总览（只返聚合数，不返明细）。
+
+        含 standard / unparsed 计数、金额合计、时间跨度。摸底用此工具，下钻用带
+        参数工具。
+        """
+        db = ctx.deps.db
+        task_id = ctx.deps.task_id
+        rows = await _load_standard_rows(db, task_id)
+        amounts = [parse_amount(r.amount) for r in rows if r.amount]
+        total_amount = sum(amounts)
+        times = [parse_datetime(r.transaction_time) for r in rows if r.transaction_time]
+        valid_times = [t for t in times if t]
+        unparsed_count = (
+            await db.execute(
+                select(func.count(FlowRecordRow.id)).where(
+                    FlowRecordRow.task_id == task_id,
+                    FlowRecordRow.record_type == "unparsed",
+                )
+            )
+        ).scalar() or 0
+        return {
+            "standard_count": len(rows),
+            "unparsed_count": int(unparsed_count),
+            "total_amount": f"¥{total_amount:,.2f}",
+            "time_span": {
+                "start": valid_times[0].strftime("%Y-%m-%d %H:%M:%S") if valid_times else "",
+                "end": valid_times[-1].strftime("%Y-%m-%d %H:%M:%S") if valid_times else "",
+            }
+            if valid_times
+            else {"start": "", "end": ""},
+        }
+
+    @toolset.tool
+    async def query_by_time(
+        ctx: RunContext[AuditDeps],
+        *,
+        start: str | None = None,
+        end: str | None = None,
+        hours: list[int] | None = None,
+        limit: int = _DEFAULT_DETAIL_LIMIT,
+    ) -> list[dict]:
+        """按交易时间窗口查 standard 流水。
+
+        **默认剔除时分秒==00:00:00 的「只记日期」噪音（不可关）**——全 0 是噪音。
+        二选一传参：``start``+``end``（ISO YYYY-MM-DD，含）区间，或 ``hours``
+        （交易小时列表，如夜间 ``[22,23,0,1,2,3,4,5]``）。
+
+        Args:
+            start: ISO YYYY-MM-DD，区间起（含）。可空。
+            end: ISO YYYY-MM-DD，区间止（含）。可空。
+            hours: 交易小时列表（0-23），命中其一即返回。可空。
+            limit: 返回条数上限，默认 200，硬上限 1000。
+        """
+        db = ctx.deps.db
+        task_id = ctx.deps.task_id
+        n = _clamp_limit(limit)
+        rows = await _load_standard_rows(db, task_id)
+
+        start_dt = parse_datetime(start) if start else None
+        end_dt = parse_datetime(end) if end else None
+        # end 含当日 → 加一天做上界。
+        if end_dt:
+            end_dt = end_dt + timedelta(days=1)
+        hours_set = set(hours) if hours else None
+
+        out: list[dict] = []
+        for r in rows:
+            if not _has_hms(r.transaction_time):
+                continue
+            dt = parse_datetime(r.transaction_time)
+            if dt is None:
+                continue
+            if start_dt and dt < start_dt:
+                continue
+            if end_dt and dt >= end_dt:
+                continue
+            if hours_set is not None and dt.hour not in hours_set:
+                continue
+            out.append(_row_to_dict(r))
+            if len(out) >= n:
+                break
+        return out
+
+    @toolset.tool
+    async def query_by_amount(
+        ctx: RunContext[AuditDeps],
+        *,
+        min: float | None = None,
+        max: float | None = None,
+        mode: str | None = None,
+        limit: int = _DEFAULT_DETAIL_LIMIT,
+    ) -> list[dict]:
+        """按金额区间查 standard 流水。
+
+        ``min``/``max`` 直接传区间，或 ``mode`` 让 agent 不用算阈值：
+        * ``large`` —— 大额（≥``min``，``min`` 缺省取 50000）。
+        * ``round`` —— 异常整数金额（尾随 ≥4 个 0）。
+        * ``evasion`` —— 阈值下浮 band 内（<``min`` 且 ≥``min``*0.8，规避大额上报）。
+
+        Args:
+            min: 金额下限（含），可空。
+            max: 金额上限（含），可空。
+            mode: large / round / evasion，可空。
+            limit: 返回条数上限，默认 200，硬上限 1000。
+        """
+        db = ctx.deps.db
+        task_id = ctx.deps.task_id
+        n = _clamp_limit(limit)
+        rows = await _load_standard_rows(db, task_id)
+
+        lo = float(min) if min is not None else None
+        hi = float(max) if max is not None else None
+        mode_str = (mode or "").strip().lower() or None
+        if mode_str == "large" and lo is None:
+            lo = 50000.0
+
+        out: list[dict] = []
+        for r in rows:
+            amt = parse_amount(r.amount)
+            if amt <= 0:
+                continue
+            if mode_str == "round":
+                # 尾随 ≥4 个 0：整数且 %10000==0。
+                if amt < 10000 or abs(amt - round(amt)) > 1e-6:
+                    continue
+                if int(round(amt)) % 10000 != 0:
+                    continue
+            elif mode_str == "evasion":
+                band_lo = (lo or 50000.0) * 0.8
+                band_hi = lo or 50000.0
+                if not (band_lo <= amt < band_hi):
+                    continue
+            else:
+                if lo is not None and amt < lo:
+                    continue
+                if hi is not None and amt > hi:
+                    continue
+            out.append(_row_to_dict(r))
+            if len(out) >= n:
+                break
+        return out
+
+    @toolset.tool
+    async def query_by_counterparty(
+        ctx: RunContext[AuditDeps],
+        *,
+        name: str | None = None,
+        min_count: int | None = None,
+        limit: int = _DEFAULT_DETAIL_LIMIT,
+    ) -> list[dict]:
+        """按对手方查 standard 流水。
+
+        传 ``name`` 查指定对手方；传 ``min_count`` 一步出「≥N 笔的对手方」
+        （返按笔数降序的对手方聚合，每项含 counterparty_name / count / total_amount /
+        sample_record_ids）。两者同传时 ``min_count`` 优先（聚合模式）。
+
+        Args:
+            name: 对手方名称（精确匹配 counterparty_name），可空。
+            min_count: 只返交易笔数 ≥ 此值的对手方（聚合模式），可空。
+            limit: 返回条数上限（明细模式默认 200；聚合模式默认 50），硬上限 1000。
+        """
+        db = ctx.deps.db
+        task_id = ctx.deps.task_id
+        rows = await _load_standard_rows(db, task_id)
+
+        if min_count is not None:
+            # 聚合模式：按对手方聚合，过滤 ≥min_count，按笔数降序。
+            agg: dict[str, dict] = {}
+            for r in rows:
+                cp = (r.counterparty_name or "").strip()
+                if not cp:
+                    continue
+                entry = agg.setdefault(
+                    cp, {"count": 0, "total_amount": 0.0, "sample_record_ids": []}
+                )
+                entry["count"] += 1
+                entry["total_amount"] += parse_amount(r.amount)
+                if len(entry["sample_record_ids"]) < 10:
+                    entry["sample_record_ids"].append(r.id)
+            items = [
+                {
+                    "counterparty_name": cp,
+                    "count": e["count"],
+                    "total_amount": f"¥{e['total_amount']:,.2f}",
+                    "sample_record_ids": e["sample_record_ids"],
+                }
+                for cp, e in agg.items()
+                if e["count"] >= int(min_count)
+            ]
+            items.sort(key=lambda x: x["count"], reverse=True)
+            agg_limit = min(_clamp_limit(limit), 50) if limit != _DEFAULT_DETAIL_LIMIT else 50
+            return items[:agg_limit]
+
+        # 明细模式：按 name 精确匹配。
+        n = _clamp_limit(limit)
+        target = (name or "").strip()
+        out: list[dict] = []
+        for r in rows:
+            if target and (r.counterparty_name or "").strip() != target:
+                continue
+            out.append(_row_to_dict(r))
+            if len(out) >= n:
+                break
+        return out
+
+    @toolset.tool
+    async def query_burst(
+        ctx: RunContext[AuditDeps],
+        *,
+        window_minutes: int,
+        min_count: int = 2,
+        limit: int = 50,
+    ) -> list[dict]:
+        """短间隔簇 / 快进快出（同对手方短时密集交易）。
+
+        时间聚类逻辑封进工具（不让 agent 拼）：按对手方分组，组内按时间排序，
+        相邻交易间隔 ≤``window_minutes`` 分钟归同一簇；簇内笔数 ≥``min_count``
+        即上报。返按簇内笔数降序的簇列表，每项含 counterparty_name / count /
+        time_window / total_amount / record_ids。
+
+        Args:
+            window_minutes: 簇间隔阈值（分钟），相邻交易间隔 ≤此值归同簇。
+            min_count: 簇内最少笔数才上报，默认 2。
+            limit: 返回簇数上限，默认 50，硬上限 1000。
+        """
+        db = ctx.deps.db
+        task_id = ctx.deps.task_id
+        n = _clamp_limit(limit)
+        rows = await _load_standard_rows(db, task_id)
+
+        grouped: dict[str, list[tuple[Any, FlowRecordRow]]] = {}
+        for r in rows:
+            if not _has_hms(r.transaction_time):
+                continue
+            dt = parse_datetime(r.transaction_time)
+            if dt is None:
+                continue
+            cp = (r.counterparty_name or "").strip()
+            if not cp:
+                continue
+            grouped.setdefault(cp, []).append((dt, r))
+
+        cases: list[dict] = []
+        threshold = timedelta(minutes=int(window_minutes))
+        for cp, items in grouped.items():
+            items.sort(key=lambda x: x[0])
+            cluster: list[tuple[Any, FlowRecordRow]] = []
+            for dt, r in items:
+                if not cluster:
+                    cluster = [(dt, r)]
+                    continue
+                if dt - cluster[-1][0] <= threshold:
+                    cluster.append((dt, r))
+                else:
+                    if len(cluster) >= int(min_count):
+                        cases.append(_build_burst_case(cp, cluster))
+                    cluster = [(dt, r)]
+            if len(cluster) >= int(min_count):
+                cases.append(_build_burst_case(cp, cluster))
+
+        cases.sort(key=lambda c: c["count"], reverse=True)
+        return cases[:n]
+
+    return toolset
+
+
+def _build_burst_case(
+    counterparty: str, cluster: list[tuple[Any, FlowRecordRow]]
+) -> dict:
+    """单个短间隔簇 → dict（query_burst 用）。"""
+    total = sum(parse_amount(r.amount) for _, r in cluster)
+    return {
+        "counterparty_name": counterparty,
+        "count": len(cluster),
+        "time_window": (
+            f"{cluster[0][0].strftime('%Y-%m-%d %H:%M:%S')} "
+            f"至 {cluster[-1][0].strftime('%Y-%m-%d %H:%M:%S')}"
+        ),
+        "total_amount": f"¥{total:,.2f}",
+        "record_ids": [r.id for _, r in cluster[:20]],
+    }
 
 
 # ---------------------------------------------------------------------------
-# chat — 多轮对话骨架（ModelMessagesTypeAdapter 序列化 + 占位回复）
+# 维度 agent —— 跑分析（动态 instructions=该维度 prompt）
 # ---------------------------------------------------------------------------
 
 
-_CHAT_PLACEHOLDER_REPLY = "分析骨架已就绪，真实推理待接入。"
+def get_dimension_agent(
+    dimension_prompt: str, *, model: Optional[LLMModel] = None
+) -> Agent:
+    """建/取维度 agent（模块级单例，缓存 key 含 instructions → 每维度各自单例）。
+
+    挂 ``ReadAuditToolset``（5 个只读工具，经 ``toolsets=`` 注入）。``output_type=
+    DimensionFindingResult``。``instructions=dimension_prompt``（动态，跑分析时
+    注入该维度的拼好 prompt）。
+    """
+    params = _resolve_agent_params(model, fallback_max_tokens=_MAX_TOKENS_DIMENSION)
+    agent = get_agent(
+        DimensionFindingResult,
+        dimension_prompt,
+        base_url=params["base_url"],
+        api_key=params["api_key"],
+        model=params["model"],
+        timeout=params["timeout"],
+        max_tokens=params["max_tokens"],
+        thinking=params["thinking"],
+        temperature=params["temperature"],
+        deps_type=AuditDeps,
+        toolsets=[_readonly_toolset()],
+    )
+    return agent
+
+
+# 模块级共享只读 Toolset 单例（两 agent 共用同一实例，避免每次重建）。
+_READONLY_TOOLSET: Optional[FunctionToolset[AuditDeps]] = None
+
+
+def _readonly_toolset() -> FunctionToolset[AuditDeps]:
+    """模块级单例只读 Toolset（懒构造，两 agent 共享同一实例）。"""
+    global _READONLY_TOOLSET
+    if _READONLY_TOOLSET is None:
+        _READONLY_TOOLSET = build_read_audit_toolset()
+    return _READONLY_TOOLSET
+
+
+async def run_dimension(
+    deps: AuditDeps,
+    dimension: AuditDimension,
+    *,
+    model: Optional[LLMModel] = None,
+) -> DimensionFindingResult:
+    """跑单个维度：该维度 prompt 注入维度 agent.instructions → agent.run。
+
+    agentic 单次 run 内多步工具循环（agent 自己调 N 次工具直到满意）。零命中 →
+    ``findings`` 为空。LLM 不可用 / 失败 → 抛异常由 service 层 try/except 跳过
+    该维度（容错 spec）。
+    """
+    agent = get_dimension_agent(dimension.prompt, model=model)
+    user_prompt = (
+        f"请按上述维度「{dimension.name}」对本任务 standard 流水跑分析，"
+        f"按需调用只读工具，产出 DimensionFindingResult。"
+    )
+    result = await agent.run(user_prompt, deps=deps)
+    return result.output
+
+
+# ---------------------------------------------------------------------------
+# 追问 agent —— 多轮对话 + query_findings + create_dimension
+# ---------------------------------------------------------------------------
+
+
+def get_qa_agent(*, model: Optional[LLMModel] = None) -> Agent:
+    """建/取追问 agent（模块级单例，静态 instructions）。
+
+    挂 ``ReadAuditToolset``（经 ``toolsets=``）+ ``query_findings`` + ``create_dimension``
+    （经 ``@agent.tool``，进 ``_function_toolset``）。运行时两者合并。``output_type=str``，
+    阶段卡 STAGE_AI_QA。
+    """
+    params = _resolve_agent_params(model, fallback_max_tokens=_MAX_TOKENS_QA)
+    agent = get_agent(
+        str,
+        _QA_INSTRUCTIONS,
+        base_url=params["base_url"],
+        api_key=params["api_key"],
+        model=params["model"],
+        timeout=params["timeout"],
+        max_tokens=params["max_tokens"],
+        thinking=params["thinking"],
+        temperature=params["temperature"],
+        deps_type=AuditDeps,
+        toolsets=[_readonly_toolset()],
+    )
+    # query_findings + create_dimension 经 @agent.tool 进 _function_toolset。
+    # sentinel 避免缓存命中后重复注册（tool name 冲突）。
+    tag = "_qa_extra_tools_registered"
+    if not getattr(agent, tag, False):
+        _register_qa_extra_tools(agent)
+        setattr(agent, tag, True)
+    return agent
+
+
+def _register_qa_extra_tools(agent: Agent) -> None:
+    """在追问 agent 上注册 query_findings + create_dimension（只读 + 沉淀）。
+
+    ``create_dimension`` 限 ``steps.tool`` 白名单（5 个只读 + query_findings），
+    编造 → ``ModelRetry``；服务端拼 prompt 落 ``AuditDimension``（source=agent,
+    enabled=false, created_by=当前用户）。**agent 无删除工具**。
+    """
+
+    @agent.tool
+    async def query_findings(ctx: RunContext[AuditDeps]) -> list[dict]:
+        """查本任务已有的所有异常发现（findings），只读。
+
+        返每条 finding 的 type / severity / counterparty / amount / detail_text /
+        confidence / status / dimension_name。
+        """
+        db = ctx.deps.db
+        task_id = ctx.deps.task_id
+        result = await db.execute(
+            select(Finding)
+            .where(Finding.task_id == task_id)
+            .order_by(Finding.id.asc())
+        )
+        rows = result.scalars().all()
+        out: list[dict] = []
+        for f in rows:
+            dim_name = None
+            if f.dimension_id is not None:
+                dim_row = (
+                    await db.execute(
+                        select(AuditDimension.name).where(
+                            AuditDimension.id == f.dimension_id
+                        )
+                    )
+                ).scalar_one_or_none()
+                dim_name = dim_row
+            out.append(
+                {
+                    "id": f.id,
+                    "type": f.type,
+                    "severity": f.severity,
+                    "counterparty": f.counterparty,
+                    "amount": f.amount,
+                    "detail_text": f.detail_text,
+                    "confidence": f.confidence,
+                    "status": f.status,
+                    "dimension_name": dim_name,
+                }
+            )
+        return out
+
+    @agent.tool
+    async def create_dimension(
+        ctx: RunContext[AuditDeps],
+        *,
+        name: str,
+        purpose: str,
+        steps: list[dict],
+        judgment: str,
+        severity: str,
+    ) -> str:
+        """沉淀新审查维度（草稿，需人在维度管理页启用才进 analyze）。
+
+        字段缺一拒绝。``steps.tool`` 限只读工具白名单（5 个只读 + query_findings），
+        编造 → ModelRetry。服务端用固定模板拼 ``prompt`` 写库（source=agent,
+        enabled=false, created_by=当前用户）。
+
+        Args:
+            name: 维度名（≤20 字）。
+            purpose: 要查什么异常（1-2 句）。
+            steps: 按序列出要调哪些工具、传什么参数（``list[{tool, params}]``，
+                tool 限白名单）。
+            judgment: 命中 / severity 判定标准。
+            severity: high | medium | low。
+        """
+        db = ctx.deps.db
+        user_id = ctx.deps.user_id
+
+        clean_name = (name or "").strip()
+        if not clean_name or len(clean_name) > 20:
+            raise ModelRetry("维度名不能为空且需 ≤20 字")
+        clean_purpose = (purpose or "").strip()
+        if not clean_purpose:
+            raise ModelRetry("purpose 不能为空（1-2 句描述要查什么异常）")
+        clean_judgment = (judgment or "").strip()
+        if not clean_judgment:
+            raise ModelRetry("judgment 不能为空（命中/severity 判定标准）")
+        sev = (severity or "").strip().lower()
+        if sev not in DIMENSION_SEVERITIES:
+            raise ModelRetry(
+                f"severity 必须是 {DIMENSION_SEVERITIES} 之一，收到：{severity}"
+            )
+
+        # 校验 steps：list[{tool, params}]，tool 限白名单。
+        if not isinstance(steps, list) or not steps:
+            raise ModelRetry("steps 必须是非空 list[{tool, params}]")
+        clean_steps: list[dict] = []
+        for idx, step in enumerate(steps):
+            if not isinstance(step, dict):
+                raise ModelRetry(f"steps[{idx}] 必须是 dict {{tool, params}}")
+            tool = str(step.get("tool") or "").strip()
+            if tool not in READONLY_TOOL_WHITELIST:
+                raise ModelRetry(
+                    f"steps[{idx}].tool '{tool}' 不在白名单 "
+                    f"({sorted(READONLY_TOOL_WHITELIST)})，不要编造工具名"
+                )
+            params = step.get("params") or {}
+            if not isinstance(params, dict):
+                raise ModelRetry(f"steps[{idx}].params 必须是 dict")
+            clean_steps.append({"tool": tool, "params": params})
+
+        prompt = build_dimension_prompt(
+            name=clean_name,
+            purpose=clean_purpose,
+            steps=clean_steps,
+            judgment=clean_judgment,
+            severity=sev,
+        )
+        dim = AuditDimension(
+            name=clean_name,
+            source=SOURCE_AGENT,
+            purpose=clean_purpose,
+            steps=clean_steps,
+            judgment=clean_judgment,
+            severity=sev,
+            prompt=prompt,
+            enabled=False,
+            created_by=user_id,
+        )
+        db.add(dim)
+        await db.flush()
+        logger.info(
+            "create_dimension 沉淀草稿维度: id=%s name=%s created_by=%s",
+            dim.id,
+            clean_name,
+            user_id,
+        )
+        # 返结构化信息（PRD §六）：chat() 从工具返回里提取 name + severity
+        # 填 sedimented_dimension，前端气泡渲染「已沉淀维度：XXX（草稿，待启用）」。
+        return {
+            "id": dim.id,
+            "name": clean_name,
+            "severity": sev,
+            "enabled": False,
+            "message": (
+                f"已沉淀维度「{clean_name}」（草稿，enabled=false，"
+                f"需人在维度管理页启用后才进入 analyze）"
+            ),
+        }
+
+
+# ---------------------------------------------------------------------------
+# chat —— 多轮对话（message_history + ModelMessagesTypeAdapter 往返）
+# ---------------------------------------------------------------------------
+
+
+class ToolTrace(BaseModel):
+    """单次工具调用痕迹（前端气泡小字「🔍 已查询：…」用）."""
+
+    tool: str
+    summary: str
+
+
+class SedimentedDimension(BaseModel):
+    """本轮流问沉淀出的草稿维度信息（前端气泡「已沉淀维度：XXX（草稿，待启用）」）."""
+
+    name: str
+    severity: str
+
+
+class ChatResult(BaseModel):
+    """chat() 结构化返回（替代旧 tuple，PRD §十/§六）."""
+
+    reply: str
+    tool_traces: list[ToolTrace] = []
+    sedimented_dimension: Optional[SedimentedDimension] = None
+    new_history_json: str  # 序列化新 history（service 存回 AuditConversation）
+
+
+def _summarize_tool_return(tool_name: str, content: Any) -> str:
+    """按工具类型给一句可读 summary（PRD §十：如 query_by_time → 「夜间交易：37条」）."""
+    if isinstance(content, list):
+        n = len(content)
+        if n and isinstance(content[0], dict):
+            cp = content[0].get("counterparty_name")
+            if cp:
+                return f"命中 {n} 条，样本对手：{cp}"
+        return f"返回 {n} 条"
+    if isinstance(content, dict):
+        if "standard_count" in content:
+            return f"standard {content.get('standard_count')} 条 / 金额 {content.get('total_amount')}"
+        if "counterparty_name" in content and "count" in content:
+            return f"对手 {content.get('counterparty_name')}：{content.get('count')} 笔"
+        if "message" in content:
+            return str(content.get("message"))
+    return str(content)[:80]
+
+
+def _extract_tool_traces(messages: list) -> list[ToolTrace]:
+    """从 result.all_messages() 提取本轮 agent 调过的工具 + 每次调用的简短摘要.
+
+    遍历 ModelResponse.parts 取 ToolCallPart（工具名 + 参数），匹配后续
+    ModelRequest.parts 的 ToolReturnPart（同 tool_call_id）拿返回值，按工具
+    类型给可读 summary。pydantic-ai 消息格式 model-independent（conventions.md）。
+    """
+    # 先建 tool_call_id -> return content 映射。
+    returns_by_id: dict[str, Any] = {}
+    for msg in messages:
+        if isinstance(msg, ModelRequest):
+            for part in getattr(msg, "parts", []) or []:
+                if isinstance(part, ToolReturnPart):
+                    returns_by_id[part.tool_call_id] = part.content
+
+    traces: list[ToolTrace] = []
+    for msg in messages:
+        if isinstance(msg, ModelResponse):
+            for part in getattr(msg, "parts", []) or []:
+                if isinstance(part, ToolCallPart):
+                    content = returns_by_id.get(part.tool_call_id)
+                    traces.append(
+                        ToolTrace(
+                            tool=part.tool_name,
+                            summary=_summarize_tool_return(part.tool_name, content),
+                        )
+                    )
+    return traces
+
+
+def _extract_sedimented_dimension(messages: list) -> Optional[SedimentedDimension]:
+    """本轮若调了 create_dimension，从其工具返回里取 name + severity."""
+    for msg in messages:
+        if isinstance(msg, ModelRequest):
+            for part in getattr(msg, "parts", []) or []:
+                if isinstance(part, ToolReturnPart) and part.tool_name == "create_dimension":
+                    content = part.content
+                    if isinstance(content, dict):
+                        name = content.get("name")
+                        sev = content.get("severity")
+                        if name and sev:
+                            return SedimentedDimension(name=str(name), severity=str(sev))
+    return None
 
 
 async def chat(
     deps: AuditDeps,
     message_history_json: str | None,
     user_msg: str,
-) -> tuple[str, str]:
-    """多轮对话：反序列化 history → 占位回复 → 序列化新 history 存回。
-
-    占位实现：不调真实 agent.run，直接返占位回复 + 用
-    ``ModelMessagesTypeAdapter`` 序列化占位 message_history 存回（结构通了即可，
-    不强制调真实 LLM）。TODO 用户后续接真实推理：
-
-        agent = get_analysis_agent()
-        history = ModelMessagesTypeAdapter.validate_json(message_history_json or "[]")
-        result = await agent.run(user_msg, deps=deps, message_history=history)
-        reply = result.output  # 或 str(result.output)
-        new_history_json = to_json(result.all_messages()).decode()
-        return reply, new_history_json
+    *,
+    model: Optional[LLMModel] = None,
+) -> ChatResult:
+    """多轮追问：反序列化 history → agent.run(msg, message_history=history) →
+    序列化新 history 存回 + 提取工具调用痕迹 + 沉淀维度标记。
 
     Args:
-        deps: per-request deps（db + task_id）。
+        deps: per-request deps（db + task_id + user_id）。
         message_history_json: 上一轮序列化的 message_history（JSON 字符串），
             为空或 "[]" 表示首轮。
         user_msg: 本轮用户提问。
+        model: ai_qa 阶段指派的卡片（None → 回退 env settings）。
 
     Returns:
-        (reply, new_history_json)：占位回复 + 序列化后的新 history（可存回
-        Task.config.analysis_chat_history）。
+        ChatResult：reply（agent 回复）+ tool_traces（本轮流问调过的只读工具
+        痕迹，前端气泡小字「🔍 已查询：…」）+ sedimented_dimension（本轮若调
+        create_dimension 沉淀出的草稿维度 name/severity，前端气泡「已沉淀维度：
+        XXX（草稿，待启用）」）+ new_history_json（存回 AuditConversation）。
     """
-    # 反序列化旧 history（结构校验 + 保证 model-independent 格式往返）。
+    agent = get_qa_agent(model=model)
     history = ModelMessagesTypeAdapter.validate_json(message_history_json or "[]")
-
-    # 占位回复（不调真实 LLM）。
-    reply = _CHAT_PLACEHOLDER_REPLY
-
-    # 序列化占位新 history 存回。占位实现只透传旧 history（不追加 LLM 消息），
-    # 保证 ModelMessagesTypeAdapter 往返结构通了即可。
-    new_history_json = to_json(history).decode()
-    return reply, new_history_json
+    result = await agent.run(user_msg, deps=deps, message_history=history)
+    all_messages = result.all_messages()
+    return ChatResult(
+        reply=str(result.output),
+        tool_traces=_extract_tool_traces(all_messages),
+        sedimented_dimension=_extract_sedimented_dimension(all_messages),
+        new_history_json=to_json(all_messages).decode(),
+    )

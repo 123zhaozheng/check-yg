@@ -61,6 +61,7 @@ app.add_middleware(
 
 # Register routers
 from app.routers import auth_router, users_router
+from app.routers.audit_dimensions import router as audit_dimensions_router
 from app.routers.dashboard import router as dashboard_router
 from app.routers.tasks import router as tasks_router, findings_router as findings_router
 from app.routers.customers import router as customers_router
@@ -84,6 +85,7 @@ app.include_router(reports_router, prefix="/api")
 app.include_router(exports_router, prefix="/api")
 app.include_router(llm_models_router, prefix="/api")
 app.include_router(keyword_library_router, prefix="/api")
+app.include_router(audit_dimensions_router, prefix="/api")
 app.include_router(websocket_router)
 
 

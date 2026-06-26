@@ -36,7 +36,15 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
 
 async def _authenticate_websocket(websocket: WebSocket) -> User | None:
+    # 鉴权兼容两条路径（PRD §十一 WS 逐条推进度需要前端能连）：
+    # 1. query-param ``token``（保留，向后兼容现有客户端/测试）。
+    # 2. ``access_token`` httpOnly cookie（前端 JS 读不到 cookie，但浏览器 WS
+    #    握手会自动带同源 cookie —— 这是 SPA 走 WS 的唯一可行路径）。
+    # 两者任一有效即通过，都无效才拒。
     token = websocket.query_params.get("token")
+    if not token:
+        cookies = getattr(websocket, "cookies", None) or {}
+        token = cookies.get("access_token")
     if not token:
         return None
 
