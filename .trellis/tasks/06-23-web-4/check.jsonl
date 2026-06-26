@@ -1,5 +1,0 @@
-{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "check 阶段:代码标准、禁止模式、测试覆盖要求,验证③批循环/并发限流与④portrait持久化有对应测试。"}
-{"file": ".trellis/spec/backend/directory-structure.md", "reason": "check 阶段:验证 extraction pipeline 契约未被破坏(FlowExtractor/runner/PDFParser 接线)、Document 模型与迁移链一致、tasks 端点契约。"}
-{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "check 阶段:验证 portrait 列迁移 down_revision 正确、jsonb helper 用法、sqlite ALTER TABLE 匹配、不删减语义未破坏。"}
-{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "check 阶段:验证②日志实现符合 spec 格式与中文约定(记录偏离 spec 落盘的决策)。"}
-{"file": ".trellis/spec/backend/error-handling.md", "reason": "check 阶段:验证③running 期间上传的错误边界、start 端点 422/409 语义、并发异常处理。"}

@@ -1,6 +1,0 @@
-{"file": ".trellis/spec/backend/directory-structure.md", "reason": "新 LLMModel/LLMModelAssignment 模型 + 新 router(llm_models/llm_model_assignments)+ 新 service(llm_model_service)的目录与接线约定;alembic 迁移链 head(c4a1e9f8b2d7)与 down_revision;tasks 路由契约不被破坏。"}
-{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "两张新表迁移 down_revision=c4a1e9f8b2d4、jsonb/枚举列写法、sqlite create_all 覆盖新模型、seed 默认卡片插入约定。"}
-{"file": ".trellis/spec/backend/error-handling.md", "reason": "删被指派卡片返 409 语义、CRUD 鉴权 403、阶段指派 llm_model_id 空值回退兜底的错误边界、三模块卡片缺失时回退不崩。"}
-{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "三模块按阶段读卡片的中文 info 日志(记录用了哪张卡片/max_tokens/thinking)、api_key 脱敏不进日志。"}
-{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "代码标准、禁止模式、测试要求(pytest+sqlite 内存库+mock LLM agent),CRUD/指派/接线/seed/admin鉴权都要补测试。"}
-{"file": ".trellis/tasks/06-23-web-4/research/llm-model-card-and-gateway.md", "reason": "本任务研究依据:pydantic-ai ModelSettings 字段(thinking/max_tokens 映射)、无内置模型库需自维护卡片、reasoning token 计入 max_completion_tokens(报错根因)、各家模型卡片默认值表。实现须对齐研究结论。"}

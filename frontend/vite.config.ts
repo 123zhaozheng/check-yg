@@ -41,6 +41,9 @@ export default defineConfig({
     outDir: "dist",
   },
   server: {
+    // Windows 下 vite 默认把 'localhost' 解析成 IPv6 (::1)，浏览器走 IPv4
+    // 127.0.0.1 时连接被拒。host: true 让其监听 0.0.0.0，IPv4/IPv6/局域网全通。
+    host: true,
     port: 5173,
     proxy: {
       "/api": {

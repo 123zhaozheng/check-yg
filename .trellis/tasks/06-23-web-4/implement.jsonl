@@ -1,5 +1,0 @@
-{"file": ".trellis/spec/backend/directory-structure.md", "reason": "extraction pipeline 契约(FlowExtractor/runner/PDFParser 构造与 runtime settings 接线)、Document 模型与 jsonb 列写法、alembic 迁移链 head(b9e7f3a2c1d4)、tasks 路由端点契约(upload/append-upload/start/documents)。③④①②都依赖。"}
-{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "②日志:spec 已规定 main.py::setup_logging() 用 logging.basicConfig(level=INFO)+StreamHandler+FileHandler 中文格式,但代码未落地。本任务按用户决策只做 StreamHandler(不落盘),实现时对齐 spec 的格式与中文消息约定,并记录偏离原因。"}
-{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "④画像持久化:Document 表加 portrait jsonb 列、alembic 迁移 down_revision=b9e7f3a2c1d4、database.py sqlite 路径匹配 ALTER TABLE、jsonb() helper 用法。"}
-{"file": ".trellis/spec/backend/error-handling.md", "reason": "③手动处理:append-upload 去掉 running 409 拦截后,running 期间上传的错误边界;start 端点 422/409 语义;并发限流异常处理。"}
-{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "全任务:代码标准、禁止模式、测试要求(pytest+sqlite 内存库+mock LLM agent),③的批循环/并发限流与④的portrait持久化都要补测试。"}
