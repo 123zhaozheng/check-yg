@@ -363,7 +363,7 @@ export interface DocumentItem {
   status: DocumentStatus
   size_bytes?: number | null
   /** Stage-1 document portrait (account_type/holder/institution/...). Null
-   *  when not yet generated — the hover card shows 「画像待生成」. */
+   *  when not yet generated. */
   portrait?: Record<string, unknown> | null
   created_at: string
   error_log?: string | null
@@ -389,6 +389,11 @@ export function listDocuments(
     `/tasks/${taskId}/documents`,
     params as ApiRequestOptions["params"],
   )
+}
+
+/** GET /api/tasks/{taskId}/documents/{docId} — fetch one document with latest portrait. */
+export function getDocument(taskId: number, docId: number): Promise<DocumentItem> {
+  return api.get<DocumentItem>(`/tasks/${taskId}/documents/${docId}`)
 }
 
 /**

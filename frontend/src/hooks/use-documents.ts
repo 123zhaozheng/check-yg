@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 
 import {
   deleteDocument,
+  getDocument,
   listDocuments,
   uploadTaskDocuments,
   type DocumentListParams,
@@ -32,6 +33,17 @@ export function useDocumentList(taskId: number, params: DocumentListParams = {})
       )
       return active ? 2000 : false
     },
+  })
+}
+
+/** Fetch a single document on demand so the portrait dialog always opens fresh. */
+export function useDocument(taskId: number, docId: number | null) {
+  return useQuery({
+    queryKey: [...DOCUMENTS_QUERY_KEY, taskId, "detail", docId],
+    queryFn: () => getDocument(taskId, docId as number),
+    enabled: false,
+    staleTime: 0,
+    gcTime: 0,
   })
 }
 

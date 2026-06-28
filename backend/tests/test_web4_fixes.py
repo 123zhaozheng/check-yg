@@ -199,6 +199,45 @@ async def test_documents_endpoint_returns_portrait(client, db_session, monkeypat
 
 
 @pytest.mark.asyncio
+async def test_document_detail_endpoint_returns_latest_portrait(client, db_session, monkeypatch):
+    """GET /tasks/{id}/documents/{doc_id} returns the current persisted portrait."""
+    session, _user = db_session
+
+    async def fake_start(**kwargs):
+        return None
+
+    monkeypatch.setattr("app.routers.tasks.runner.start", fake_start)
+    monkeypatch.setattr("app.routers.tasks.runner.is_running", lambda task_id: False)
+
+    created = await client.post(
+        "/api/tasks/upload",
+        data={"title": "Portrait detail task", "channel": "银行流水"},
+        files=[("files", ("a.pdf", _pdf_bytes(), "application/pdf"))],
+    )
+    task_id = created.json()["id"]
+
+    row = await session.execute(select(Document).where(Document.task_id == task_id))
+    doc = row.scalar_one()
+    doc.portrait = {
+        "account_type": "debit_card",
+        "account_holder": "王五",
+        "column_mapping": ["transaction_time", "balance"],
+    }
+    await session.commit()
+
+    resp = await client.get(f"/api/tasks/{task_id}/documents/{doc.id}")
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["id"] == doc.id
+    assert payload["portrait"] == {
+        "account_type": "debit_card",
+        "account_holder": "王五",
+        "column_mapping": ["transaction_time", "balance"],
+    }
+
+
+@pytest.mark.asyncio
 async def test_documents_endpoint_portrait_null_when_not_generated(client, monkeypatch):
     """A pending doc (not yet processed) has portrait=null in the response."""
     async def fake_start(**kwargs):

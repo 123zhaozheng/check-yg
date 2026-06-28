@@ -740,6 +740,26 @@ async def list_task_documents(
     )
 
 
+@router.get("/{task_id}/documents/{doc_id}", response_model=DocumentResponse)
+async def get_task_document(
+    task_id: int,
+    doc_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Fetch one document row with the latest persisted portrait."""
+    await _load_owned_task(db, task_id, current_user)
+
+    result = await db.execute(
+        select(Document).where(Document.id == doc_id, Document.task_id == task_id)
+    )
+    doc = result.scalar_one_or_none()
+    if not doc or doc.status == "deleted":
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    return _document_response(doc)
+
+
 @router.delete(
     "/{task_id}/documents/{doc_id}",
     status_code=status.HTTP_204_NO_CONTENT,
@@ -1592,4 +1612,3 @@ async def patch_keyword_hit(
     await db.commit()
     await db.refresh(hit)
     return _hit_item(hit)
-

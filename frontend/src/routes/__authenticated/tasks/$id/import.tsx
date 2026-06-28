@@ -11,10 +11,18 @@ import {
   Upload,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import {
+  Dialog,
+  DialogBody,
+  DialogClose,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { cn } from "@/lib/utils"
 import type { DocumentItem, DocumentStatus } from "@/lib/api"
 import {
   useDeleteDocument,
+  useDocument,
   useDocumentList,
   useUploadTaskDocuments,
 } from "@/hooks/use-documents"
@@ -23,14 +31,13 @@ import { useStartExtraction, useTask } from "@/hooks/use-tasks"
 /**
  * 数据导入 /tasks/:id/import (docs §C2).
  *
- * Left channel list (银行流水/支付渠道/证券交易/票据凭证/其他) with a black
- * active bar + per-channel file count badge. Right upload area: channel
- * title + 开始处理 primary button + large dashed dropzone + 选择文件 outline
- * button. Below: file table (文件名 / 类型 / 大小 / 解析状态胶囊 / 上传时间 /
- * 操作). TanStack Query polls the documents list every 2s while any doc is
+ * Single channel (银行流水) upload area: channel title + 开始处理 primary
+ * button + large dashed dropzone + 选择文件 outline button. Below: file
+ * table (文件名 / 类型 / 大小 / 解析状态胶囊 / 上传时间 / 操作). TanStack
+ * Query polls the documents list every 2s while any doc is
  * pending/processing and stops once all are settled.
  *
- * Channel keys are the Chinese labels themselves, persisted verbatim as the
+ * Channel key is the Chinese label itself, persisted verbatim as the
  * backend `channel` string (mirrors Task.expected_channels semantics).
  */
 export const Route = createFileRoute("/__authenticated/tasks/$id/import")({
@@ -38,13 +45,7 @@ export const Route = createFileRoute("/__authenticated/tasks/$id/import")({
 })
 
 /** Channel key = Chinese label (stored verbatim as backend `channel`). */
-const CHANNELS = [
-  "银行流水",
-  "支付渠道",
-  "证券交易",
-  "票据凭证",
-  "其他",
-] as const
+const CHANNEL = "银行流水"
 
 /** File extensions the backend scanner actually accepts (no .csv — scanner
  *  does not support it). Frontend validation + dropzone copy align to this. */
@@ -56,12 +57,11 @@ function ImportPage() {
   const { id } = useParams({ from: "/__authenticated/tasks/$id/import" })
   const taskId = Number(id)
 
-  const [selectedChannel, setSelectedChannel] = React.useState<string>(
-    CHANNELS[0],
-  )
+  const [portraitDocId, setPortraitDocId] = React.useState<number | null>(null)
+  const [portraitRequestKey, setPortraitRequestKey] = React.useState(0)
 
-  // Pull ALL documents (no channel filter) so per-channel badges can be
-  // derived client-side via group-by — simpler than one query per channel.
+  // Pull ALL documents (no channel filter) so the file list and hasPending
+  // check work at the task level.
   const allDocsQuery = useDocumentList(taskId, {})
   const allDocs = allDocsQuery.data?.items ?? []
 
@@ -69,22 +69,11 @@ function ImportPage() {
   const taskQuery = useTask(taskId)
   const taskStatus = taskQuery.data?.status ?? "draft"
 
-  // Filtered view for the currently selected channel.
-  const channelQuery = useDocumentList(taskId, { channel: selectedChannel })
-  const channelDocs = channelQuery.data?.items ?? []
-
-  // Per-channel counts (exclude soft-deleted — backend default already hides
-  // status=deleted, so items here are live documents only).
-  const countsByChannel = React.useMemo(() => {
-    const counts: Record<string, number> = {}
-    for (const ch of CHANNELS) counts[ch] = 0
-    for (const d of allDocs) {
-      if (d.status === "deleted") continue
-      const key = d.channel ?? "其他"
-      counts[key] = (counts[key] ?? 0) + 1
-    }
-    return counts
-  }, [allDocs])
+  // Filtered view for the 银行流水 channel (derived from allDocs so we keep a
+  // single query at the task level).
+  const channelDocs = allDocs.filter(
+    (d) => (d.channel ?? "其他") === CHANNEL,
+  )
 
   // 开始处理 is enabled only when there is at least one pending document and
   // the task is not already running. Running tasks auto-pick up new uploads via
@@ -95,6 +84,7 @@ function ImportPage() {
   const upload = useUploadTaskDocuments(taskId)
   const deleteDoc = useDeleteDocument(taskId)
   const startExtraction = useStartExtraction(taskId)
+  const portraitQuery = useDocument(taskId, portraitDocId)
 
   // Cache the original File objects by filename+size so a failed row's Retry
   // can re-upload the same file without a file picker round-trip.
@@ -112,7 +102,7 @@ function ImportPage() {
     const valid = filterAccepted(files)
     if (valid.length === 0) return
     rememberFiles(valid)
-    upload.mutate({ files: valid, channel: selectedChannel })
+    upload.mutate({ files: valid, channel: CHANNEL })
   }
 
   function handleRetry(doc: DocumentItem) {
@@ -123,12 +113,24 @@ function ImportPage() {
       hiddenInputRef.current?.click()
       return
     }
-    upload.mutate({ files: [cached], channel: doc.channel ?? selectedChannel })
+    upload.mutate({ files: [cached], channel: doc.channel ?? CHANNEL })
   }
 
   function handleDelete(docId: number) {
     deleteDoc.mutate(docId)
   }
+
+  function handleViewPortrait(docId: number) {
+    setPortraitDocId(docId)
+    setPortraitRequestKey((v) => v + 1)
+  }
+
+  React.useEffect(() => {
+    if (portraitDocId === null) return
+    void portraitQuery.refetch()
+    // Refetch on every open/click, even if TanStack Query has a cached value.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [portraitRequestKey])
 
   // Hidden <input type=file multiple> driven by both the dropzone click and
   // the 选择文件 button.
@@ -163,62 +165,14 @@ function ImportPage() {
     setIsDragging(false)
   }
 
-  const channelLabel = CHANNELS.find((c) => c === selectedChannel) ?? selectedChannel
-
   return (
-    <div className="flex h-[calc(100vh-220px)] min-h-[420px] gap-4">
-      {/* Left: channel list */}
-      <aside className="flex w-64 flex-shrink-0 flex-col rounded-[var(--radius-lg)] border border-ink-400 bg-ink-100">
-        <div className="border-b border-ink-400 p-4">
-          <h3 className="font-sans text-base font-semibold text-ink-900">
-            数据渠道
-          </h3>
-        </div>
-        <div className="scroll-thin flex-1 space-y-1 overflow-y-auto p-2">
-          {CHANNELS.map((ch) => {
-            const active = ch === selectedChannel
-            const count = countsByChannel[ch] ?? 0
-            return (
-              <button
-                key={ch}
-                onClick={() => setSelectedChannel(ch)}
-                className={cn(
-                  "flex w-full items-center justify-between rounded-[var(--radius-DEFAULT)] px-3 py-2.5 text-left transition-colors",
-                  active
-                    ? "border-l-2 border-ink-900 bg-ink-300"
-                    : "border-l-2 border-transparent hover:bg-ink-300",
-                )}
-              >
-                <span
-                  className={cn(
-                    "font-sans text-sm",
-                    active ? "font-medium text-ink-900" : "text-ink-700",
-                  )}
-                >
-                  {ch}
-                </span>
-                <span
-                  className={cn(
-                    "rounded-[var(--radius-DEFAULT)] px-1.5 py-0.5 font-mono text-[11px]",
-                    active
-                      ? "bg-ink-400 text-ink-900"
-                      : "border border-ink-400 bg-ink-200 text-ink-700",
-                  )}
-                >
-                  {count}
-                </span>
-              </button>
-            )
-          })}
-        </div>
-      </aside>
-
-      {/* Right: upload area + file table */}
-      <section className="flex min-w-0 flex-1 flex-col rounded-[var(--radius-lg)] border border-ink-400 bg-ink-100 p-6">
+    <div className="flex h-[calc(100vh-220px)] min-h-[420px] flex-col">
+      {/* Upload area + file table */}
+      <section className="flex min-h-0 flex-1 flex-col rounded-[var(--radius-lg)] border border-ink-400 bg-ink-100 p-6">
         {/* Header: channel title + 上传文件 + 开始处理 */}
         <div className="mb-5 flex items-center justify-between">
           <h3 className="font-sans text-lg font-semibold text-ink-900">
-            {channelLabel} 上传
+            银行流水上传
           </h3>
           <div className="flex items-center gap-2">
             <Button variant="secondary" size="sm" onClick={openPicker}>
@@ -326,6 +280,7 @@ function ImportPage() {
               <FileRow
                 key={doc.id}
                 doc={doc}
+                onViewPortrait={() => handleViewPortrait(doc.id)}
                 onRetry={() => handleRetry(doc)}
                 onDelete={() => handleDelete(doc.id)}
               />
@@ -333,24 +288,29 @@ function ImportPage() {
           </div>
         </div>
       </section>
+      <PortraitDialog
+        open={portraitDocId !== null}
+        document={portraitQuery.data ?? null}
+        isLoading={portraitQuery.isFetching || portraitQuery.data === undefined}
+        isError={portraitQuery.isError}
+        onOpenChange={(open) => {
+          if (!open) setPortraitDocId(null)
+        }}
+      />
     </div>
   )
 }
 
 /** One file row. Status capsule maps to a grayscale tone; Failed is the only
- *  "heavy" state — black bg + white bold uppercase + Retry.
- *
- *  The filename is wrapped in a `group relative` container so hovering it
- *  reveals an absolutely-positioned portrait card (纯 CSS group-hover, no
- *  radix/portal — Chrome 96/108 safe). Card shows the stage-1 portrait's core
- *  fields; when portrait is null (not yet generated / LLM failed) it shows a
- *  「画像待生成」 placeholder. */
+ *  "heavy" state — black bg + white bold uppercase + Retry. */
 function FileRow({
   doc,
+  onViewPortrait,
   onRetry,
   onDelete,
 }: {
   doc: DocumentItem
+  onViewPortrait: () => void
   onRetry: () => void
   onDelete: () => void
 }) {
@@ -362,8 +322,8 @@ function FileRow({
         doc.status === "pending" && "opacity-70",
       )}
     >
-      {/* Filename + type icon + hover portrait card */}
-      <div className="group relative flex min-w-0 items-center gap-2">
+      {/* Filename + type icon */}
+      <div className="flex min-w-0 items-center gap-2">
         <FileTypeIcon filename={doc.filename} className="size-4 flex-shrink-0 text-ink-600" />
         <span
           className={cn(
@@ -374,7 +334,6 @@ function FileRow({
         >
           {doc.filename}
         </span>
-        <PortraitCard portrait={doc.portrait ?? null} />
       </div>
 
       {/* Type */}
@@ -406,13 +365,12 @@ function FileRow({
           </Button>
         ) : (
           <>
-            {/* View — noop in this slice (PRD: 跳详情/预览 留给后续切片). */}
             <button
               type="button"
-              disabled
-              className="text-ink-600 transition-colors hover:text-ink-900 disabled:opacity-50"
-              aria-label="查看"
-              title="查看（暂未开放）"
+              onClick={onViewPortrait}
+              className="text-ink-600 transition-colors hover:text-ink-900 focus-visible:outline-2 focus-visible:outline-ink-800 focus-visible:outline-offset-2"
+              aria-label="查看文档画像"
+              title="查看文档画像"
             >
               <Eye className="size-4" />
             </button>
@@ -451,24 +409,66 @@ const AMOUNT_SIGN_RULE_LABEL: Record<string, string> = {
 }
 
 /**
- * 文档画像 hover 卡片（纯 CSS group-hover，文件名右下角弹出）.
+ * 文档画像详情弹框。
  *
  * 渲染画像核心字段：账户类型/持有人/机构/对账期间/收支规则/表头属性。
- * key_observations 截断省略（hover 卡片只显核心，不堆观察列表）。
  * portrait 为 null（未生成 / LLM 失败）时显示「画像待生成」占位。
- * monochrome：9 级 ink token，不用红色；--shadow-popover 投影。
  */
-function PortraitCard({
+function PortraitDialog({
+  open,
+  document,
+  isLoading,
+  isError,
+  onOpenChange,
+}: {
+  open: boolean
+  document: DocumentItem | null
+  isLoading: boolean
+  isError: boolean
+  onOpenChange: (open: boolean) => void
+}) {
+  const portrait = document?.portrait ?? null
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange} className="max-w-3xl">
+      <DialogHeader>
+        <DialogTitle>文档画像</DialogTitle>
+        <DialogClose onOpenChange={onOpenChange} />
+      </DialogHeader>
+      <DialogBody className="max-h-[70vh] overflow-y-auto">
+        <div className="mb-4 min-w-0">
+          <div className="truncate font-sans text-sm font-semibold text-ink-900">
+            {document?.filename ?? "正在读取文档..."}
+          </div>
+          <div className="mt-1 font-mono text-xs text-ink-700">
+            {isLoading ? "正在刷新画像..." : "点击小眼睛时读取的最新画像"}
+          </div>
+        </div>
+
+        {isLoading ? (
+          <div className="border border-ink-400 bg-ink-200 p-4 text-sm text-ink-700">
+            正在读取最新文档画像...
+          </div>
+        ) : isError ? (
+          <div className="border border-ink-400 bg-ink-200 p-4 text-sm text-ink-800">
+            画像读取失败，请稍后重试。
+          </div>
+        ) : (
+          <PortraitContent portrait={portrait} />
+        )}
+      </DialogBody>
+    </Dialog>
+  )
+}
+
+function PortraitContent({
   portrait,
 }: {
   portrait: Record<string, unknown> | null
 }) {
   if (!portrait) {
     return (
-      <div
-        className="pointer-events-none absolute left-0 top-full z-50 mt-1 hidden w-56 rounded-[var(--radius-lg)] border border-ink-400 bg-ink-100 p-3 text-xs text-ink-600 group-hover:block"
-        style={{ boxShadow: "var(--shadow-popover)" }}
-      >
+      <div className="border border-ink-400 bg-ink-200 p-4 text-sm text-ink-700">
         画像待生成
       </div>
     )
@@ -491,45 +491,64 @@ function PortraitCard({
   const headerAttrs = Array.isArray(portrait.header_attributes)
     ? (portrait.header_attributes as unknown[]).map(String)
     : []
+  const columnMapping = Array.isArray(portrait.column_mapping)
+    ? (portrait.column_mapping as unknown[]).map(String)
+    : []
+  const observations = Array.isArray(portrait.key_observations)
+    ? (portrait.key_observations as unknown[]).map(String)
+    : []
 
   return (
-    <div
-      className="pointer-events-none absolute left-0 top-full z-50 mt-1 hidden w-72 rounded-[var(--radius-lg)] border border-ink-400 bg-ink-100 p-3 group-hover:block"
-      style={{ boxShadow: "var(--shadow-popover)" }}
-    >
-      <div className="mb-2 text-[11px] font-bold uppercase tracking-wider text-ink-700">
-        文档画像
-      </div>
-      <dl className="grid grid-cols-[80px_1fr] gap-x-3 gap-y-1.5 font-mono text-xs">
+    <div className="space-y-5">
+      <dl className="grid grid-cols-[96px_1fr] gap-x-4 gap-y-2 font-mono text-sm">
         {rows.map((r) => (
           <React.Fragment key={r.label}>
             <dt className="text-ink-700">{r.label}</dt>
-            <dd className="truncate text-ink-900" title={r.value}>
+            <dd className="min-w-0 break-words text-ink-900" title={r.value}>
               {r.value}
             </dd>
           </React.Fragment>
         ))}
       </dl>
-      {headerAttrs.length > 0 && (
-        <div className="mt-2 border-t border-ink-400 pt-2">
-          <div className="mb-1 text-[11px] font-bold uppercase tracking-wider text-ink-700">
+      {(headerAttrs.length > 0 || columnMapping.length > 0) && (
+        <div className="border-t border-ink-400 pt-4">
+          <div className="mb-2 text-xs font-bold uppercase tracking-wider text-ink-700">
             表头
           </div>
-          <div className="flex flex-wrap gap-1">
-            {headerAttrs.slice(0, 8).map((h, i) => (
-              <span
-                key={i}
-                className="rounded-[var(--radius-DEFAULT)] bg-ink-200 px-1.5 py-0.5 font-mono text-[11px] text-ink-900"
+          <div className="overflow-hidden border border-ink-400">
+            <div className="grid grid-cols-[1fr_1fr] bg-ink-200 px-3 py-2 font-sans text-xs font-semibold text-ink-800">
+              <div>原始表头</div>
+              <div>标准字段</div>
+            </div>
+            {(headerAttrs.length > 0 ? headerAttrs : columnMapping).map((h, i) => (
+              <div
+                key={`${h}-${i}`}
+                className="grid grid-cols-[1fr_1fr] border-t border-ink-400 px-3 py-2 font-mono text-xs text-ink-900"
               >
-                {h}
-              </span>
+                <div className="min-w-0 break-words">
+                  {headerAttrs[i] ?? "—"}
+                </div>
+                <div className="min-w-0 break-words">
+                  {columnMapping[i] ?? "—"}
+                </div>
+              </div>
             ))}
-            {headerAttrs.length > 8 && (
-              <span className="px-1 py-0.5 font-mono text-[11px] text-ink-700">
-                +{headerAttrs.length - 8}
-              </span>
-            )}
           </div>
+        </div>
+      )}
+      {observations.length > 0 && (
+        <div className="border-t border-ink-400 pt-4">
+          <div className="mb-2 text-xs font-bold uppercase tracking-wider text-ink-700">
+            关键观察
+          </div>
+          <ul className="space-y-1.5 font-sans text-sm text-ink-900">
+            {observations.map((item, i) => (
+              <li key={i} className="flex gap-2">
+                <span className="mt-2 size-1.5 shrink-0 rounded-[var(--radius-full)] bg-ink-700" />
+                <span>{item}</span>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
     </div>

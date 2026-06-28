@@ -5,12 +5,9 @@ import { Download, Eye } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Toggle } from "@/components/ui/toggle"
-import { cn } from "@/lib/utils"
 import {
-  type DataExportFormat,
   type ExportListItem,
   type ExportScope,
-  type ReportExportFormat,
 } from "@/lib/api"
 import {
   triggerExportDownload,
@@ -24,10 +21,9 @@ import {
  * 导出 /tasks/:id/export (docs §C6).
  *
  * Monochrome 导出页（单色原则）:
- * - 报告导出卡: 格式 segmented (PDF/Word/HTML 灰阶) + 含批注 toggle (灰阶:
+ * - 报告导出卡: 固定 Word 格式 + 含批注 toggle (灰阶:
  *   关浅灰 / 开黑底白圆) + 导出主按钮 → POST export/report.
- * - 数据导出卡: 范围 segmented (原始/标准化/异常) + 格式 segmented (Excel/CSV)
- *   + 导出主按钮 → POST export/data.
+ * - 数据导出卡: 固定「标准化数据」+ Excel 格式 + 导出主按钮 → POST export/data.
  * - 预览: 每组「预览」描边按钮 → GET export/preview，单色渲染报告前几章 /
  *   数据前几行（卡片展开）.
  * - 导出历史列表: 表格 (格式/范围/时间/重新下载描边按钮) → GET exports.
@@ -39,23 +35,6 @@ export const Route = createFileRoute("/__authenticated/tasks/$id/export")({
   component: ExportPage,
 })
 
-const REPORT_FORMATS: { key: ReportExportFormat; label: string }[] = [
-  { key: "pdf", label: "PDF" },
-  { key: "docx", label: "Word" },
-  { key: "html", label: "HTML" },
-]
-
-const DATA_SCOPES: { key: "raw" | "standard" | "findings"; label: string }[] = [
-  { key: "raw", label: "原始数据" },
-  { key: "standard", label: "标准化数据" },
-  { key: "findings", label: "异常记录" },
-]
-
-const DATA_FORMATS: { key: DataExportFormat; label: string }[] = [
-  { key: "excel", label: "Excel" },
-  { key: "csv", label: "CSV" },
-]
-
 function ExportPage() {
   const { id } = useParams({ from: "/__authenticated/tasks/$id/export" })
   const taskId = Number(id)
@@ -64,22 +43,19 @@ function ExportPage() {
   const exportReport = useExportReport(taskId)
   const exportData = useExportData(taskId)
 
-  const [reportFormat, setReportFormat] = React.useState<ReportExportFormat>("pdf")
   const [includeAnnotations, setIncludeAnnotations] = React.useState(false)
-  const [dataScope, setDataScope] = React.useState<"raw" | "standard" | "findings">("standard")
-  const [dataFormat, setDataFormat] = React.useState<DataExportFormat>("excel")
 
   const history = historyQuery.data ?? []
 
   function handleExportReport() {
     exportReport.mutate({
-      format: reportFormat,
+      format: "docx",
       include_annotations: includeAnnotations,
     })
   }
 
   function handleExportData() {
-    exportData.mutate({ scope: dataScope, format: dataFormat })
+    exportData.mutate({ scope: "standard", format: "excel" })
   }
 
   return (
@@ -100,19 +76,8 @@ function ExportPage() {
             <div>
               <h3 className="font-sans text-base font-bold text-ink-900">报告导出</h3>
               <p className="mt-1 text-xs text-ink-600">
-                基于当前章节化审查报告生成 PDF / Word / HTML。
+                基于当前章节化审查报告生成 Word 文档。
               </p>
-            </div>
-
-            <div className="flex flex-col gap-2">
-              <label className="text-xs font-bold uppercase tracking-widest text-ink-600">
-                格式
-              </label>
-              <SegmentedControl
-                options={REPORT_FORMATS}
-                value={reportFormat}
-                onChange={setReportFormat}
-              />
             </div>
 
             <div className="flex items-center justify-between">
@@ -151,34 +116,12 @@ function ExportPage() {
             <div>
               <h3 className="font-sans text-base font-bold text-ink-900">数据导出</h3>
               <p className="mt-1 text-xs text-ink-600">
-                导出原始/标准化流水或异常记录为 Excel / CSV。
+                导出标准化流水为 Excel。
               </p>
             </div>
 
-            <div className="flex flex-col gap-2">
-              <label className="text-xs font-bold uppercase tracking-widest text-ink-600">
-                范围
-              </label>
-              <SegmentedControl
-                options={DATA_SCOPES}
-                value={dataScope}
-                onChange={setDataScope}
-              />
-            </div>
-
-            <div className="flex flex-col gap-2">
-              <label className="text-xs font-bold uppercase tracking-widest text-ink-600">
-                格式
-              </label>
-              <SegmentedControl
-                options={DATA_FORMATS}
-                value={dataFormat}
-                onChange={setDataFormat}
-              />
-            </div>
-
             <div className="flex items-center gap-2">
-              <PreviewButton taskId={taskId} scope={dataScope} />
+              <PreviewButton taskId={taskId} scope="standard" />
               <Button
                 onClick={handleExportData}
                 disabled={exportData.isPending}
@@ -231,37 +174,6 @@ function ExportPage() {
           </table>
         </CardContent>
       </Card>
-    </div>
-  )
-}
-
-/** 灰阶 segmented 单选（选中黑底白字，未选中描边）. */
-function SegmentedControl<T extends string>({
-  options,
-  value,
-  onChange,
-}: {
-  options: { key: T; label: string }[]
-  value: T
-  onChange: (value: T) => void
-}) {
-  return (
-    <div className="inline-flex rounded-[var(--radius-DEFAULT)] border border-ink-400 p-0.5">
-      {options.map((opt) => (
-        <button
-          key={opt.key}
-          type="button"
-          onClick={() => onChange(opt.key)}
-          className={cn(
-            "px-3 py-1.5 font-sans text-xs font-medium transition-colors",
-            value === opt.key
-              ? "bg-ink-900 text-ink-100"
-              : "text-ink-700 hover:bg-ink-300",
-          )}
-        >
-          {opt.label}
-        </button>
-      ))}
     </div>
   )
 }
