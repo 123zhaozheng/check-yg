@@ -1,0 +1,5 @@
+{"file": "docs/research/pydantic-ai-conventions.md", "reason": "Phase 2 报告 agent 是 pydantic-ai：deps_type/output_type/get_agent 单例/run/base_url /v1 硬约定"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "渲染器 + agent 的单测要求"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "复用 _aggregate/_resolve_agent_params/get_report_generation_model/现有 export writer"}
+{"file": "docs/web-pages-design.md", "reason": "markdown 渲染 + 封面单色硬底线（表格表头灰底，无彩色）"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "report_markdown.py / report_agent.py 放哪 + 命名"}
