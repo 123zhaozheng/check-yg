@@ -647,3 +647,36 @@ S7 审查报告闭环完成 (umbrella 8/10→9/10)。后端：新建 ReportChapt
 ### Next Steps
 
 - None - task complete
+
+
+## Session 20: Report generation and export polish
+
+**Date**: 2026-06-28
+**Task**: Report generation and export polish
+**Branch**: `feat/web-split`
+
+### Summary
+
+Implemented LLM-backed async report generation, constrained markdown rendering for DOCX/PDF exports, frontend polling, fallback behavior, and related regression coverage.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d7d34c8` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
