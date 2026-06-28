@@ -467,7 +467,11 @@ class ExportService:
         # 章标题用 chapter_heading_style（afterFlowable 发 TOCEntry 抓真实页码）；
         # 章节正文走 markdown 渲染器（report_markdown.render_pdf）正确排版
         # ##/列表/表格/加粗，不再字面显示符号。
-        from app.services.report_markdown import parse_markdown_blocks, render_pdf
+        from app.services.report_markdown import (
+            parse_markdown_blocks,
+            render_pdf,
+            strip_leading_title_heading,
+        )
 
         md_styles = {
             "h2": ParagraphStyle(
@@ -504,7 +508,11 @@ class ExportService:
         }
         for ch in chapters:
             flowables.append(Paragraph(ch.title, chapter_heading_style))
-            render_pdf(flowables, parse_markdown_blocks(ch.content), md_styles)
+            render_pdf(
+                flowables,
+                parse_markdown_blocks(strip_leading_title_heading(ch.content, ch.title)),
+                md_styles,
+            )
             flowables.append(Spacer(1, 3 * mm))
 
         if annotations:
@@ -533,9 +541,15 @@ class ExportService:
         """
         from docx import Document
         from docx.enum.text import WD_ALIGN_PARAGRAPH
-        from docx.oxml.ns import qn
-        from docx.oxml import OxmlElement
         from docx.shared import Pt, RGBColor
+
+        from app.services.report_markdown import (
+            CN_BODY_FONT,
+            CN_HEADING_FONT,
+            EN_BODY_FONT,
+            EN_HEADING_FONT,
+            _docx_set_cn_font,
+        )
 
         doc = Document()
 
@@ -545,20 +559,19 @@ class ExportService:
         # 顶部留白。
         for _ in range(4):
             doc.add_paragraph("")
-        # 大标题（居中、加粗、大字号）。
+        # 大标题（居中、加粗、大字号、黑体）。
         title_p = doc.add_paragraph()
         title_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
         run = title_p.add_run("银行/支付流水审查报告")
-        run.bold = True
-        run.font.size = Pt(32)
-        run.font.color.rgb = RGBColor(0x00, 0x00, 0x00)
+        _docx_set_cn_font(run, CN_HEADING_FONT, EN_HEADING_FONT, 24,
+                          bold=True, color_rgb=RGBColor(0x00, 0x00, 0x00))
         doc.add_paragraph("")
         # 副标题（任务名，居中）。
         sub_p = doc.add_paragraph()
         sub_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
         sub_run = sub_p.add_run(task.title or "")
-        sub_run.font.size = Pt(16)
-        sub_run.font.color.rgb = RGBColor(0x1F, 0x1F, 0x1F)
+        _docx_set_cn_font(sub_run, CN_BODY_FONT, EN_BODY_FONT, 16,
+                          bold=False, color_rgb=RGBColor(0x1F, 0x1F, 0x1F))
         # 留白到中下部。
         for _ in range(6):
             doc.add_paragraph("")
@@ -568,8 +581,8 @@ class ExportService:
             meta_p = doc.add_paragraph()
             meta_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
             meta_run = meta_p.add_run(line)
-            meta_run.font.size = Pt(11)
-            meta_run.font.color.rgb = RGBColor(0x59, 0x59, 0x59)
+            _docx_set_cn_font(meta_run, CN_BODY_FONT, EN_BODY_FONT, 11,
+                              bold=False, color_rgb=RGBColor(0x59, 0x59, 0x59))
         # 留白。
         for _ in range(3):
             doc.add_paragraph("")
@@ -582,29 +595,35 @@ class ExportService:
         toc_title_p = doc.add_paragraph()
         toc_title_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
         toc_title_run = toc_title_p.add_run("目录")
-        toc_title_run.bold = True
-        toc_title_run.font.size = Pt(20)
-        toc_title_run.font.color.rgb = RGBColor(0x00, 0x00, 0x00)
+        _docx_set_cn_font(toc_title_run, CN_HEADING_FONT, EN_HEADING_FONT, 20,
+                          bold=True, color_rgb=RGBColor(0x00, 0x00, 0x00))
         doc.add_paragraph("")
         # 插入 TOC 域：TOC \o "1-2"（捕获 Heading 1-2）。
         self._docx_insert_toc_field(doc)
         # 提示文案。
         hint_p = doc.add_paragraph()
         hint_run = hint_p.add_run("打开后若未显示页码，请右键→更新域。")
-        hint_run.font.size = Pt(9)
+        _docx_set_cn_font(hint_run, CN_BODY_FONT, EN_BODY_FONT, 9,
+                          bold=False, color_rgb=RGBColor(0x8C, 0x8C, 0x8C))
         hint_run.italic = True
-        hint_run.font.color.rgb = RGBColor(0x8C, 0x8C, 0x8C)
         # 目录后分页。
         doc.add_page_break()
 
         # ----- 正文各章 -----
         # 章标题用 Heading 1（TOC 域 \o "1-2" 捕获）；章节正文走 markdown 渲染器
         # （report_markdown.render_docx）正确排版 ##/列表/表格/加粗，不再字面显示符号。
-        from app.services.report_markdown import parse_markdown_blocks, render_docx
+        from app.services.report_markdown import (
+            parse_markdown_blocks,
+            render_docx,
+            strip_leading_title_heading,
+        )
 
         for ch in chapters:
             doc.add_heading(ch.title, level=1)
-            render_docx(doc, parse_markdown_blocks(ch.content))
+            render_docx(
+                doc,
+                parse_markdown_blocks(strip_leading_title_heading(ch.content, ch.title)),
+            )
 
         if annotations:
             doc.add_heading("批注附录", level=1)
@@ -627,6 +646,8 @@ class ExportService:
 
         含封面（大标题/副标题/元信息块/横线）+ 各章 + 批注附录。
         """
+        from app.services.report_markdown import strip_leading_title_heading
+
         parts: list[str] = [
             "<!DOCTYPE html>",
             '<html lang="zh-CN">',
@@ -634,16 +655,20 @@ class ExportService:
             '<meta charset="utf-8">',
             f"<title>审查报告 - {self._escape_html(task.title)}</title>",
             "<style>",
-            "body{font-family:-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;"
+            "body{font-family:'SimSun','宋体',serif;"
             "color:#1f1f1f;background:#fff;max-width:800px;margin:24px auto;padding:0 16px;}",
             ".cover{text-align:center;padding:60px 0 40px;border-bottom:1px solid #000;margin-bottom:32px;}",
-            ".cover h1{font-size:32px;font-weight:700;border:none;padding:0;margin-bottom:12px;}",
+            ".cover h1{font-size:32px;font-weight:700;border:none;padding:0;margin-bottom:12px;",
+            "font-family:'SimHei','黑体',sans-serif;}",
             ".cover .sub{font-size:16px;color:#1f1f1f;margin-bottom:32px;}",
             ".cover .meta{color:#595959;font-size:13px;margin:6px 0;}",
-            "h1{font-size:28px;font-weight:700;border-bottom:1px solid #000;padding-bottom:8px;}",
+            "h1{font-size:28px;font-weight:700;border-bottom:1px solid #000;padding-bottom:8px;",
+            "font-family:'SimHei','黑体',sans-serif;}",
+            "h2,h3,h4{font-family:'SimHei','黑体',sans-serif;}",
             "h2{font-size:20px;font-weight:700;margin-top:24px;}",
             "p{font-size:14px;line-height:1.7;white-space:pre-wrap;}",
             ".meta{color:#595959;font-size:13px;margin:4px 0;}",
+            "blockquote{font-family:'KaiTi','楷体',serif;}",
             ".ann{border-left:2px solid #bfbfbf;background:#f0f0f0;padding:8px 12px;margin:8px 0;"
             "font-size:13px;color:#595959;}",
             ".ann-label{font-weight:700;color:#000;}",
@@ -659,7 +684,9 @@ class ExportService:
         parts.append("</div>")
         for ch in chapters:
             parts.append(f"<h2>{self._escape_html(ch.title)}</h2>")
-            for html_block in self._markdown_blocks_to_html(ch.content):
+            for html_block in self._markdown_blocks_to_html(
+                strip_leading_title_heading(ch.content, ch.title)
+            ):
                 parts.append(html_block)
         if annotations:
             parts.append("<h2>批注附录</h2>")

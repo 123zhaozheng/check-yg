@@ -28,6 +28,19 @@ GRAY_HEADER_BG = "#f0f0f0"  # 表头灰底（ink-300 对应的画布灰，单色
 GRAY_QUOTE_TEXT = "#595959"  # 引用灰字（中灰辅文）。
 BLACK_TEXT = "#1f1f1f"  # 正文深灰。
 
+# 中文字体方案 A（黑体标题 + 宋体正文；Windows/macOS 自带，零版权）。
+CN_HEADING_FONT = "黑体"   # SimHei
+CN_BODY_FONT = "宋体"      # SimSun
+CN_QUOTE_FONT = "楷体"     # KaiTi
+EN_HEADING_FONT = "Arial"
+EN_BODY_FONT = "Times New Roman"
+# 字号 pt。
+SIZE_CHAPTER_H = 16  # 章标题(##)三号
+SIZE_H2 = 14         # ### 四号
+SIZE_H3 = 12         # 更深级 小四
+SIZE_BODY = 12       # 正文 小四
+SIZE_TABLE = 10.5    # 表格 五号
+
 
 # ---------------------------------------------------------------------------
 # 解析：parse_markdown_blocks(md) -> list[dict]
@@ -113,6 +126,32 @@ def _split_quote(line: str) -> str | None:
     if m:
         return m.group(1).strip()
     return None
+
+
+def strip_leading_title_heading(md: str, title: str | None = None) -> str:
+    """剥掉 md 顶部与 title 重复的 # / ## 标题行(+紧跟空行).
+
+    chapter_builder 每章 content 自带 ``## 章标题``，export 又 ``add_heading(level=1)``
+    → 标题重复两次。去掉 content 首个匹配 title 的标题行即可。
+    """
+    if not md or not md.strip():
+        return md
+    lines = md.splitlines()
+    i = 0
+    while i < len(lines) and not lines[i].strip():
+        i += 1
+    if i >= len(lines):
+        return md
+    h = _split_heading(lines[i])
+    if h is None:
+        return md
+    _lvl, text = h
+    if title is not None and text.strip() != title.strip():
+        return md
+    j = i + 1
+    while j < len(lines) and not lines[j].strip():
+        j += 1
+    return "\n".join(lines[j:])
 
 
 def parse_markdown_blocks(md: str) -> list[dict[str, Any]]:
@@ -287,15 +326,38 @@ def _docx_set_cell_shading(cell, fill_hex: str) -> None:
     tc_pr.append(shd)
 
 
-def _docx_add_runs_with_bold(paragraph, text: str) -> None:
-    """向 paragraph 加 run，``**bold**`` 拆成 bold run + 普通 run."""
-    from docx.shared import Pt, RGBColor
+def _docx_set_cn_font(run, cn_font: str, en_font: str, size_pt: float, bold: bool,
+                      color_rgb=None) -> None:
+    """设 run 中文(eastAsia)+西文字体+字号+加粗+颜色.
+
+    python-docx 的 run.font.name 只设西文(ascii/hAnsi)；中文必须额外写
+    w:rFonts/eastAsia，否则中文走默认 fallback（'字体丑'根因）。
+    """
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+    from docx.shared import Pt
+
+    run.font.size = Pt(size_pt)
+    run.bold = bold
+    if color_rgb is not None:
+        run.font.color.rgb = color_rgb
+    run.font.name = en_font
+    rPr = run._element.get_or_add_rPr()
+    rFonts = rPr.find(qn("w:rFonts"))
+    if rFonts is None:
+        rFonts = OxmlElement("w:rFonts")
+        rPr.append(rFonts)
+    rFonts.set(qn("w:eastAsia"), cn_font)
+
+
+def _docx_add_runs_with_bold(paragraph, text: str, size_pt: float = SIZE_BODY) -> None:
+    """向 paragraph 加 run，``**bold**`` 拆成 bold run + 普通 run（中文字体方案 A）."""
+    from docx.shared import RGBColor
 
     for span_text, bold in _parse_inline_spans(text):
         run = paragraph.add_run(span_text)
-        run.bold = bold
-        run.font.size = Pt(10.5)
-        run.font.color.rgb = RGBColor(0x1F, 0x1F, 0x1F)
+        _docx_set_cn_font(run, CN_BODY_FONT, EN_BODY_FONT, size_pt,
+                          bold=bold, color_rgb=RGBColor(0x1F, 0x1F, 0x1F))
 
 
 def render_docx(doc: Any, blocks: list[dict[str, Any]]) -> None:
@@ -315,14 +377,18 @@ def render_docx(doc: Any, blocks: list[dict[str, Any]]) -> None:
         if btype == "heading":
             # 一级留给章标题（export 的 add_heading(level=1)），渲染器不产出 1。
             level = block["level"]
-            heading = doc.add_heading(block["text"], level=max(2, level))
-            # 单色：标题黑色。
+            render_level = max(2, level)
+            heading = doc.add_heading(block["text"], level=render_level)
+            size = {2: SIZE_CHAPTER_H, 3: SIZE_H2}.get(render_level, SIZE_H3)
+            # 单色：标题黑色 + 黑体（中文字体方案 A）。
             for run in heading.runs:
-                run.font.color.rgb = RGBColor(0x00, 0x00, 0x00)
+                _docx_set_cn_font(run, CN_HEADING_FONT, EN_HEADING_FONT, size,
+                                  bold=True, color_rgb=RGBColor(0x00, 0x00, 0x00))
 
         elif btype == "paragraph":
             p = doc.add_paragraph()
             _docx_add_runs_with_bold(p, block["text"])
+            p.paragraph_format.line_spacing = 1.5
 
         elif btype == "list_item":
             style = "List Number" if block["ordered"] else "List Bullet"
@@ -333,9 +399,10 @@ def render_docx(doc: Any, blocks: list[dict[str, Any]]) -> None:
                 p = doc.add_paragraph()
                 prefix = "- " if not block["ordered"] else "1. "
                 run = p.add_run(prefix)
-                run.font.size = Pt(10.5)
-                run.font.color.rgb = RGBColor(0x1F, 0x1F, 0x1F)
+                _docx_set_cn_font(run, CN_BODY_FONT, EN_BODY_FONT, SIZE_BODY,
+                                  bold=False, color_rgb=RGBColor(0x1F, 0x1F, 0x1F))
             _docx_add_runs_with_bold(p, block["text"])
+            p.paragraph_format.line_spacing = 1.5
 
         elif btype == "table":
             headers = block["headers"]
@@ -350,9 +417,8 @@ def render_docx(doc: Any, blocks: list[dict[str, Any]]) -> None:
                 for existing_run in list(p.runs):
                     existing_run.text = ""
                 run = p.add_run(header_text)
-                run.bold = True
-                run.font.size = Pt(10.5)
-                run.font.color.rgb = RGBColor(0x1F, 0x1F, 0x1F)
+                _docx_set_cn_font(run, CN_BODY_FONT, EN_BODY_FONT, SIZE_TABLE,
+                                  bold=True, color_rgb=RGBColor(0x1F, 0x1F, 0x1F))
                 _docx_set_cell_shading(cell, "f0f0f0")
             # 数据行。
             for row_idx, row in enumerate(rows, 1):
@@ -362,16 +428,15 @@ def render_docx(doc: Any, blocks: list[dict[str, Any]]) -> None:
                     for existing_run in list(p.runs):
                         existing_run.text = ""
                     cell_text = row[col_idx] if col_idx < len(row) else ""
-                    _docx_add_runs_with_bold(p, cell_text)
+                    _docx_add_runs_with_bold(p, cell_text, size_pt=SIZE_TABLE)
 
         elif btype == "quote":
             p = doc.add_paragraph()
             p.paragraph_format.left_indent = Pt(18)
             for span_text, bold in _parse_inline_spans(block["text"]):
                 run = p.add_run(span_text)
-                run.bold = bold
-                run.font.size = Pt(10.5)
-                run.font.color.rgb = RGBColor(0x59, 0x59, 0x59)  # 中灰引用字.
+                _docx_set_cn_font(run, CN_QUOTE_FONT, EN_BODY_FONT, SIZE_TABLE,
+                                  bold=bold, color_rgb=RGBColor(0x59, 0x59, 0x59))  # 中灰引用字.
 
 
 # ---------------------------------------------------------------------------
@@ -406,13 +471,24 @@ def render_pdf(
         TableStyle,
     )
 
+    # 内置 CID 宋体（不需字体文件，reportlab 自带 STSong-Light），改善 PDF 中文。
+    # 注册失败时回退 Helvetica（不崩即过关）。
+    try:
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+        if "STSong-Light" not in pdfmetrics.getRegisteredFontNames():
+            pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))
+        _pdf_cn = "STSong-Light"
+    except Exception:
+        _pdf_cn = "Helvetica"
+
     if styles is None:
         base = getSampleStyleSheet()
         styles = {
             "h2": ParagraphStyle(
                 "MdH2",
                 parent=base["Heading2"],
-                fontName="Helvetica-Bold",
+                fontName="Helvetica-Bold",  # reportlab 无内置黑体 CID，标题保持 Helvetica-Bold。
                 fontSize=14,
                 leading=18,
                 spaceBefore=10,
@@ -432,7 +508,7 @@ def render_pdf(
             "body": ParagraphStyle(
                 "MdBody",
                 parent=base["BodyText"],
-                fontName="Helvetica",
+                fontName=_pdf_cn,
                 fontSize=10.5,
                 leading=16,
                 spaceAfter=6,
@@ -442,7 +518,7 @@ def render_pdf(
             "quote": ParagraphStyle(
                 "MdQuote",
                 parent=base["BodyText"],
-                fontName="Helvetica",
+                fontName=_pdf_cn,
                 fontSize=10.5,
                 leading=15,
                 leftIndent=18,
