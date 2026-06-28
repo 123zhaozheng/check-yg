@@ -1,15 +1,16 @@
 import * as React from "react"
 import { createFileRoute, useParams } from "@tanstack/react-router"
 import { useQueryClient } from "@tanstack/react-query"
-import { MessageSquare, Plus, Send, X } from "lucide-react"
+import { MessageSquare, Plus, Send, Trash2, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { Markdown } from "@/components/ui/markdown"
 import { cn } from "@/lib/utils"
 import type { FindingItem, Severity } from "@/lib/api"
 import {
   useAnalysisProgress,
   useChatAnalyze,
+  useConversationHistory,
   useConversations,
-  useCreateConversation,
   useDeleteConversation,
   useFindingsLive,
   usePatchFinding,
@@ -197,10 +198,12 @@ function AnalyzePage() {
         </div>
       )}
 
-      {/* 主区：左 findings 列表 + 右详情 */}
-      <div className="flex min-h-[420px] gap-4">
+      {/* 主区：左 findings 列表 + 右详情.
+          固定高度（视口减去页眉/控制条/进度条预留），维度再多也不撑页 ——
+          左右各自内部滚动（flex 滚动需子项 min-h-0）. */}
+      <div className="flex h-[calc(100vh-13rem)] min-h-[460px] gap-4">
         {/* 左：维度详情列表 */}
-        <aside className="flex w-96 flex-shrink-0 flex-col rounded-[var(--radius-lg)] border border-ink-400 bg-ink-100">
+        <aside className="flex min-h-0 w-96 flex-shrink-0 flex-col rounded-[var(--radius-lg)] border border-ink-400 bg-ink-100">
           <div className="border-b border-ink-400 p-4">
             <h3 className="font-sans text-base font-semibold text-ink-900">
               维度详情
@@ -209,7 +212,7 @@ function AnalyzePage() {
               </span>
             </h3>
           </div>
-          <div className="scroll-thin flex-1 overflow-y-auto p-2">
+          <div className="scroll-thin min-h-0 flex-1 overflow-y-auto p-2">
             {findingsLive.isLoading && findings.length === 0 && (
               <div className="px-3 py-10 text-center text-sm text-ink-700">
                 加载中…
@@ -241,7 +244,7 @@ function AnalyzePage() {
         </aside>
 
         {/* 右：维度详情 */}
-        <section className="flex min-w-0 flex-1 flex-col rounded-[var(--radius-lg)] border border-ink-400 bg-ink-100">
+        <section className="flex min-h-0 min-w-0 flex-1 flex-col rounded-[var(--radius-lg)] border border-ink-400 bg-ink-100">
           {selected ? (
             <FindingDetail
               finding={selected}
@@ -400,14 +403,12 @@ function FindingDetail({
       </div>
 
       <div className="scroll-thin flex-1 space-y-5 overflow-y-auto p-4">
-        {/* 维度分析正文（detail_text） */}
+        {/* 维度分析正文（detail_text，Markdown 渲染） */}
         <section>
           <h4 className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-ink-700">
             维度分析
           </h4>
-          <p className="whitespace-pre-wrap text-sm text-ink-800">
-            {finding.detail_text || finding.description}
-          </p>
+          <Markdown>{finding.detail_text || finding.description}</Markdown>
         </section>
 
         {/* 关联记录（evidence_record_ids 下钻） */}
@@ -497,11 +498,13 @@ function FindingDetail({
 }
 
 /* ---------------------------------------------------------------------------
- * 悬浮 AI 追问球（Q9 UX）.
- * 收起态：右下 fixed 圆球。hover 球：扇形展开会话标题列表（首项固定 ＋新建会话，
- *   后续 = 会话首问题前 10 字，显示 #N · 前10字）。点标题进会话；点 ＋ 新建.
- * 展开态：固定右下面板（消息流 + 输入）。切任务自动收起 + 清 echo.
- * 工具调用痕迹/沉淀可视化降级不显示（后端 chat 响应只返 reply，未暴露工具调用明细）.
+ * 悬浮 AI 追问球（Q9 UX，user-feedback 改版）.
+ * 收起态：右下 fixed 圆球。**点击**球 → 扇形展开会话标题列表（首项固定 ＋新建会话，
+ *   后续 = 会话首问题前 10 字，列表可滚动，显示完整历史）。再点球 / 点空白收起.
+ * 点历史会话 → 面板打开并**回放该会话历史消息**（GET .../conversations/{id}），可继续
+ *   往下追问。点 ＋新建 → 面板打开空会话，首问后端懒建会话。切任务自动收起 + 清.
+ * 展开态：固定右下面板（消息流 + 输入）。面板 header 不再重复 ＋（新建只在扇形里）.
+ * 工具调用痕迹 / 沉淀可视化：每条 AI 气泡下方小字「🔍 已查询：…」+ 沉淀草稿小卡.
  * ------------------------------------------------------------------------- */
 
 function FloatingChatBall({
@@ -511,72 +514,87 @@ function FloatingChatBall({
   taskId: number
   activeConversationId: number | null
 }) {
-  // open = 面板展开；hoverBall = 球被 hover（扇形展开会话列表）.
-  const [open, setOpen] = React.useState(false)
-  const [hoverBall, setHoverBall] = React.useState(false)
-  const [activeConvId, setActiveConvId] = React.useState<number | null>(null)
+  // view: ball（收起）/ panel（展开）。fanOpen = 扇形会话列表是否展开（仅 ball 态）.
+  // panelConvId = 面板要展示的会话（null = 新会话）。
+  const [view, setView] = React.useState<"ball" | "panel">("ball")
+  const [fanOpen, setFanOpen] = React.useState(false)
+  const [panelConvId, setPanelConvId] = React.useState<number | null>(null)
 
   const conversationsQuery = useConversations(taskId)
   const conversations = conversationsQuery.data?.items ?? []
 
-  // 切任务：收起 + 清激活会话 + 关扇形.
+  // 切任务：收起 + 关扇形 + 清面板会话.
   React.useEffect(() => {
-    setOpen(false)
-    setHoverBall(false)
-    setActiveConvId(null)
+    setView("ball")
+    setFanOpen(false)
+    setPanelConvId(null)
   }, [taskId])
 
-  // 后端 active_conversation_id 变化时同步激活（首次加载 / 跑 chat 后）.
-  React.useEffect(() => {
-    if (activeConversationId != null && activeConvId == null) {
-      setActiveConvId(activeConversationId)
-    }
-  }, [activeConversationId, activeConvId])
-
-  function openConversation(convId: number | null) {
-    setActiveConvId(convId)
-    setOpen(true)
-    setHoverBall(false)
+  function openPanel(convId: number | null) {
+    setPanelConvId(convId)
+    setFanOpen(false)
+    setView("panel")
   }
 
   return (
-    <div className="pointer-events-none fixed bottom-6 right-6 z-40 flex flex-col items-end gap-2">
-      {/* 扇形展开会话标题列表（球 hover 时显示，未展开面板时） */}
-      {hoverBall && !open && (
-        <ConversationFan
-          conversations={conversations}
-          activeConvId={activeConvId}
-          onPick={openConversation}
+    <>
+      {/* click-away 蒙层：扇形展开时点空白收起。独立 fixed 元素、z-40 低于内容层
+          z-50 —— 否则蒙层（position:fixed）会盖在扇形/球（normal-flow）之上、吃掉点击，
+          表现为扇形弹不开、点「新建会话」反而收起。 */}
+      {view === "ball" && fanOpen && (
+        <div
+          className="pointer-events-auto fixed inset-0 z-40"
+          onClick={() => setFanOpen(false)}
+          aria-hidden
         />
       )}
 
-      {/* 展开态面板 */}
-      {open && (
-        <ChatPanel
-          taskId={taskId}
-          conversationId={activeConvId}
-          onClose={() => setOpen(false)}
-          onConversationCreated={(convId) => setActiveConvId(convId)}
-        />
-      )}
+      {/* 内容层（球 / 扇形 / 面板）：z-50 高于蒙层，蒙层不拦截这里面的点击 */}
+      <div className="pointer-events-none fixed bottom-6 right-6 z-50 flex flex-col items-end gap-2">
+        {/* 扇形会话标题列表（点击球展开；面板未展开时） */}
+        {view === "ball" && fanOpen && (
+          <ConversationFan
+            conversations={conversations}
+            // 高亮当前激活会话（后端 task.config.active_conversation_id）.
+            activeConvId={panelConvId ?? activeConversationId}
+            onPick={openPanel}
+          />
+        )}
 
-      {/* 收起态圆球（hover 扇形展开；点击展开当前会话面板） */}
-      {!open && (
-        <button
-          onMouseEnter={() => setHoverBall(true)}
-          onMouseLeave={() => setHoverBall(false)}
-          onClick={() => setOpen(true)}
-          aria-label="AI 追问"
-          className="pointer-events-auto flex size-12 items-center justify-center rounded-[var(--radius-full)] bg-ink-900 text-ink-100 shadow-[var(--shadow-popover)] transition-transform hover:scale-105"
-        >
-          <MessageSquare className="size-5" />
-        </button>
-      )}
-    </div>
+        {/* 展开态面板（key 随会话变 → 切会话重挂载、重新回放该会话历史） */}
+        {view === "panel" && (
+          <ChatPanel
+            key={panelConvId ?? "new"}
+            taskId={taskId}
+            conversationId={panelConvId}
+            onClose={() => {
+              setView("ball")
+              setPanelConvId(null)
+            }}
+            // 首轮流新建会话后刷新会话列表，扇形里出现新会话（高亮用 activeConversationId）.
+            onConversationCreated={() => {
+              void conversationsQuery.refetch()
+            }}
+          />
+        )}
+
+        {/* 收起态圆球（点击切换扇形；面板打开时隐藏，由面板自身关闭） */}
+        {view === "ball" && (
+          <button
+            onClick={() => setFanOpen((v) => !v)}
+            aria-label="AI 追问"
+            aria-expanded={fanOpen}
+            className="pointer-events-auto flex size-12 items-center justify-center rounded-[var(--radius-full)] bg-ink-900 text-ink-100 shadow-[var(--shadow-popover)] transition-transform hover:scale-105"
+          >
+            <MessageSquare className="size-5" />
+          </button>
+        )}
+      </div>
+    </>
   )
 }
 
-/** 扇形展开会话标题列表 — 首项固定「＋ 新建会话」，后续 = 会话首问题前 10 字. */
+/** 扇形展开会话标题列表 — 首项固定「＋ 新建会话」，后续 = 历史会话（可滚动，完整历史）. */
 function ConversationFan({
   conversations,
   activeConvId,
@@ -587,15 +605,10 @@ function ConversationFan({
   onPick: (convId: number | null) => void
 }) {
   return (
-    <div className="pointer-events-auto flex flex-col items-end gap-1.5 pb-1">
-      {/* ＋ 新建会话（固定首项） */}
-      <FanItem
-        label="＋ 新建会话"
-        active={false}
-        onClick={() => onPick(null)}
-        icon
-      />
-      {/* 已有会话（按 id 升序，显示 #N · 前10字） */}
+    <div className="pointer-events-auto flex max-h-[60vh] flex-col items-end gap-1.5 overflow-y-auto pb-1 scroll-thin">
+      {/* 新建会话（固定首项，视觉加号来自 icon） */}
+      <FanItem label="新建会话" active={false} onClick={() => onPick(null)} icon />
+      {/* 历史会话（按 id 升序，显示 #N · 前10字） */}
       {conversations.map((c, idx) => (
         <FanItem
           key={c.id}
@@ -635,10 +648,8 @@ function FanItem({
   )
 }
 
-/** 展开态追问面板 — 消息流 + 输入；conversationId=null 时首轮流建会话. */
-
-/** 一条追问面板消息（echo）。AI 消息可带 tool_traces + sedimented_dimension
- *  （后端 ChatResponse 新字段，PRD §十 工具痕迹/沉淀可视化）. */
+/** 一条追问面板消息（echo / 历史回放）。AI 消息可带 tool_traces + sedimented_dimension
+ *  （后端 ChatResponse 新字段，PRD §十 工具痕迹/沉淀可视化；历史回放的 AI 消息不带痕迹）. */
 interface ChatMessage {
   role: "user" | "ai"
   text: string
@@ -646,6 +657,14 @@ interface ChatMessage {
   sedimentedDimension?: ChatSedimentedDimension | null
 }
 
+/**
+ * 展开态追问面板 — 消息流 + 输入.
+ *
+ * 会话历史回放：``conversationId != null`` 时调 ``useConversationHistory`` 拉历史，
+ * 首次到达 seed 进本地 messages（仅一次，``seededRef`` 挡住后续重取覆盖本地 echo）。
+ * 新建会话（``conversationId == null``）：首轮流问后端懒建会话、返 conversation_id，
+ * 记到 localConvId 供后续多轮；不回写父级 panelConvId（避免 key 变动重挂载丢消息）。
+ */
 function ChatPanel({
   taskId,
   conversationId,
@@ -658,21 +677,27 @@ function ChatPanel({
   onConversationCreated: (convId: number) => void
 }) {
   const chat = useChatAnalyze(taskId)
-  const createConv = useCreateConversation(taskId)
   const deleteConv = useDeleteConversation(taskId)
+  // existing 会话才拉历史（null = 新会话，无历史）.
+  const history = useConversationHistory(taskId, conversationId)
   const [messages, setMessages] = React.useState<ChatMessage[]>([])
   const [input, setInput] = React.useState("")
-  const [currentConvId, setCurrentConvId] = React.useState<number | null>(
+  // localConvId：本面板当前会话（首轮新建前为 null，建会后置为新 id）.
+  const [localConvId, setLocalConvId] = React.useState<number | null>(
     conversationId,
   )
+  const seededRef = React.useRef(false)
   const scrollRef = React.useRef<HTMLDivElement>(null)
 
-  // 切会话（conversationId prop 变化）→ 清 echo（多会话历史在后端，前端只存当前 echo）.
+  // 历史回放：existing 会话首次拿到历史 → seed 进 messages（仅一次，不覆盖后续 echo）.
   React.useEffect(() => {
-    setMessages([])
-    setInput("")
-    setCurrentConvId(conversationId)
-  }, [conversationId, taskId])
+    if (conversationId != null && history.data && !seededRef.current) {
+      setMessages(
+        history.data.messages.map((m) => ({ role: m.role, text: m.text })),
+      )
+      seededRef.current = true
+    }
+  }, [conversationId, history.data])
 
   // 自动滚到底.
   React.useEffect(() => {
@@ -685,15 +710,17 @@ function ChatPanel({
     const text = input.trim()
     if (!text || chat.isPending) return
     setInput("")
+    // 有本地 echo 后禁止历史 seed 覆盖（existing 会话历史慢到的极端情况）.
+    seededRef.current = true
     setMessages((prev) => [...prev, { role: "user", text }])
     try {
       const res = await chat.mutateAsync({
         message: text,
-        conversationId: currentConvId,
+        conversationId: localConvId,
       })
-      // 首轮流建会话 → 后端返新 conversation_id，记下来供后续多轮.
-      if (currentConvId == null) {
-        setCurrentConvId(res.conversation_id)
+      // 首轮流建会话 → 后端返新 conversation_id，记到 localConvId（不回写父级）.
+      if (localConvId == null) {
+        setLocalConvId(res.conversation_id)
         onConversationCreated(res.conversation_id)
       }
       setMessages((prev) => [
@@ -713,23 +740,12 @@ function ChatPanel({
     }
   }
 
-  async function handleNewConversation() {
-    try {
-      const conv = await createConv.mutateAsync(undefined)
-      setCurrentConvId(conv.id)
-      setMessages([])
-      onConversationCreated(conv.id)
-    } catch {
-      // 新建失败时停留在当前会话.
-    }
-  }
-
   async function handleDeleteConversation() {
-    if (currentConvId == null) return
+    if (localConvId == null) return
     try {
-      await deleteConv.mutateAsync(currentConvId)
-      setCurrentConvId(null)
-      setMessages([])
+      await deleteConv.mutateAsync(localConvId)
+      // 删完收起回扇形（该会话已不在列表）.
+      onClose()
     } catch {
       // 删失败时停留.
     }
@@ -742,38 +758,29 @@ function ChatPanel({
     }
   }
 
+  const historyLoading =
+    conversationId != null && history.isLoading && messages.length === 0
+
   return (
     <div className="pointer-events-auto flex h-[28rem] w-96 flex-col rounded-[var(--radius-lg)] border border-ink-400 bg-ink-100 shadow-[var(--shadow-popover)]">
-      {/* header：标题 + 新建/删除/收起 */}
+      {/* header：标题 + 删除/收起（去掉了重复的 ＋ 新建——新建只在扇形里） */}
       <div className="flex items-center justify-between border-b border-ink-400 px-4 py-2.5">
         <div className="min-w-0">
-          <h3 className="font-sans text-sm font-semibold text-ink-900">
-            AI 追问
-          </h3>
+          <h3 className="font-sans text-sm font-semibold text-ink-900">AI 追问</h3>
           <p className="truncate font-mono text-[11px] text-ink-700">
-            {currentConvId != null ? `会话 #${currentConvId}` : "新会话（首问后创建）"}
+            {localConvId != null ? `会话 #${localConvId}` : "新会话"}
           </p>
         </div>
         <div className="flex items-center gap-1">
           <Button
             variant="ghost"
             size="icon-sm"
-            aria-label="新建会话"
-            title="新建会话"
-            onClick={handleNewConversation}
-            disabled={createConv.isPending}
-          >
-            <Plus className="size-4" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon-sm"
             aria-label="删除会话"
             title="删除会话"
             onClick={handleDeleteConversation}
-            disabled={deleteConv.isPending || currentConvId == null}
+            disabled={deleteConv.isPending || localConvId == null}
           >
-            <X className="size-4" />
+            <Trash2 className="size-4" />
           </Button>
           <Button
             variant="ghost"
@@ -787,14 +794,16 @@ function ChatPanel({
         </div>
       </div>
 
-      {/* 消息流 */}
+      {/* 消息流（AI 文本走 Markdown 渲染） */}
       <div
         ref={scrollRef}
-        className="scroll-thin flex flex-1 flex-col gap-2.5 overflow-y-auto p-3"
+        className="scroll-thin flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto p-3"
       >
         {messages.length === 0 && (
           <div className="py-6 text-center text-xs text-ink-700">
-            向 AI 提问关于维度发现的细节，或让它沉淀新审查维度。
+            {historyLoading
+              ? "加载历史会话…"
+              : "向 AI 提问关于维度发现的细节，或让它沉淀新审查维度。"}
           </div>
         )}
         {messages.map((m, i) => (
@@ -846,25 +855,27 @@ function ChatBubble({
   const traces = toolTraces ?? []
   const hasTraces = traces.length > 0
   const hasSediment = sedimentedDimension != null
+  // AI 文本走 Markdown（标题/列表/加粗/代码/表格）；用户文本纯文本换行.
   // AI 气泡有工具痕迹/沉淀卡时，下方再叠一小块放这些副信息（单色，紧贴气泡）.
   return (
     <div className={cn("flex flex-col gap-1", isUser ? "items-end" : "items-start")}>
       <div
         className={cn(
-          "max-w-[85%] whitespace-pre-wrap rounded-[var(--radius-lg)] px-3 py-2 text-sm",
+          "max-w-[90%] rounded-[var(--radius-lg)] px-3 py-2 text-sm",
           isUser ? "bg-ink-900 text-ink-100" : "bg-ink-200 text-ink-900",
         )}
       >
-        {text}
+        {isUser ? (
+          <span className="whitespace-pre-wrap break-words">{text}</span>
+        ) : (
+          <Markdown>{text}</Markdown>
+        )}
       </div>
       {/* 工具调用痕迹：每条 trace 一行小字「🔍 已查询：{summary}」（PRD §十，单色） */}
       {hasTraces && (
-        <div className="flex max-w-[85%] flex-col gap-0.5 pl-1">
+        <div className="flex max-w-[90%] flex-col gap-0.5 pl-1">
           {traces.map((t, i) => (
-            <span
-              key={i}
-              className="text-ink-700 text-[11px] leading-tight"
-            >
+            <span key={i} className="text-[11px] leading-tight text-ink-700">
               🔍 已查询：{t.summary}
             </span>
           ))}
@@ -872,7 +883,7 @@ function ChatBubble({
       )}
       {/* 沉淀可视化：本轮流问沉淀出草稿维度 → 小卡「已沉淀维度：XXX（草稿，待启用）」 */}
       {hasSediment && sedimentedDimension && (
-        <div className="max-w-[85%] rounded-[var(--radius-DEFAULT)] border border-ink-400 bg-ink-200 px-2.5 py-1.5 text-[11px] text-ink-900">
+        <div className="max-w-[90%] rounded-[var(--radius-DEFAULT)] border border-ink-400 bg-ink-200 px-2.5 py-1.5 text-[11px] text-ink-900">
           已沉淀维度：{sedimentedDimension.name}（
           {SEVERITY_LABEL[severityKey(sedimentedDimension.severity)]}，草稿，待启用）
           <span className="ml-1 text-ink-700">— 去维度管理页启用</span>

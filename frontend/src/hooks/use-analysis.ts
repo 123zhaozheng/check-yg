@@ -5,6 +5,7 @@ import {
   chatAnalyze,
   createConversation,
   deleteConversation,
+  getConversationHistory,
   listConversations,
   listFindings,
   patchFinding,
@@ -168,6 +169,23 @@ export function useConversations(taskId: number) {
     queryKey: [...CONVERSATIONS_QUERY_KEY, "list", taskId],
     queryFn: () => listConversations(taskId),
     staleTime: 10 * 1000,
+  })
+}
+
+/** GET /api/tasks/{taskId}/analyze/conversations/{id} — 取会话历史（点历史会话回放）.
+ *  ``conversationId`` 为 null 时禁用（新建会话，无历史可拉）。关掉 window-focus
+ *  重取：历史只 seed 进本地 messages 一次，避免重取覆盖用户在本轮新发的 echo. */
+export function useConversationHistory(
+  taskId: number,
+  conversationId: number | null,
+) {
+  return useQuery({
+    queryKey: [...CONVERSATIONS_QUERY_KEY, "detail", taskId, conversationId],
+    queryFn: () => getConversationHistory(taskId, conversationId as number),
+    enabled: conversationId != null,
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+    refetchOnMount: false,
   })
 }
 

@@ -33,6 +33,7 @@ from app.database import async_session
 from app.llm.analysis import (
     AuditDeps,
     chat as agent_chat,
+    extract_history_messages,
     get_ai_qa_model,
     get_analysis_model,
     run_dimension,
@@ -292,6 +293,42 @@ class AnalysisService:
             }
             for c in result.scalars().all()
         ]
+
+    async def get_conversation(
+        self, db: AsyncSession, task_id: int, conversation_id: int
+    ) -> dict:
+        """取单个追问会话 + 抽取后的可读消息历史。
+
+        ``message_history`` 存的是 pydantic-ai ModelMessages（JSON）。序列化后用
+        ``extract_history_messages`` 抽成 ``[{role, text}]``（user/ai 文本），
+        供前端点历史会话时回放到聊天面板。校验会话属于该任务。
+        """
+        result = await db.execute(
+            select(AuditConversation).where(
+                AuditConversation.id == conversation_id,
+                AuditConversation.task_id == task_id,
+            )
+        )
+        conv = result.scalar_one_or_none()
+        if conv is None:
+            raise LookupError("Conversation not found")
+
+        import json as _json
+
+        history_json: Optional[str] = None
+        if conv.message_history:
+            try:
+                history_json = _json.dumps(conv.message_history, ensure_ascii=False)
+            except (TypeError, ValueError):
+                history_json = None
+
+        return {
+            "id": conv.id,
+            "title": conv.title,
+            "messages": extract_history_messages(history_json),
+            "created_at": conv.created_at,
+            "updated_at": conv.updated_at,
+        }
 
     async def create_conversation(
         self, db: AsyncSession, task_id: int, title: str

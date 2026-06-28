@@ -21,6 +21,7 @@ from ..models import Document, Finding, FlowRecordRow, KeywordHit, Task, TaskLog
 from ..schemas.audit import (
     ChatRequest as AuditChatRequest,
     ChatResponse as AuditChatResponse,
+    ConversationDetail,
     ConversationItem,
     ConversationListResponse,
     CreateConversationRequest,
@@ -1355,6 +1356,29 @@ async def list_analyze_conversations(
         items=[ConversationItem(**c) for c in convs],
         total=len(convs),
     )
+
+
+@router.get(
+    "/{task_id}/analyze/conversations/{conversation_id}",
+    response_model=ConversationDetail,
+)
+async def get_analyze_conversation(
+    task_id: int,
+    conversation_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """取单个追问会话 + 可读消息历史（owner-only）。
+
+    前端悬浮球点历史会话时调用：把 message_history 抽成 ``[{role, text}]`` 回放到
+    聊天面板，并可在其上继续追问（POST .../analyze/chat 带 conversation_id）。
+    """
+    await _load_owned_task(db, task_id, current_user)
+    try:
+        conv = await analysis_service.get_conversation(db, task_id, conversation_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return ConversationDetail(**conv)
 
 
 @router.post(

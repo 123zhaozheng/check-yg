@@ -47,11 +47,19 @@ SYSTEM_DIMENSIONS: list[dict[str, Any]] = [
     },
     {
         "name": "重复对手方",
-        "purpose": "检测同一对手方高频往来（≥3 笔）。",
+        "purpose": "检测同一对手方高频往来（≥3 笔），并区分正常支付平台往来。",
         "steps": [
             {"tool": "query_by_counterparty", "params": {"min_count": 3}},
         ],
-        "judgment": "≥10 笔 high；3-9 笔 medium。",
+        # 支付/转账聚合平台（财付通/微信支付/支付宝/银联等）是人人日常高频的**正常**
+        # 往来，高频不等于高风险——一律降为 low，不作为异常。只有具体个人/企业对手方
+        # 的高频才按笔数升 severity（PRD §四，user feedback: 财付通不该当高危）.
+        "judgment": (
+            "对手方为支付/转账聚合平台（如财付通、微信支付、微信转账、支付宝、"
+            "（中国）银联、云闪付、京东支付、美团支付、抖音支付、QQ 钱包等）时，"
+            "属人人日常高频的正常往来，不视为异常，severity 一律 low；"
+            "具体个人/企业对手方：≥10 笔 high，3-9 笔 medium。"
+        ),
         "severity": "medium",
     },
     {

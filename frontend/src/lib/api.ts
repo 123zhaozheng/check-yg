@@ -1394,6 +1394,23 @@ export interface ConversationListResponse {
   total: number
 }
 
+/** 会话历史中抽取出的单条可读消息（GET 会话历史）.
+ *  role: user（用户提问）/ ai（追问 agent 回复）。Mirrors `ConversationMessage`. */
+export interface ConversationMessage {
+  role: "user" | "ai"
+  text: string
+}
+
+/** GET 会话历史响应：会话 + 抽取后的消息历史（点历史会话回放到聊天面板）.
+ *  Mirrors `backend/app/schemas/audit.py::ConversationDetail`. */
+export interface ConversationDetail {
+  id: number
+  title: string
+  messages: ConversationMessage[]
+  created_at: string
+  updated_at: string
+}
+
 /** GET /api/audit-dimensions — 列维度（所有登录用户可读）. */
 export function listAuditDimensions(): Promise<AuditDimensionListItem[]> {
   return api.get<AuditDimensionListItem[]>("/audit-dimensions")
@@ -1429,6 +1446,18 @@ export function deleteAuditDimension(id: number): Promise<void> {
 export function listConversations(taskId: number): Promise<ConversationListResponse> {
   return api.get<ConversationListResponse>(
     `/tasks/${taskId}/analyze/conversations`,
+  )
+}
+
+/** GET /api/tasks/{taskId}/analyze/conversations/{conversationId} — 取会话历史.
+ *  点历史会话时调用：把 message_history 抽成 [{role, text}] 回放到聊天面板，
+ *  可在其上继续追问（chatAnalyze 带 conversation_id）. */
+export function getConversationHistory(
+  taskId: number,
+  conversationId: number,
+): Promise<ConversationDetail> {
+  return api.get<ConversationDetail>(
+    `/tasks/${taskId}/analyze/conversations/${conversationId}`,
   )
 }
 

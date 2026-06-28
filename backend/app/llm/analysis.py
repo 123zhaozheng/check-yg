@@ -46,8 +46,10 @@ from pydantic_ai import (
 from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
+    TextPart,
     ToolCallPart,
     ToolReturnPart,
+    UserPromptPart,
 )
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_core import to_json
@@ -889,6 +891,34 @@ def _extract_sedimented_dimension(messages: list) -> Optional[SedimentedDimensio
                         if name and sev:
                             return SedimentedDimension(name=str(name), severity=str(sev))
     return None
+
+
+def extract_history_messages(message_history_json: str | None) -> list[dict[str, str]]:
+    """从序列化的 message_history 抽取可读的 user/ai 消息（GET 会话历史用）.
+
+    message_history 是 pydantic-ai ModelMessages（ModelRequest/ModelResponse）。遍历：
+    ``ModelRequest`` 的 ``UserPromptPart`` → user 消息；``ModelResponse`` 的 ``TextPart``
+    → ai 消息（同一 response 内多条 TextPart 合并）。``ToolCallPart``/``ToolReturnPart``
+    不展示成气泡——历史只回放文本对话（工具痕迹仅当前轮 live 显）.
+    """
+    history = ModelMessagesTypeAdapter.validate_json(message_history_json or "[]")
+    out: list[dict[str, str]] = []
+    for msg in history:
+        if isinstance(msg, ModelRequest):
+            for part in getattr(msg, "parts", []) or []:
+                if isinstance(part, UserPromptPart):
+                    content = part.content
+                    text = content if isinstance(content, str) else str(content)
+                    if text.strip():
+                        out.append({"role": "user", "text": text})
+        elif isinstance(msg, ModelResponse):
+            texts: list[str] = []
+            for part in getattr(msg, "parts", []) or []:
+                if isinstance(part, TextPart) and part.content:
+                    texts.append(part.content)
+            if texts:
+                out.append({"role": "ai", "text": "\n".join(texts)})
+    return out
 
 
 async def chat(

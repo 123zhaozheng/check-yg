@@ -861,6 +861,80 @@ async def test_conversations_list_create_delete(client, db_session):
     assert all(c["id"] != conv_id for c in resp.json()["items"])
 
 
+@pytest.mark.asyncio
+async def test_get_conversation_history_replays_messages(client, db_session, monkeypatch):
+    """GET /tasks/{id}/analyze/conversations/{cid} 把 message_history 抽成 [{role,text}] 回放.
+
+    POST /analyze/chat 存 message_history（含 user 提问 + 工具返回 + ai 回复）→
+    GET 该会话只回放 user/ai 文本气泡，工具返回不显气泡。跨任务取会话 → 404。
+    """
+    session, user = db_session
+    task = Task(title="ConvHist", owner_id=user.id, status="completed", config={})
+    session.add(task)
+    await session.commit()
+    await session.refresh(task)
+
+    from pydantic_core import to_json
+    from pydantic_ai.messages import (
+        ModelRequest,
+        ModelResponse,
+        TextPart,
+        ToolReturnPart,
+        UserPromptPart,
+    )
+    from app.llm.analysis import ChatResult
+
+    # mock agent_chat：返含 user 提问 + 工具返回 + ai 回复的 history（真实 ModelMessages 序列化）.
+    history = [
+        ModelRequest(parts=[UserPromptPart(content="夜间交易有哪些？")]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name="query_by_time", tool_call_id="c1", content=[{"id": 1}]
+                )
+            ]
+        ),
+        ModelResponse(parts=[TextPart(content="夜间共 **18** 笔，合计 ¥120k")]),
+    ]
+
+    async def _fake_chat(deps, history_json, user_msg, *, model=None):
+        return ChatResult(
+            reply="夜间共 **18** 笔，合计 ¥120k",
+            tool_traces=[],
+            sedimented_dimension=None,
+            new_history_json=to_json(history).decode(),
+        )
+
+    monkeypatch.setattr("app.services.audit.analysis_service.agent_chat", _fake_chat)
+
+    resp = await client.post(
+        f"/api/tasks/{task.id}/analyze/chat",
+        json={"message": "夜间交易有哪些？", "conversation_id": None},
+    )
+    assert resp.status_code == 200
+    conv_id = resp.json()["conversation_id"]
+
+    # GET 历史：只回放 user/ai 文本，工具返回不产气泡。
+    resp = await client.get(f"/api/tasks/{task.id}/analyze/conversations/{conv_id}")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["id"] == conv_id
+    msgs = data["messages"]
+    assert [m["role"] for m in msgs] == ["user", "ai"]
+    assert msgs[0]["text"] == "夜间交易有哪些？"
+    assert "夜间共" in msgs[1]["text"]
+
+    # 跨任务取会话 → 404（会话不属于 other 任务）.
+    other = Task(title="Other", owner_id=user.id, status="completed", config={})
+    session.add(other)
+    await session.commit()
+    await session.refresh(other)
+    resp = await client.get(
+        f"/api/tasks/{other.id}/analyze/conversations/{conv_id}"
+    )
+    assert resp.status_code == 404
+
+
 # ---------------------------------------------------------------------------
 # API: 维度 CRUD admin 鉴权 + 409 finding 引用
 # ---------------------------------------------------------------------------

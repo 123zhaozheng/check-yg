@@ -107,6 +107,27 @@ class ConversationListResponse(BaseModel):
     total: int
 
 
+class ConversationMessage(BaseModel):
+    """会话历史中抽取出的单条可读消息（GET 会话历史用）.
+
+    ``role``: user（用户提问）/ ai（追问 agent 回复）。文本对话回放；
+    工具调用痕迹不在历史里显（仅当前轮 live 显）.
+    """
+
+    role: str = Field(..., pattern="^(user|ai)$")
+    text: str
+
+
+class ConversationDetail(BaseModel):
+    """GET /tasks/{id}/analyze/conversations/{cid} 响应：会话 + 抽取后的消息历史."""
+
+    id: int
+    title: str
+    messages: list[ConversationMessage]
+    created_at: datetime
+    updated_at: datetime
+
+
 class ChatRequest(BaseModel):
     """POST /tasks/{id}/analyze/chat 请求体。"""
 
