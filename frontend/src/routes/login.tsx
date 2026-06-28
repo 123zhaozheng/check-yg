@@ -1,10 +1,11 @@
 import { createFileRoute, isRedirect, redirect, useNavigate } from "@tanstack/react-router"
 import * as React from "react"
-import { Shield, ArrowRight } from "lucide-react"
+import { ArrowRight } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { api, extractErrorDetail, ApiError } from "@/lib/api"
 import { fetchCurrentUser } from "@/hooks/use-current-user"
+import { ShieldLogo } from "@/components/icons/shield-logo"
 
 /**
  * 登录页 /login (docs/web-pages-design.md §A1).
@@ -69,21 +70,16 @@ function LoginPage() {
   return (
     <div className="flex h-screen w-full flex-col overflow-hidden bg-ink-200 md:flex-row">
       {/* Left: brand area (60%) */}
-      <div className="relative hidden w-[60%] flex-col justify-center overflow-hidden px-[10%] md:flex">
-        {/* Abstract grid + rotated square shield metaphor */}
-        <div
-          className="pointer-events-none absolute inset-0 z-0 opacity-10"
-          style={{
-            backgroundImage:
-              "linear-gradient(var(--color-ink-400) 1px, transparent 1px), linear-gradient(90deg, var(--color-ink-400) 1px, transparent 1px)",
-            backgroundSize: "64px 64px",
-          }}
-        />
-        <div className="pointer-events-none absolute left-1/2 top-1/2 size-96 -translate-x-1/2 -translate-y-1/2 rotate-45 border border-ink-500 opacity-20" />
-        <div className="pointer-events-none absolute left-1/2 top-1/2 size-64 -translate-x-1/2 -translate-y-1/2 rotate-45 border border-ink-500 opacity-30" />
-
+      <div
+        className="relative hidden w-[60%] flex-col justify-center overflow-hidden px-[10%] md:flex"
+        style={{
+          backgroundImage: "url('/login-bg.png')",
+          backgroundSize: "cover",
+          backgroundPosition: "center",
+        }}
+      >
         <div className="relative z-10 max-w-lg">
-          <Shield className="mb-8 size-16 text-ink-900" strokeWidth={1.5} />
+          <ShieldLogo className="mb-8 size-16 text-ink-900" />
           <h1 className="font-sans text-4xl font-bold leading-tight tracking-tight text-ink-900">
             智行卫士
           </h1>
@@ -102,7 +98,7 @@ function LoginPage() {
       <div className="flex w-full flex-col justify-center border-l border-ink-400 bg-ink-100 p-8 md:w-[40%] md:p-16">
         {/* Mobile brand header */}
         <div className="mb-12 flex w-full flex-col items-center md:hidden">
-          <Shield className="mb-4 size-12 text-ink-900" strokeWidth={1.5} />
+          <ShieldLogo className="mb-4 size-12 text-ink-900" />
           <h1 className="font-sans text-2xl font-bold text-ink-900">智行卫士</h1>
         </div>
 
@@ -150,7 +146,7 @@ function LoginPage() {
               )}
             </div>
 
-            <div className="flex items-center justify-between pt-2">
+            <div className="flex items-center justify-start pt-2">
               <label className="flex cursor-pointer items-center gap-2">
                 <input
                   type="checkbox"
@@ -160,12 +156,6 @@ function LoginPage() {
                 />
                 <span className="text-sm text-ink-700">记住我</span>
               </label>
-              <a
-                href="#"
-                className="text-sm text-ink-900 underline-offset-4 hover:underline"
-              >
-                忘记密码
-              </a>
             </div>
 
             <Button

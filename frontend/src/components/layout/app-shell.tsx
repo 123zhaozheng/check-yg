@@ -6,7 +6,6 @@ import {
   Library,
   Layers,
   Settings as SettingsIcon,
-  Shield,
   Search,
   Bell,
   HelpCircle,
@@ -20,6 +19,7 @@ import { Separator } from "@/components/ui/separator"
 import { api } from "@/lib/api"
 import { queryClient } from "@/lib/query-client"
 import { useCurrentUser } from "@/hooks/use-current-user"
+import { ShieldLogo } from "@/components/icons/shield-logo"
 
 /**
  * Application shell (docs/web-pages-design.md §A2):
@@ -126,7 +126,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           )}
         >
           <div className="flex size-8 shrink-0 items-center justify-center rounded-[var(--radius-DEFAULT)] bg-ink-900">
-            <Shield className="size-4 text-ink-100" />
+            <ShieldLogo className="size-4 text-ink-100" />
           </div>
           {!collapsed && (
             <div className="min-w-0">
