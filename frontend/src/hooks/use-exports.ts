@@ -44,9 +44,13 @@ export function useExportReport(taskId: number) {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (body: ReportExportBody) => exportTaskReport(taskId, body),
-    onSuccess: () => {
+    onSuccess: (data) => {
       void queryClient.invalidateQueries({
         queryKey: [...EXPORTS_QUERY_KEY, "history", taskId],
+      })
+      // 自动触发浏览器下载刚生成的产物（修复：点导出无下载，需去历史重新下载）
+      void triggerExportDownload(data.id).catch(() => {
+        // 下载失败不破坏导出成功状态；产物已入库，可在历史里重新下载
       })
     },
   })
@@ -57,10 +61,11 @@ export function useExportData(taskId: number) {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (body: DataExportBody) => exportTaskData(taskId, body),
-    onSuccess: () => {
+    onSuccess: (data) => {
       void queryClient.invalidateQueries({
         queryKey: [...EXPORTS_QUERY_KEY, "history", taskId],
       })
+      void triggerExportDownload(data.id).catch(() => {})
     },
   })
 }
