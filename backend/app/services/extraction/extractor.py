@@ -319,6 +319,7 @@ class FlowExtractor:
         raw_amount: str = "",
         summary: str = "",
         transaction_type: str = "",
+        balance: str = "",
         exclude_reason: str = "",
     ) -> Dict[str, Any]:
         """Build one unified record dict for the ``extracted_records`` list.
@@ -339,6 +340,7 @@ class FlowExtractor:
             "raw_amount": raw_amount or "",
             "summary": summary or "",
             "transaction_type": transaction_type or "",
+            "balance": balance or "",
             "raw_payload": FlowExtractor._raw_payload_from_row(raw_row),
             "exclude_reason": exclude_reason or "",
         }
@@ -815,10 +817,11 @@ class FlowExtractor:
                                 raw_amount=str(item.get("raw_amount", "") or ""),
                                 summary=item.get("summary", ""),
                                 transaction_type=item.get("transaction_type", ""),
+                                balance=item.get("balance", ""),
                             )
                         )
                     else:
-                        # S5 不删减: noise row (合计/小计/余额/页脚/页眉/空行)
+                        # S5 不删减: noise row (合计/小计/余额汇总行/页脚/页眉/空行)
                         # → unparsed, kept with raw_payload + normalizer fields.
                         extracted_records.append(
                             self._build_record(
@@ -834,6 +837,7 @@ class FlowExtractor:
                                 raw_amount=str(item.get("raw_amount", "") or ""),
                                 summary=item.get("summary", ""),
                                 transaction_type=item.get("transaction_type", ""),
+                                balance=item.get("balance", ""),
                                 exclude_reason="normalizer: noise row (is_valid=false)",
                             )
                         )

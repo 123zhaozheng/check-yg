@@ -473,6 +473,8 @@ export interface FlowRecordItem {
   counterparty_account?: string | null
   amount?: string | null
   raw_amount?: string | null
+  /** 账户余额（本笔交易后的账户余额；无余额列文档为空）. 06-28-balance-column-check. */
+  balance?: string | null
   summary?: string | null
   transaction_type?: string | null
   raw_payload?: { cells?: string[] } | null
@@ -583,8 +585,10 @@ export interface FindingItem {
   detail_text?: string | null
   /** 命中的 flow_record id 列表（关联记录下钻）. */
   evidence_record_ids?: number[] | null
-  /** 来源：rule（维度跑出）| 历史占位. */
+  /** 来源：rule（维度跑出）| balance_check（余额校验）| 历史占位. */
   source?: string | null
+  /** 关联文档 id（余额校验 finding 关联文档；维度 finding 为 null）. 06-28-balance-column-check. */
+  document_id?: number | null
   created_at: string
   updated_at: string
 }
@@ -594,10 +598,12 @@ export interface FindingListResponse {
   total: number
 }
 
-/** Query params for GET /api/tasks/{id}/findings. */
+/** Query params for GET /api/tasks/{id}/findings.
+ *  `source` 过滤：传 "balance_check" 单取余额校验 finding；不传则排除 balance_check（AI 分析页用）. */
 export interface FindingListParams {
   severity?: Severity
   status?: FindingStatus
+  source?: string
 }
 
 /** POST /api/tasks/{id}/analyze 响应：异步启动确认（status=started + 维度数）.

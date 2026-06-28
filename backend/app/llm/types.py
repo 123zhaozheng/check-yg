@@ -36,6 +36,7 @@ class NormalizedRow(BaseModel):
     summary: str = ""
     transaction_type: str = ""
     source_file: str = ""
+    balance: str = ""
 
 
 class NormalizedRows(BaseModel):

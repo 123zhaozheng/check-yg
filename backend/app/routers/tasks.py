@@ -10,7 +10,7 @@ from typing import Any, List, Optional
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -800,6 +800,8 @@ class RecordResponse(BaseModel):
     counterparty_account: Optional[str] = None
     amount: Optional[str] = None
     raw_amount: Optional[str] = None
+    # 06-28-balance-column-check: 账户余额（无余额列文档为 None）。
+    balance: Optional[str] = None
     summary: Optional[str] = None
     transaction_type: Optional[str] = None
     raw_payload: Optional[dict[str, Any]] = None
@@ -832,6 +834,7 @@ def _record_response(row: FlowRecordRow) -> RecordResponse:
         counterparty_account=row.counterparty_account,
         amount=row.amount,
         raw_amount=row.raw_amount,
+        balance=row.balance,
         summary=row.summary,
         transaction_type=row.transaction_type,
         raw_payload=row.raw_payload,
@@ -1237,12 +1240,19 @@ async def list_findings(
     task_id: int,
     severity: Optional[str] = Query(None, description="high | medium | low"),
     status: Optional[str] = Query(None, description="pending | accepted | ignored"),
+    source: Optional[str] = Query(
+        None,
+        description="finding 来源过滤：rule（维度分析）/ balance_check（余额校验）。"
+        "默认（不传）返回 AI 分析维度 finding，不含 balance_check。",
+    ),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """列出任务的 findings，按 severity 降序 + confidence 降序排序。
 
-    可选 severity / status 过滤。
+    可选 severity / status / source 过滤。``source`` 默认不传时排除
+    ``balance_check``（AI 分析页只看维度 finding）；clean 页校验区传
+    ``source=balance_check`` 单独取余额校验不符行。
     """
     await _load_owned_task(db, task_id, current_user)
 
@@ -1251,6 +1261,14 @@ async def list_findings(
         query = query.where(Finding.severity == severity)
     if status:
         query = query.where(Finding.status == status)
+    if source:
+        query = query.where(Finding.source == source)
+    else:
+        # 默认排除 balance_check（AI 分析页维度 finding 视图）。用 or_ 处理
+        # NULL source（历史/维度 finding 的 source 可能为 None）。
+        query = query.where(
+            (Finding.source != "balance_check") | (Finding.source.is_(None))
+        )
 
     count_query = select(func.count()).select_from(query.subquery())
     total = (await db.execute(count_query)).scalar() or 0

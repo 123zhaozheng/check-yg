@@ -8,10 +8,12 @@ from pathlib import Path
 from typing import Dict, Optional
 
 from sqlalchemy import delete, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import async_session
 from app.models import Document, FlowRecordRow, Task, TaskLog
 from app.models.llm_model_assignment import ACTIVE_STAGES
+from app.services.audit.balance_check import run_balance_check
 from app.services.llm_model_service import load_stage_models
 from app.services.settings_service import get_int_setting, load_runtime_settings
 from app.websocket.notifications import notify_user
@@ -452,6 +454,13 @@ class ExtractionTaskRunner:
             consumed_ids=consumed_ids,
         )
 
+        # 06-28-balance-column-check: 余额防篡改校验。standard 行落库后，对每个
+        # 本次处理的文档跑余额校验（有余额列才跑，无余额列跳过）。重跑时先删该 doc
+        # 的旧 balance_check finding 再重算（行可能变了，旧结论失效）。
+        await ExtractionTaskRunner._run_balance_checks(
+            session, task_id, consumed_ids
+        )
+
     @staticmethod
     async def _persist_flow_records(
         session,
@@ -509,6 +518,7 @@ class ExtractionTaskRunner:
                     counterparty_account=record.get("counterparty_account") or None,
                     amount=record.get("amount") or None,
                     raw_amount=record.get("raw_amount") or None,
+                    balance=record.get("balance") or None,
                     summary=record.get("summary") or None,
                     transaction_type=record.get("transaction_type") or None,
                     raw_payload=raw_payload,
@@ -516,6 +526,29 @@ class ExtractionTaskRunner:
                     exclude_reason=record.get("exclude_reason") or None,
                 )
             )
+
+    @staticmethod
+    async def _run_balance_checks(
+        session: AsyncSession, task_id: int, document_ids: set[int]
+    ) -> None:
+        """对本次处理的文档跑余额校验（06-28-balance-column-check）。
+
+        每个 document_id 对应的 standard 行刚落库（在同一个 session 里，未 commit，
+        ``run_balance_check`` 能查到）。有余额列的文档跑校验落不符 Finding；无余额列
+        跳过不报错。单文档失败 try/except 跳过 + log（容错，不阻塞抽取收尾）。
+        """
+        if not document_ids:
+            return
+        for doc_id in document_ids:
+            try:
+                await run_balance_check(session, task_id, doc_id)
+            except Exception as exc:  # noqa: BLE001 — 容错，不阻塞抽取
+                logger.warning(
+                    "余额校验失败（跳过该文档，不阻塞抽取）: task_id=%s document_id=%s 异常=%s",
+                    task_id,
+                    doc_id,
+                    exc,
+                )
 
     async def _mark_failed(self, task_id: int, owner_id: int, error: str) -> None:
         async with async_session() as session:

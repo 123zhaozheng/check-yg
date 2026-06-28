@@ -53,13 +53,14 @@ SYSTEM_PROMPT_DOCUMENT_PORTRAIT = """你是一个银行/支付文档画像提取
 - 若正数行对应消费/刷卡/分期等，负数行对应还款/退款等（信用卡常见） → pos_expense
 
 ## 映射指导
-8个标准字段：transaction_time, counterparty_name, counterparty_account, amount, raw_amount, summary, transaction_type, source_file
+9个标准字段：transaction_time, counterparty_name, counterparty_account, amount, raw_amount, summary, transaction_type, source_file, balance
 映射规则：
 - 原表头名与标准字段语义匹配时映射为对应标准字段名字符串
 - 一对多时用数组，如"交易描述"同时映射到 ["counterparty_name","summary"]
 - 无法映射时为 null
 - split_cols 场景：借方金额/贷方金额两列都映射到 "amount"
 - raw_amount 和 source_file 不需要映射（raw_amount 由标准化器从 amount 列推导，source_file 由代码填充）
+- 源表头含「余额/账户余额/当前余额/结余」→ 映射为 "balance"（账户余额列，本笔交易后的账户余额）
 
 ## 输入
 输入数据（文档名称、非表格内容、表格数据预览）在下方用户消息中以JSON格式提供。
@@ -73,8 +74,8 @@ SYSTEM_PROMPT_DOCUMENT_PORTRAIT = """你是一个银行/支付文档画像提取
   "statement_period": "",
   "key_observations": [],
   "amount_sign_rule": "pos_income | pos_expense | no_sign | split_cols | unknown",
-  "header_attributes": ["交易日期", "对方户名", "对方账号", "摘要", "借贷", "交易金额", "币种"],
-  "column_mapping": ["transaction_time", "counterparty_name", "counterparty_account", "summary", "transaction_type", "amount", null]
+  "header_attributes": ["交易日期", "对方户名", "对方账号", "摘要", "借贷", "交易金额", "账户余额", "币种"],
+  "column_mapping": ["transaction_time", "counterparty_name", "counterparty_account", "summary", "transaction_type", "amount", "balance", null]
 }
 """
 

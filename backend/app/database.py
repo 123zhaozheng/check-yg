@@ -199,3 +199,12 @@ async def _run_lightweight_migrations(conn) -> None:
         await conn.exec_driver_sql(
             "ALTER TABLE exports ADD COLUMN scope VARCHAR(50)"
         )
+
+    # flow_records: balance (06-28-balance-column-check). Additive only — nullable
+    # so 无余额列文档 (信用卡等) rows stay compatible.
+    fr_result = await conn.exec_driver_sql("PRAGMA table_info(flow_records)")
+    fr_existing = {row[1] for row in fr_result.fetchall()}
+    if "balance" not in fr_existing:
+        await conn.exec_driver_sql(
+            "ALTER TABLE flow_records ADD COLUMN balance VARCHAR(100)"
+        )

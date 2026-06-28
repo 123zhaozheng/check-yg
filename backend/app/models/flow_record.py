@@ -48,6 +48,9 @@ class FlowRecordRow(Base):
     counterparty_account: Mapped[str | None] = mapped_column(String(255), nullable=True)
     amount: Mapped[str | None] = mapped_column(String(100), nullable=True)
     raw_amount: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    # 06-28-balance-column-check: 账户余额（本笔交易后的账户余额，原封不动还原）。
+    # 无余额列文档（信用卡等）为空。有余额列时供 balance_check 算法复核篡改/删行。
+    balance: Mapped[str | None] = mapped_column(String(100), nullable=True)
     summary: Mapped[str | None] = mapped_column(String(500), nullable=True)
     transaction_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
     # Original cells preserved verbatim (清洗不删减 physical guarantee).

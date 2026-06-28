@@ -12,7 +12,8 @@ Parity guarantees versus the original prompt:
 * ``amount`` is always positive (no sign); ``raw_amount`` preserves the source sign.
 * ``transaction_type`` is restricted to "收入" / "支出".
 * Date normalization includes missing-year inference from the portrait.
-* Noise rows (totals/balances/headers) are filtered via ``is_valid=false``.
+* Noise rows (totals/headers/余额汇总行) are filtered via ``is_valid=false``；
+  余额列的逐行数据保留进 ``balance``（仅余额汇总行过滤）。
 * A filename-based document context fallback is preserved for graceful degradation.
 """
 
@@ -42,6 +43,7 @@ SYSTEM_PROMPT_DATA_NORMALIZER = """你是一个银行/支付流水数据标准�
 6) summary - 摘要/备注/交易说明/商品信息
 7) transaction_type - 收支类型（只允许"收入"或"支出"）
 8) source_file - 来源文件名
+9) balance - 账户余额（本笔交易后的账户余额，原封不动还原）
 
 ## 列映射规则
 用户消息中 document_portrait 包含 header_attributes 和 column_mapping 两个有序数组，一一对应。
@@ -57,7 +59,11 @@ SYSTEM_PROMPT_DATA_NORMALIZER = """你是一个银行/支付流水数据标准�
 1. amount 始终为正数，禁止出现负号；raw_amount 保留原始正负号
 2. transaction_type 只允许"收入"或"支出"
 3. counterparty_account 仅填纯数字账号/卡号，禁止填入开户行、银行名称等非数字内容，无账号列为空
-4. 过滤噪音行（合计/小计/总计/余额/页脚/页眉/空行），is_valid=false
+4. 过滤噪音行（合计/小计/总计/页脚/页眉/空行），is_valid=false
+5. **余额列 vs 余额汇总行的区分（关键）**：
+   - 余额**列**的逐行数据（该行同时有交易时间/金额等流水字段）→ 是流水行，余额原封不动填入 balance，is_valid=true
+   - 余额**汇总行**（该行只有余额没有交易时间/金额等流水字段，如「期末余额」「账户余额：xxx」独占一行）→ 汇总噪音行，is_valid=false
+   - 判据：该行若同时有交易时间/金额/对手方等流水字段 → 流水行（保留 + 余额进 balance）；若只有余额没有交易 → 汇总噪音行
 
 ## 收支方向判断（仅代码无法确定时由你判断）
 代码已根据 amount_sign_rule + raw_amount 正负号确定收支方向的场景，你无需再判断。以下场景需你判断：
@@ -92,7 +98,8 @@ SYSTEM_PROMPT_DATA_NORMALIZER = """你是一个银行/支付流水数据标准�
       "raw_amount": "...",
       "summary": "...",
       "transaction_type": "...",
-      "source_file": "..."
+      "source_file": "...",
+      "balance": "..."
     }
   ]
 }

@@ -8,7 +8,7 @@ import {
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
-import type { FlowRecordItem, RecordType } from "@/lib/api"
+import type { FlowRecordItem, FindingItem, RecordType } from "@/lib/api"
 import {
   useCommitCleaning,
   useExcludedRecords,
@@ -16,6 +16,7 @@ import {
   useRestoreRecord,
   useTaskRecords,
 } from "@/hooks/use-records"
+import { useFindings, usePatchFinding } from "@/hooks/use-analysis"
 
 /**
  * 清洗标准化 /tasks/:id/clean (docs §C3).
@@ -130,6 +131,10 @@ function CleanPage() {
   const exportLog = useExportCleaningLog(taskId)
   const restore = useRestoreRecord(taskId)
 
+  // 余额校验：复用 findings 体系，按 source=balance_check 单取（后端不传 source 时排除）.
+  const balanceFindings = useFindings(taskId, { source: "balance_check" })
+  const patchFinding = usePatchFinding(taskId)
+
   const [committed, setCommitted] = React.useState(false)
   React.useEffect(() => {
     if (commit.isSuccess) setCommitted(true)
@@ -147,6 +152,13 @@ function CleanPage() {
 
   function handleRestore(recordId: number) {
     restore.mutate(recordId)
+  }
+
+  function handlePatchFinding(
+    findingId: number,
+    body: { status?: "accepted" | "ignored"; comment?: string },
+  ) {
+    patchFinding.mutate({ findingId, body })
   }
 
   return (
@@ -294,6 +306,16 @@ function CleanPage() {
         </section>
       </div>
 
+      {/* 余额校验区：上一行余额 ± 本笔收支 = 本行余额，对不上就指出.
+          无余额列文档 → 后端不产 finding，列表空（任务级不细分"无余额列"与"全部平衡"）. */}
+      <BalanceCheckSection
+        findings={balanceFindings.data?.items ?? []}
+        isLoading={balanceFindings.isLoading}
+        onPatch={handlePatchFinding}
+        patching={patchFinding.isPending}
+        patchingId={patchFinding.isPending ? patchFinding.variables?.findingId ?? null : null}
+      />
+
       {(commit.isError || exportLog.isError || restore.isError) && (
         <p className="text-sm text-ink-900">
           {(commit.error as Error)?.message ??
@@ -347,6 +369,177 @@ function TabButton({
   )
 }
 
+/**
+ * 余额校验区 — source=balance_check 的 finding 列表（PRD §六）.
+ *
+ * 单色卡片面板（border-ink-400 bg-ink-100，跟 clean 页其它卡片同风格）.
+ * 每条不符行：状态 pill（灰阶编码，参考 analyze.tsx）+ 行号/对手方/金额
+ * + detail_text（等宽数字）+ 采纳/忽略按钮（按 status + patching + patchingId
+ * 做 disabled，参考 analyze.tsx FindingDetail 三按钮逻辑）.
+ * 无余额列文档 → 后端不产 finding，列表空（任务级不细分）.
+ */
+function BalanceCheckSection({
+  findings,
+  isLoading,
+  onPatch,
+  patching,
+  patchingId,
+}: {
+  findings: FindingItem[]
+  isLoading: boolean
+  onPatch: (
+    findingId: number,
+    body: { status?: "accepted" | "ignored"; comment?: string },
+  ) => void
+  patching: boolean
+  patchingId: number | null
+}) {
+  return (
+    <section className="flex flex-col rounded-[var(--radius-lg)] border border-ink-400 bg-ink-100">
+      <div className="border-b border-ink-400 p-4">
+        <h3 className="font-sans text-base font-semibold text-ink-900">
+          余额校验
+          <span className="ml-1.5 font-mono text-xs font-normal text-ink-700">
+            ({findings.length})
+          </span>
+        </h3>
+      </div>
+      <div className="flex-1">
+        {isLoading && (
+          <div className="px-4 py-10 text-center text-sm text-ink-700">
+            加载中…
+          </div>
+        )}
+        {!isLoading && findings.length === 0 && (
+          <div className="px-4 py-10 text-center text-sm text-ink-700">
+            暂无余额校验异常
+          </div>
+        )}
+        {findings.length > 0 && (
+          <div className="divide-y divide-ink-400">
+            {findings.map((finding) => (
+              <BalanceCheckRow
+                key={finding.id}
+                finding={finding}
+                onPatch={onPatch}
+                patching={patching}
+                isPatchingThis={
+                  patching && patchingId === finding.id
+                }
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    </section>
+  )
+}
+
+/** 单条余额校验不符行：状态 pill + 元信息 + detail_text + 采纳/忽略按钮. */
+function BalanceCheckRow({
+  finding,
+  onPatch,
+  patching,
+  isPatchingThis,
+}: {
+  finding: FindingItem
+  onPatch: (
+    findingId: number,
+    body: { status?: "accepted" | "ignored"; comment?: string },
+  ) => void
+  patching: boolean
+  isPatchingThis: boolean
+}) {
+  // aggregate finding（文档级）：evidence_record_ids 空 → 显示「文档级」而非行号.
+  const isAggregate =
+    !finding.evidence_record_ids || finding.evidence_record_ids.length === 0
+
+  return (
+    <div className="flex flex-col gap-2 p-4">
+      {/* 元信息行：状态 pill + 文档级标识 + 金额 */}
+      <div className="flex flex-wrap items-center gap-2">
+        <BalanceStatusPill status={finding.status} />
+        <span className="font-mono text-xs text-ink-700">
+          #{isAggregate ? finding.id : finding.evidence_record_ids?.[0]}
+        </span>
+        {isAggregate && (
+          <span className="text-xs text-ink-700">文档级</span>
+        )}
+        {finding.counterparty && (
+          <span className="text-xs text-ink-700">
+            对手方：{finding.counterparty}
+          </span>
+        )}
+        {finding.amount && (
+          <span className="font-mono text-xs text-ink-900">
+            金额：{finding.amount}
+          </span>
+        )}
+      </div>
+      {/* detail_text：期望/实际/差额算式，等宽数字 */}
+      {finding.detail_text && (
+        <p className="whitespace-pre-wrap font-mono text-xs text-ink-800">
+          {finding.detail_text}
+        </p>
+      )}
+      {/* 备注（已有时显示） */}
+      {finding.comment && (
+        <p className="rounded-[var(--radius-DEFAULT)] bg-ink-200 px-2 py-1 text-xs text-ink-700">
+          备注：{finding.comment}
+        </p>
+      )}
+      {/* 操作按钮：采纳为告警 / 忽略 */}
+      <div className="flex items-center gap-2">
+        <Button
+          size="sm"
+          onClick={() => onPatch(finding.id, { status: "accepted" })}
+          disabled={patching || finding.status === "accepted"}
+        >
+          采纳为告警
+        </Button>
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => onPatch(finding.id, { status: "ignored" })}
+          disabled={patching || finding.status === "ignored"}
+        >
+          忽略
+        </Button>
+        {isPatchingThis && (
+          <span className="text-[11px] text-ink-700">提交中…</span>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * 余额校验状态 pill — 灰阶编码（单色原则，参考 analyze.tsx 状态 pill 写法）.
+ * accepted=黑底 / ignored=深灰 / pending=浅灰.
+ */
+function BalanceStatusPill({
+  status,
+}: {
+  status: FindingItem["status"]
+}) {
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center rounded-[var(--radius-DEFAULT)] px-1.5 py-0.5 text-[11px] font-bold",
+        status === "accepted" && "bg-ink-900 text-ink-100",
+        status === "ignored" && "bg-ink-500 text-ink-100",
+        status === "pending" && "bg-ink-300 text-ink-700",
+      )}
+    >
+      {status === "pending"
+        ? "待处理"
+        : status === "accepted"
+          ? "已采纳"
+          : "已忽略"}
+    </span>
+  )
+}
+
 /** Standardized records table with row expand (原始↔标准对照). */
 function StandardRecordsTable({
   items,
@@ -394,6 +587,7 @@ function StandardRecordsTable({
                 <th className="px-3 py-3">日期</th>
                 <th className="px-3 py-3">收支</th>
                 <th className="px-3 py-3 text-right">金额</th>
+                <th className="px-3 py-3 text-right">余额</th>
                 <th className="px-3 py-3">对方</th>
                 <th className="px-3 py-3">渠道</th>
                 <th className="px-3 py-3">摘要</th>
@@ -436,6 +630,9 @@ function StandardRecordsTable({
                       <td className="px-3 py-3 text-right text-ink-900">
                         {row.amount || "—"}
                       </td>
+                      <td className="px-3 py-3 text-right text-ink-800">
+                        {row.balance || "—"}
+                      </td>
                       <td className="px-3 py-3 text-ink-800">
                         {row.counterparty_name || "—"}
                       </td>
@@ -448,7 +645,7 @@ function StandardRecordsTable({
                     </tr>
                     {expanded && (
                       <tr className="border-b-2 border-ink-400 bg-ink-300">
-                        <td colSpan={8} className="p-0">
+                        <td colSpan={9} className="p-0">
                           <RawVsStandardCompare row={row} />
                         </td>
                       </tr>
@@ -480,6 +677,7 @@ function RawVsStandardCompare({ row }: { row: FlowRecordItem }) {
     { label: "交易对手", value: row.counterparty_name ?? "" },
     { label: "对手账号", value: row.counterparty_account ?? "" },
     { label: "金额", value: row.amount ?? "" },
+    { label: "余额", value: row.balance ?? "" },
     { label: "原始金额", value: row.raw_amount ?? "" },
     { label: "摘要", value: row.summary ?? "" },
     { label: "收支类型", value: row.transaction_type ?? "" },

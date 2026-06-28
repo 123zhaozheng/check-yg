@@ -82,10 +82,13 @@ class AnalysisService:
 
         # 重跑策略：删 pending finding（保留人工结论）。在请求 session 里删 + 提交，
         # background task 用独立 session 跑维度。
+        # 06-28: balance_check finding（source='balance_check'）是余额校验产物，
+        # 不属于 AI 维度分析，重跑分析时不动它们（由重新标准化触发其重算）。
         await db.execute(
             delete(Finding).where(
                 Finding.task_id == task_id,
                 Finding.status == "pending",
+                Finding.source != "balance_check",
             )
         )
         config = dict((await db.get(Task, task_id)).config or {})
