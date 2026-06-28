@@ -2,7 +2,8 @@
 """Report API router.
 
 S7 章节化审查报告闭环：覆盖 ``POST /tasks/{task_id}/report`` 为章节化生成
-（聚合 S5 flow_records + S6 findings + Task 基础信息，按 6 章确定性模板拼装），
+（聚合 S5 flow_records + S6 findings(accepted) + 关键词审查(confirmed) +
+余额校验(accepted) + Task 基础信息，按 8 章确定性模板拼装），
 新增章节编辑/重生成/重排序 + 批注 + 定稿端点。
 
 owner-only 校验：通过 ``Report.task_id`` → ``Task.owner_id == current_user.id``
@@ -38,8 +39,12 @@ from app.schemas.review import (
     ReportChapterResponse,
     ReportResponse,
 )
+from app.llm.report_agent import get_report_generation_model
 from app.services.report_chapter_builder import build_all_chapters, build_one_chapter
 from app.services.report_service import ReportService, load_report
+from app.services.report_service_async import (
+    report_generation_service,
+)
 from app.websocket.notifications import notify_user
 
 router = APIRouter(tags=["reports"])
@@ -84,10 +89,18 @@ async def _load_owned_report(
 
 
 def _ensure_draft(report: Report) -> None:
-    """定稿守卫：status != draft 时写操作返 409（不删减精神，只改软态）."""
-    if report.status != "draft":
+    """写操作守卫：final/generating 时返 409.
+
+    允许 draft / generated / failed 态编辑。generating 后台逐章写回，前端只轮询
+    查看，避免人工编辑与后台生成互相覆盖。
+    """
+    if report.status == "final":
         raise HTTPException(
             status_code=409, detail="Report is finalized and read-only"
+        )
+    if report.status == "generating":
+        raise HTTPException(
+            status_code=409, detail="Report is still generating"
         )
 
 
@@ -142,15 +155,18 @@ async def generate_task_report(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """章节化生成报告（覆盖旧 ReviewMatch 链路）.
+    """章节化异步生成报告（06-28 Phase 2：LLM agent，每章一个 run）.
 
-    聚合 S5 flow_records + S6 findings + Task 基础信息，按 6 章确定性模板
-    拼装 Markdown content，建 1 个 Report(status=draft) + 6 个 ReportChapter
-    （order_index 0-5）。幂等：task 已有 draft 报告则返已有，无则新建。
+    立即建 ``Report(status="generating")`` + 8 个空 ``ReportChapter`` → 返回
+    generating → 后台逐章 ``run_chapter`` 填 content + 增量 commit。
+    前端轮询 GET report 直到 status=generated/failed。
+
+    幂等：task 已有报告（任意状态）则返已有。正在生成中（generating）也返已有
+    （前端继续轮询）。
     """
     task = await _load_owned_task(db, task_id, current_user)
 
-    # 幂等：已有任意状态报告则返回（draft 可继续编辑，final 只读）。
+    # 幂等：已有任意状态报告则返回（generating/draft/generated 可继续，final 只读）。
     existing = (
         await db.execute(
             select(Report)
@@ -163,35 +179,15 @@ async def generate_task_report(
     if existing:
         return _report_response(existing)
 
-    # 新建 Report + 6 章（确定性模板拼装）。
-    contents = await build_all_chapters(db, task)
-    # content_path 占位（章节化后 content 存 DB 行，文件路径保留兼容旧字段）。
-    content_path = f"report_chapters/task_{task.id}"
-    report = Report(
-        task_id=task.id,
-        review_id=None,
-        format="markdown",
-        content_path=content_path,
-        status="draft",
-    )
-    db.add(report)
-    await db.flush()
+    # 防重入：同 task 已在生成（理论上 existing 会命中，双保险）。
+    if report_generation_service.is_running(task.id):
+        raise HTTPException(status_code=409, detail="报告正在生成中")
 
-    from app.services.report_chapter_builder import chapter_titles
-    titles = chapter_titles()
-    for idx, title in enumerate(titles):
-        db.add(
-            ReportChapter(
-                report_id=report.id,
-                title=title,
-                content=contents[idx] if idx < len(contents) else "",
-                order_index=idx,
-            )
-        )
-    await db.commit()
-    await db.refresh(report)
+    # 异步生成：建 generating report + 8 空章 → 立即返回 → 后台逐章填。
+    report = await report_generation_service.start_generation(db, task, current_user)
 
-    # 重新加载带 relationships 的 report（refresh 不带 selectinload）。
+    # 重新加载带 relationships 的 report（start_generation 返回的 report 可能
+    # 没有 selectinload 的 chapters）。
     loaded = (
         await db.execute(
             select(Report)
@@ -202,9 +198,9 @@ async def generate_task_report(
 
     await notify_user(
         current_user.id,
-        event="report.completed",
-        title="报告生成完成",
-        message=f"任务 {task.id} 报告已生成（6 章）。",
+        event="report.progress",
+        title="报告开始生成",
+        message=f"任务 {task.id} 报告开始生成（8 章 LLM agent）。",
         resource={"task_id": task.id, "report_id": loaded.id},
     )
     return _report_response(loaded)
@@ -271,11 +267,9 @@ async def regenerate_chapter(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """单章重生成（占位确定性模板重新拼装该章，定稿 409）.
+    """单章重生成（LLM agent run_chapter，失败回退模板，定稿 409）.
 
-    TODO 用户后续接真实 agent.run：把此处替换为 agent 调用
-    （deps_type=AuditDeps / deps=AuditDeps(db, task_id) / message_history /
-    ModelMessagesTypeAdapter）。本轮保持占位确定性，可重放可测。
+    走 ``build_one_chapter``（agent.run + 模板兜底）。单章同步可接受（1 次 LLM 调用）。
     """
     report = await _load_owned_report(db, report_id, current_user)
     _ensure_draft(report)
@@ -289,7 +283,10 @@ async def regenerate_chapter(
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 
-    chapter.content = await build_one_chapter(db, task, chapter.order_index)
+    report_model = await get_report_generation_model(db)
+    chapter.content = await build_one_chapter(
+        db, task, chapter.order_index, report_model=report_model
+    )
     await db.commit()
     await db.refresh(chapter)
     return _chapter_response(chapter)
@@ -334,7 +331,7 @@ async def regenerate_report(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """全报告重生成（占位重新拼装所有章节，定稿 409）.
+    """全报告重生成（LLM agent build_all_chapters，失败逐章回退模板，定稿 409）.
 
     重生成重写 content（派生数据再生），不改 order_index / 不删行——
     原始记录在 S5 flow_records.raw_payload 已兜底（不删减精神）。
@@ -347,7 +344,8 @@ async def regenerate_report(
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 
-    contents = await build_all_chapters(db, task)
+    report_model = await get_report_generation_model(db)
+    contents = await build_all_chapters(db, task, report_model=report_model)
     for idx, chapter in enumerate(sorted(report.chapters, key=lambda c: c.order_index)):
         if idx < len(contents):
             chapter.content = contents[idx]

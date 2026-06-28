@@ -33,6 +33,10 @@ export function useReport(taskId: number) {
     // generate / regenerate rewrite chapters; keep stale time conservative.
     placeholderData: (prev) => prev,
     retry: false,
+    refetchInterval: (query) => {
+      const data = query.state.data
+      return data?.status === "generating" ? 1500 : false
+    },
   })
 }
 

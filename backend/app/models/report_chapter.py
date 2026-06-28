@@ -1,8 +1,8 @@
 """ReportChapter model — S7 章节化审查报告.
 
-一张报告拆成 6 章（概述/被审查对象/数据范围/异常发现汇总/风险评估/
-结论建议），每章独立存 Markdown content，支持行内编辑与拖拽排序
-（``order_index``）。``content`` 是确定性模板拼装的派生数据——单章/全
+一张报告拆成 8 章（概述/被审查对象/数据范围/完整性校验（余额）/关键词审查/
+异常发现汇总/风险评估/结论建议），每章独立存 Markdown content，支持行内编辑
+与拖拽排序（``order_index``）。``content`` 是确定性模板拼装的派生数据——单章/全
 报告重生成重写 content，不改原始记录（S5 flow_records.raw_payload 已兜底
 "不删减"）。
 
@@ -29,7 +29,7 @@ class ReportChapter(Base):
     )
     title: Mapped[str] = mapped_column(String(100), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    # 拖拽排序：0-5 对应 6 章固定顺序，重生成不改 order_index。
+    # 拖拽排序：0-7 对应 8 章固定顺序，重生成不改 order_index。
     order_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     generated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

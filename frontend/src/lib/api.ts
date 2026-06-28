@@ -712,12 +712,17 @@ export function chatAnalyze(
  * Report API — types + helpers (S7 审查报告闭环).
  * Appended only; the apiFetch core above is unchanged.
  * Mirrors `backend/app/routers/reports.py` + `app/schemas/review.py`.
- * 章节化审查报告：6 章 ReportChapter + 章节级批注 ReportAnnotation +
- * 定稿软态 status(draft|final). 单色原则 + 不删减精神（定稿只改软态）.
+ * 章节化审查报告：8 章 ReportChapter + 章节级批注 ReportAnnotation +
+ * status(draft|generating|generated|failed|final). 单色原则 + 不删减精神（定稿只改软态）.
  * ======================================================================= */
 
-/** 报告软态：draft（可编辑/重生成/批注）| final（整报告只读，写操作 409）. */
-export type ReportStatus = "draft" | "final"
+/** 报告软态：generating 后台生成中；final 整报告只读，写操作 409. */
+export type ReportStatus =
+  | "draft"
+  | "generating"
+  | "generated"
+  | "failed"
+  | "final"
 
 /** One chapter of a chaptered review report (S7). Mirrors ReportChapterResponse. */
 export interface ReportChapterItem {

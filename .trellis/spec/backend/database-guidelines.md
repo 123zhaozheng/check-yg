@@ -258,8 +258,8 @@ for folder in folders:
 ## Web Review / Report / Export Scenario
 
 ### 1. Scope / Trigger
-- Trigger: A completed FastAPI task needs backend customer-list matching, report generation, and downloadable Excel/ZIP exports.
-- This requires code-spec depth because it adds API signatures, SQLAlchemy tables/columns, task permission boundaries, and file output contracts.
+- Trigger: A completed FastAPI task needs backend customer-list matching, async LLM-backed chaptered report generation, and downloadable Excel/ZIP/report exports.
+- This requires code-spec depth because it adds API signatures, report status transitions, SQLAlchemy tables/columns, background job boundaries, task permission boundaries, and file output contracts.
 
 ### 2. Signatures
 ```python
@@ -285,10 +285,14 @@ POST /api/tasks/{task_id}/review
 GET  /api/reviews/{review_id}
 GET  /api/reviews/{review_id}/matches?page=1&page_size=20
 POST /api/tasks/{task_id}/report
-GET  /api/reports/{report_id}
-GET  /api/reports/{report_id}/download
+GET  /api/tasks/{task_id}/report
+PATCH /api/reports/{report_id}/chapters/{chapter_id}
+POST /api/reports/{report_id}/chapters/{chapter_id}/regenerate
+POST /api/reports/{report_id}/regenerate
+POST /api/reports/{report_id}/finalize
 POST /api/tasks/{task_id}/export/excel
 POST /api/tasks/{task_id}/export/bundle
+POST /api/tasks/{task_id}/export/report
 GET  /api/exports/{export_id}/download
 ```
 
@@ -312,11 +316,30 @@ GET  /api/exports/{export_id}/download
 - SQLAlchemy persistence:
   - `reviews`: task/customer list/match config/status metadata.
   - `review_matches`: one row per matched record, including `record_id`, `customer_name`, `match_type`, `score`, counterparty fields, source file, time, amount, summary, and `record_payload`.
-  - `reports`: Markdown report metadata and `content_path`.
-  - `exports`: generated Excel/ZIP metadata and `file_path`.
+  - `reports`: Markdown report metadata, `content_path`, and soft status.
+  - `report_chapters`: exactly 8 default chapters for new reports, ordered by `order_index`.
+  - `exports`: generated Excel/ZIP/PDF/DOCX/HTML metadata and `file_path`.
+- Report status contract:
+  - `generating`: created immediately by `POST /tasks/{task_id}/report`; chapters exist but content may still be empty.
+  - `generated`: background job has filled all chapters; report export is allowed.
+  - `failed`: background job failed; user may edit/regenerate but report export is rejected until regenerated.
+  - `draft`: legacy/generated-compatible editable report state.
+  - `final`: read-only; all write operations return 409.
+- Async report generation:
+  - `POST /api/tasks/{task_id}/report` must return quickly with `status="generating"` and 8 empty `ReportChapter` rows.
+  - A background job uses an independent DB session, aggregates task data once, generates each chapter via the report agent, commits after each chapter, and marks the report `generated` at the end.
+  - While `status="generating"`, chapter edits, annotations, reordering, regeneration, and finalize return 409 to avoid background writes overwriting user edits.
+  - Frontend polls `GET /api/tasks/{task_id}/report` while status is `generating`; display filled chapters progressively and empty chapters as generating placeholders.
+- Report agent data contract:
+  - Use `report_generation` stage model via `get_report_generation_model`; no assigned card means fall back to runtime LLM settings.
+  - Each chapter receives a JSON context slice built from real task data only.
+  - Include accepted findings, confirmed keyword hits, accepted `source="balance_check"` findings, flow statistics, and task metadata.
+  - LLM failure in one chapter falls back to the deterministic template for that chapter and does not fail the whole report.
+- Markdown contract:
+  - Chapter content is constrained Markdown: `##`/`###`, paragraphs, `-`/ordered lists, `**bold**`, blockquote, and GFM tables.
+  - Word/PDF/HTML export must render Markdown into rich content; do not write raw `##`, `|`, or list marker text as plain paragraphs.
 - Output files:
-  - Reports write under `settings.OUTPUT_DIR/reports/{task_id}/`.
-  - Exports write under `settings.OUTPUT_DIR/exports/{task_id}/`.
+  - Report exports write under `settings.OUTPUT_DIR/exports/{task_id}/`.
   - Excel workbooks must close in `finally`.
 
 ### 4. Validation & Error Matrix
@@ -328,12 +351,15 @@ GET  /api/exports/{export_id}/download
 | Current user has global `admin` role | Allow task read/write even when not owner/collaborator |
 | Task/review/report/export does not exist | Return 404 |
 | Report/export file missing on disk | Return 404 from download endpoint |
-| LLM unavailable | Generate deterministic fallback report; core workflow must not fail |
+| Report status is `generating` and a write operation is requested | Return 409; do not mutate chapters/annotations |
+| Report status is `generating` or `failed` and report export is requested | Return 409; do not generate a partial/failed export |
+| LLM unavailable for one chapter | Use deterministic fallback for that chapter; other chapters continue |
 | Existing SQLite DB lacks additive columns | `init_db()` applies lightweight `ALTER TABLE` additions for new review-match fields |
 
 ### 5. Good/Base/Bad Cases
-- Good: Completed task with normalized records and customer list -> `POST /review` creates one `Review`, multiple `ReviewMatch` rows, report and downloads work.
-- Base: No review exists -> report/export may still return task-level artifacts with empty match lists.
+- Good: Completed task with normalized records and accepted findings -> `POST /report` returns `generating`, polling shows chapters fill one by one, final status becomes `generated`, then PDF/DOCX/HTML export works.
+- Base: LLM fails for a chapter -> that chapter uses deterministic fallback content, report still completes.
+- Bad: User clicks export while report is still `generating` -> 409, no empty-chapter artifact is written.
 - Bad: Unauthorized user requests another user's export -> 403, with no file path/content disclosure.
 
 ### 6. Tests Required
@@ -342,6 +368,11 @@ GET  /api/exports/{export_id}/download
 - API: Unauthorized task review/report/export path returns 403.
 - API: Admin role can perform task write operations without being owner/collaborator.
 - File generation: Excel export opens with `openpyxl` and includes `标准化流水` plus `匹配详情`; bundle export opens with `zipfile` and contains `skill_manifest.json`.
+- Report generation API: `POST /tasks/{id}/report` returns `generating` with 8 empty chapters.
+- Report background job: chapter generation and DB commits interleave per chapter before the final status commit.
+- Report write guard: generating/final reports reject chapter edit/regenerate/reorder/annotation/finalize with 409.
+- Report export: generating/failed reports reject report export with 409; generated/draft reports produce PDF/DOCX/HTML files.
+- Markdown export: headings, lists, bold, blockquotes, and tables render in DOCX/PDF/HTML without raw Markdown markers.
 
 ### 7. Wrong vs Correct
 #### Wrong
@@ -356,6 +387,27 @@ if not await check_task_permission(db, current_user, task_id, required_role="wri
 # check_task_permission must include the global admin bypass internally.
 if not await check_task_permission(db, current_user, task_id, required_role="write"):
     raise HTTPException(status_code=403, detail="Task access denied")
+```
+
+#### Wrong
+```python
+# Builds every chapter first, then writes them all; polling sees empty content
+# until the slowest LLM call finishes.
+contents = await build_all_chapters(session, task)
+for idx, chapter in enumerate(chapters):
+    chapter.content = contents[idx]
+await session.commit()
+```
+
+#### Correct
+```python
+# Commit after each chapter so polling can show incremental progress.
+agg = await _aggregate(session, task)
+for chapter in chapters:
+    chapter.content = await build_chapter_content(
+        session, task, chapter.order_index, agg=agg
+    )
+    await session.commit()
 ```
 
 #### Wrong

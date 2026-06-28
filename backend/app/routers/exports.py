@@ -119,6 +119,8 @@ async def export_task_report(
             include_annotations=request.include_annotations,
         )
     except ValueError as exc:
+        if str(exc) in ("Report is still generating", "Report generation failed"):
+            raise HTTPException(status_code=409, detail=str(exc))
         raise HTTPException(status_code=404, detail=str(exc))
     await _notify_export_completed(current_user.id, export)
     return _export_response(export)

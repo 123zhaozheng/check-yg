@@ -18,7 +18,8 @@ class Report(Base):
     review_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("reviews.id"), nullable=True)
     format: Mapped[str] = mapped_column(String(20), nullable=False)
     content_path: Mapped[str] = mapped_column(String(500), nullable=False)
-    # S7 软态：draft（可编辑/重生成/批注）| final（整报告只读，写操作 409）。
+    # S7/S8 软态：draft/generated/failed 可编辑，generating 后台填章，
+    # final 整报告只读（写操作 409）。
     # 定稿不改章节内容、不删行，只改本软态（不删减精神）。
     status: Mapped[str] = mapped_column(
         String(20),
@@ -35,7 +36,7 @@ class Report(Base):
     # Relationships
     task: Mapped["Task"] = relationship("Task", back_populates="reports")  # noqa: F821
     review: Mapped["Review | None"] = relationship("Review", back_populates="reports")  # noqa: F821
-    # S7 章节化：6 章 ReportChapter，按 order_index 排序，删报告级联删章。
+    # S7 章节化：8 章 ReportChapter，按 order_index 排序，删报告级联删章。
     chapters: Mapped[list["ReportChapter"]] = relationship(  # noqa: F821
         "ReportChapter",
         back_populates="report",

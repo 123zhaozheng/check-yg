@@ -182,7 +182,8 @@ async def _run_lightweight_migrations(conn) -> None:
                 f"ALTER TABLE documents ADD COLUMN {column} {column_type}"
             )
 
-    # reports: status (S7 软态 draft|final). Additive only — new tables
+    # reports: status (S7/S8 软态 draft|generating|generated|failed|final).
+    # Additive only — new tables
     # (report_chapters / report_annotations) are created by create_all above.
     reports_result = await conn.exec_driver_sql("PRAGMA table_info(reports)")
     reports_existing = {row[1] for row in reports_result.fetchall()}

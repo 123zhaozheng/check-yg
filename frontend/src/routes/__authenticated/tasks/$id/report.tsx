@@ -1,6 +1,8 @@
 import * as React from "react"
 import { createFileRoute, useParams } from "@tanstack/react-router"
 import { Check, FileText, GripVertical, RefreshCw } from "lucide-react"
+import ReactMarkdown from "react-markdown"
+import remarkGfm from "remark-gfm"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
@@ -24,7 +26,7 @@ import {
  * Monochrome 三栏报告页（黑白年报排版，单色原则）:
  * - 顶部控制条: 保存草稿描边 + 提交定稿黑底主按钮 + 重新生成全报告描边 +
  *   "已定稿"灰阶标签（定稿后只读水印）.
- * - 左·报告大纲: 6 章目录，点击跳转，可拖拽排序（HTML5 drag），选中黑底高亮.
+ * - 左·报告大纲: 8 章目录，点击跳转，可拖拽排序（HTML5 drag），选中黑底高亮.
  * - 中·报告正文: 章节粗体大字 + 规整排版（Markdown 轻量渲染）;
  *   异常条目卡片块嵌入（标题/金额/AI结论/关联记录入口）;
  *   行内编辑点段落 → textarea 细虚线框 → blur 保存 PATCH;
@@ -49,6 +51,8 @@ function ReportPage() {
 
   const report = reportQuery.data
   const isFinal = report?.status === "final"
+  const isGenerating = report?.status === "generating"
+  const isFailed = report?.status === "failed"
   const chapters = React.useMemo(
     () =>
       [...(report?.chapters ?? [])].sort(
@@ -80,13 +84,23 @@ function ReportPage() {
               </h2>
               <p className="font-mono text-xs text-ink-600">
                 {report
-                  ? `报告 #${report.id} · ${isFinal ? "已定稿" : "草稿"}`
+                  ? `报告 #${report.id} · ${reportStatusLabel(report.status)}`
                   : "尚未生成报告"}
               </p>
             </div>
             {isFinal && (
               <span className="rounded-[var(--radius-DEFAULT)] border border-ink-400 bg-ink-200 px-2 py-0.5 font-mono text-xs font-bold uppercase tracking-wider text-ink-500">
                 已定稿
+              </span>
+            )}
+            {isGenerating && (
+              <span className="rounded-[var(--radius-DEFAULT)] border border-ink-500 bg-ink-200 px-2 py-0.5 font-mono text-xs font-bold text-ink-700">
+                生成中
+              </span>
+            )}
+            {isFailed && (
+              <span className="rounded-[var(--radius-DEFAULT)] border border-ink-900 bg-ink-900 px-2 py-0.5 font-mono text-xs font-bold text-ink-100">
+                生成失败
               </span>
             )}
           </div>
@@ -106,15 +120,19 @@ function ReportPage() {
                   variant="secondary"
                   size="sm"
                   onClick={() => regenerateReport.mutate(report.id)}
-                  disabled={regenerateReport.isPending}
+                  disabled={regenerateReport.isPending || isGenerating}
                 >
                   <RefreshCw className="size-4" />
-                  {regenerateReport.isPending ? "重生成中…" : "重新生成全报告"}
+                  {isGenerating
+                    ? "后台生成中…"
+                    : regenerateReport.isPending
+                      ? "重生成中…"
+                      : "重新生成全报告"}
                 </Button>
                 <Button
                   size="sm"
                   onClick={() => finalizeReport.mutate(report.id)}
-                  disabled={finalizeReport.isPending}
+                  disabled={finalizeReport.isPending || isGenerating}
                 >
                   {finalizeReport.isPending ? "定稿中…" : "提交定稿"}
                 </Button>
@@ -150,6 +168,7 @@ function ReportPage() {
             chapters={chapters}
             activeChapterId={activeChapterId}
             isFinal={isFinal}
+            isGenerating={Boolean(isGenerating)}
             onSelect={setActiveChapterId}
           />
 
@@ -160,6 +179,7 @@ function ReportPage() {
             chapters={chapters}
             isFinal={isFinal}
             activeChapterId={activeChapterId}
+            isGenerating={Boolean(isGenerating)}
           />
 
           {/* Right: annotations */}
@@ -169,6 +189,7 @@ function ReportPage() {
             chapters={chapters}
             annotations={report.annotations ?? []}
             isFinal={isFinal}
+            isGenerating={Boolean(isGenerating)}
           />
         </div>
       )}
@@ -192,12 +213,14 @@ function ReportOutline({
   chapters,
   activeChapterId,
   isFinal,
+  isGenerating,
   onSelect,
 }: {
   taskId: number
   chapters: ReportChapterItem[]
   activeChapterId: number | null
   isFinal: boolean
+  isGenerating: boolean
   onSelect: (id: number) => void
 }) {
   const reorder = useReorderChapters(taskId)
@@ -243,7 +266,7 @@ function ReportOutline({
             return (
               <li
                 key={c.id}
-                draggable={!isFinal}
+                draggable={!isFinal && !isGenerating}
                 onDragStart={() => setDragId(c.id)}
                 onDragOver={(e) => {
                   e.preventDefault()
@@ -262,7 +285,7 @@ function ReportOutline({
                     overId === c.id && dragId !== c.id && "ring-1 ring-ink-700",
                   )}
                 >
-                  {!isFinal && (
+                  {!isFinal && !isGenerating && (
                     <GripVertical className="size-3.5 shrink-0 text-ink-600" />
                   )}
                   <span className="font-mono text-xs text-ink-600">
@@ -274,7 +297,7 @@ function ReportOutline({
             )
           })}
         </ul>
-        {!isFinal && (
+        {!isFinal && !isGenerating && (
           <p className="mt-2 px-2 font-mono text-[10px] text-ink-600">
             拖拽章节排序
           </p>
@@ -291,12 +314,14 @@ function ReportBody({
   chapters,
   isFinal,
   activeChapterId,
+  isGenerating,
 }: {
   taskId: number
   reportId: number
   chapters: ReportChapterItem[]
   isFinal: boolean
   activeChapterId: number | null
+  isGenerating: boolean
 }) {
   const sectionRefs = React.useRef<Record<number, HTMLDivElement | null>>({})
 
@@ -322,6 +347,7 @@ function ReportBody({
               chapter={c}
               index={idx}
               isFinal={isFinal}
+              isGenerating={isGenerating}
             />
           ))}
         </article>
@@ -339,9 +365,10 @@ const ChapterSection = React.forwardRef<
     chapter: ReportChapterItem
     index: number
     isFinal: boolean
+    isGenerating: boolean
   }
 >(function ChapterSection(
-  { taskId, reportId, chapter, index, isFinal },
+  { taskId, reportId, chapter, index, isFinal, isGenerating },
   ref,
 ) {
   const patchChapter = usePatchChapter(taskId)
@@ -361,7 +388,7 @@ const ChapterSection = React.forwardRef<
     setEditing(false)
   }
 
-  const blocks = renderChapterBlocks(chapter)
+  const hasContent = chapter.content.trim().length > 0
 
   return (
     <section
@@ -379,7 +406,7 @@ const ChapterSection = React.forwardRef<
             {chapter.title}
           </h2>
         </div>
-        {!isFinal && (
+        {!isFinal && !isGenerating && (
           <Button
             variant="secondary"
             size="sm"
@@ -415,148 +442,112 @@ const ChapterSection = React.forwardRef<
         </div>
       ) : (
         <div
-          onClick={() => !isFinal && setEditing(true)}
+          onClick={() => !isFinal && hasContent && setEditing(true)}
           className={cn(
             "cursor-text rounded-[var(--radius-DEFAULT)] p-1 transition-colors",
-            !isFinal && "hover:bg-ink-200",
+            !isFinal && hasContent && "hover:bg-ink-200",
           )}
         >
-          {blocks}
+          {hasContent ? (
+            <MarkdownContent content={chapter.content} />
+          ) : (
+            <div className="rounded-[var(--radius-DEFAULT)] border border-dashed border-ink-400 bg-ink-200 px-4 py-5 font-sans text-sm text-ink-600">
+              {isGenerating ? "生成中…" : "暂无内容。"}
+            </div>
+          )}
         </div>
       )}
     </section>
   )
 })
 
-/**
- * Lightweight Markdown renderer for chapter content.
- *
- * Supports: headings (#, ##, ###), bullet lists (-), numbered lists (1.),
- * horizontal rule (---), finding cards (lines starting with `> finding:`),
- * and plain paragraphs. No new deps — Chrome108 safe. Single-color only.
- */
-function renderChapterBlocks(chapter: ReportChapterItem): React.ReactNode {
-  const lines = chapter.content.split("\n")
-  const out: React.ReactNode[] = []
-  let list: React.ReactNode[] = []
-  let listType: "ul" | "ol" | null = null
-  let key = 0
-
-  const flushList = () => {
-    if (list.length === 0) return
-    if (listType === "ol") {
-      out.push(
-        <ol key={`l-${key++}`} className="mb-3 ml-5 list-decimal space-y-1">
-          {list}
-        </ol>,
-      )
-    } else {
-      out.push(
-        <ul key={`l-${key++}`} className="mb-3 ml-5 list-disc space-y-1">
-          {list}
-        </ul>,
-      )
-    }
-    list = []
-    listType = null
-  }
-
-  for (const raw of lines) {
-    const line = raw.trimEnd()
-    if (line.startsWith("> finding:")) {
-      flushList()
-      out.push(
-        <FindingCard key={`f-${key++}`} line={line.slice(10).trim()} />,
-      )
-      continue
-    }
-    if (line === "---") {
-      flushList()
-      out.push(<hr key={`h-${key++}`} className="my-4 border-ink-300" />)
-      continue
-    }
-    if (line.startsWith("### ")) {
-      flushList()
-      out.push(
-        <h4 key={`t-${key++}`} className="mb-2 mt-4 font-sans text-base font-bold text-ink-900">
-          {line.slice(4)}
-        </h4>,
-      )
-      continue
-    }
-    if (line.startsWith("## ")) {
-      flushList()
-      out.push(
-        <h3 key={`t-${key++}`} className="mb-2 mt-4 font-sans text-lg font-bold text-ink-900">
-          {line.slice(3)}
-        </h3>,
-      )
-      continue
-    }
-    if (line.startsWith("# ")) {
-      flushList()
-      out.push(
-        <h2 key={`t-${key++}`} className="mb-3 mt-2 font-sans text-xl font-bold text-ink-900">
-          {line.slice(2)}
-        </h2>,
-      )
-      continue
-    }
-    const olMatch = line.match(/^(\d+)\.\s+(.*)$/)
-    if (olMatch) {
-      if (listType !== "ol") flushList()
-      listType = "ol"
-      list.push(<li key={`li-${key++}`}>{olMatch[2]}</li>)
-      continue
-    }
-    if (line.startsWith("- ") || line.startsWith("* ")) {
-      if (listType !== "ul") flushList()
-      listType = "ul"
-      list.push(<li key={`li-${key++}`}>{line.slice(2)}</li>)
-      continue
-    }
-    if (line.trim() === "") {
-      flushList()
-      continue
-    }
-    flushList()
-    out.push(
-      <p key={`p-${key++}`} className="mb-3 font-sans text-sm leading-7 text-ink-800">
-        {renderInline(line)}
-      </p>,
-    )
-  }
-  flushList()
-  return <>{out}</>
+function MarkdownContent({ content }: { content: string }) {
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        h1: ({ children }) => (
+          <h2 className="mb-3 mt-2 font-sans text-xl font-bold text-ink-900">
+            {children}
+          </h2>
+        ),
+        h2: ({ children }) => (
+          <h3 className="mb-2 mt-4 font-sans text-lg font-bold text-ink-900">
+            {children}
+          </h3>
+        ),
+        h3: ({ children }) => (
+          <h4 className="mb-2 mt-4 font-sans text-base font-bold text-ink-900">
+            {children}
+          </h4>
+        ),
+        p: ({ children }) => (
+          <p className="mb-3 font-sans text-sm leading-7 text-ink-800">
+            {children}
+          </p>
+        ),
+        strong: ({ children }) => (
+          <strong className="font-bold text-ink-900">{children}</strong>
+        ),
+        ul: ({ children }) => (
+          <ul className="mb-3 ml-5 list-disc space-y-1 font-sans text-sm leading-7 text-ink-800">
+            {children}
+          </ul>
+        ),
+        ol: ({ children }) => (
+          <ol className="mb-3 ml-5 list-decimal space-y-1 font-sans text-sm leading-7 text-ink-800">
+            {children}
+          </ol>
+        ),
+        blockquote: ({ children }) => {
+          const text = markdownText(children)
+          if (text.trim().startsWith("finding:")) {
+            return <FindingCard line={text.trim().slice(8).trim()} />
+          }
+          return (
+            <blockquote className="mb-4 border-l-2 border-ink-400 bg-ink-200 px-4 py-2 font-sans text-sm leading-7 text-ink-700">
+              {children}
+            </blockquote>
+          )
+        },
+        table: ({ children }) => (
+          <div className="mb-4 overflow-x-auto">
+            <table className="w-full border-collapse font-sans text-xs text-ink-800">
+              {children}
+            </table>
+          </div>
+        ),
+        th: ({ children }) => (
+          <th className="border border-ink-400 bg-ink-300 px-2 py-1.5 text-left font-bold text-ink-900">
+            {children}
+          </th>
+        ),
+        td: ({ children }) => (
+          <td className="border border-ink-300 px-2 py-1.5 align-top">
+            {children}
+          </td>
+        ),
+        code: ({ children }) => (
+          <code className="rounded-[var(--radius-DEFAULT)] bg-ink-200 px-1 font-mono text-xs text-ink-900">
+            {children}
+          </code>
+        ),
+        hr: () => <hr className="my-4 border-ink-300" />,
+      }}
+    >
+      {content}
+    </ReactMarkdown>
+  )
 }
 
-/** Inline emphasis: **bold** and `code`. Single-color only. */
-function renderInline(text: string): React.ReactNode[] {
-  const nodes: React.ReactNode[] = []
-  const re = /(\*\*[^*]+\*\*|`[^`]+`)/g
-  let last = 0
-  let m: RegExpExecArray | null
-  let k = 0
-  while ((m = re.exec(text)) !== null) {
-    if (m.index > last) nodes.push(text.slice(last, m.index))
-    const tok = m[0]
-    if (tok.startsWith("**")) {
-      nodes.push(
-        <strong key={`b-${k++}`} className="font-bold text-ink-900">
-          {tok.slice(2, -2)}
-        </strong>,
-      )
-    } else {
-      nodes.push(
-        <code key={`c-${k++}`} className="rounded-[var(--radius-DEFAULT)] bg-ink-200 px-1 font-mono text-xs text-ink-900">
-          {tok.slice(1, -1)}
-        </code>,
-      )
-    }
-    last = m.index + tok.length
+function markdownText(node: React.ReactNode): string {
+  if (node == null || typeof node === "boolean") return ""
+  if (typeof node === "string" || typeof node === "number") return String(node)
+  if (Array.isArray(node)) return node.map(markdownText).join("")
+  if (React.isValidElement<{ children?: React.ReactNode }>(node)) {
+    return markdownText(node.props.children)
   }
-  if (last < text.length) nodes.push(text.slice(last))
-  return nodes
+  return ""
 }
 
 /** Anomaly finding card embedded in the report body (single-color). */
@@ -596,12 +587,14 @@ function AnnotationPanel({
   chapters,
   annotations,
   isFinal,
+  isGenerating,
 }: {
   taskId: number
   reportId: number
   chapters: ReportChapterItem[]
   annotations: ReportAnnotationItem[]
   isFinal: boolean
+  isGenerating: boolean
 }) {
   const addAnnotation = useAddAnnotation(taskId)
   const toggleAnnotation = usePatchAnnotation(taskId)
@@ -683,7 +676,7 @@ function AnnotationPanel({
           ))}
         </ul>
 
-        {!isFinal && (
+        {!isFinal && !isGenerating && (
           <div className="mt-3 flex flex-col gap-2 border-t border-ink-300 pt-3">
             <p className="px-1 font-sans text-xs font-bold text-ink-700">
               新建批注
@@ -718,6 +711,21 @@ function AnnotationPanel({
       </CardContent>
     </Card>
   )
+}
+
+function reportStatusLabel(status: string): string {
+  switch (status) {
+    case "generating":
+      return "生成中"
+    case "generated":
+      return "已生成"
+    case "failed":
+      return "生成失败"
+    case "final":
+      return "已定稿"
+    default:
+      return "草稿"
+  }
 }
 
 /** Format ISO datetime as "YYYY-MM-DD HH:mm". */

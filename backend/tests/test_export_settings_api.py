@@ -33,7 +33,7 @@ from app.models import (
 
 
 async def _seed_task_with_report(session, user_id: int) -> tuple[Task, Report]:
-    """Seed a completed task with a chaptered report (6 chapters)."""
+    """Seed a completed task with a chaptered report (8 chapters)."""
     task = Task(
         title="导出测试任务",
         owner_id=user_id,
@@ -55,7 +55,10 @@ async def _seed_task_with_report(session, user_id: int) -> tuple[Task, Report]:
     await session.commit()
     await session.refresh(report)
 
-    titles = ["概述", "被审查对象", "数据范围", "异常发现汇总", "风险评估", "结论建议"]
+    titles = [
+        "概述", "被审查对象", "数据范围", "完整性校验（余额）",
+        "关键词审查", "异常发现汇总", "风险评估", "结论建议",
+    ]
     for idx, title in enumerate(titles):
         session.add(
             ReportChapter(
@@ -190,8 +193,11 @@ async def test_export_report_html_generates_file(client, db_session, temp_output
     content = path.read_text(encoding="utf-8")
     assert "<html" in content
     assert task.title in content
-    # 6 章标题都应出现.
-    for title in ["概述", "被审查对象", "数据范围", "异常发现汇总", "风险评估", "结论建议"]:
+    # 8 章标题都应出现.
+    for title in [
+        "概述", "被审查对象", "数据范围", "完整性校验（余额）",
+        "关键词审查", "异常发现汇总", "风险评估", "结论建议",
+    ]:
         assert title in content
 
 
@@ -209,6 +215,21 @@ async def test_export_report_404_when_no_report(client, db_session, temp_output_
         json={"format": "pdf", "include_annotations": False},
     )
     assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_export_report_409_when_report_generating(client, db_session, temp_output_dir):
+    """报告仍在 generating 时拒绝导出，避免产出空章节文件."""
+    session, user = db_session
+    task, report = await _seed_task_with_report(session, user.id)
+    report.status = "generating"
+    await session.commit()
+
+    resp = await client.post(
+        f"/api/tasks/{task.id}/export/report",
+        json={"format": "pdf", "include_annotations": False},
+    )
+    assert resp.status_code == 409
 
 
 # ---------------------------------------------------------------------------

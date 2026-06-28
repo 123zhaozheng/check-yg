@@ -78,7 +78,7 @@ class ReportResponse(BaseModel):
     format: str
     content_path: str
     content: str = ""
-    # S7 软态 draft|final + 章节化 + 批注列表。
+    # S7/S8 软态 draft|generating|generated|failed|final + 章节化 + 批注列表。
     status: str = "draft"
     chapters: list[ReportChapterResponse] = []
     annotations: list[ReportAnnotationResponse] = []

@@ -133,6 +133,10 @@ class ExportService:
         """
         task = await self._load_task(db, task_id)
         report = await self._load_task_report(db, task.id)
+        if report.status == "generating":
+            raise ValueError("Report is still generating")
+        if report.status == "failed":
+            raise ValueError("Report generation failed")
         chapters = sorted(report.chapters, key=lambda c: c.order_index)
         annotations = list(report.annotations) if include_annotations else []
 
@@ -307,11 +311,16 @@ class ExportService:
         chapters: list[ReportChapter],
         annotations: list[ReportAnnotation],
     ) -> None:
-        """reportlab platypus 黑白年报排版（封面标题 + 各章 + 批注附录）."""
+        """reportlab platypus 黑白年报排版（封面 + 目录 + 各章 + 批注附录）.
+
+        结构：封面整页 → 目录页（带真实页码 + leader 点）→ 正文各章 → 批注附录。
+        目录用 reportlab TableOfContents + 自定义 doc template（afterFlowable
+        在每章标题渲染后发 ``TOCEntry`` 通知，multiBuild 两遍渲染拿真实页码）。
+        """
         from reportlab.lib.pagesizes import A4
         from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
         from reportlab.lib.units import mm
-        from reportlab.lib.enums import TA_LEFT
+        from reportlab.lib.enums import TA_CENTER
         from reportlab.platypus import (
             SimpleDocTemplate,
             Paragraph,
@@ -319,8 +328,23 @@ class ExportService:
             PageBreak,
             HRFlowable,
         )
+        from reportlab.platypus.tableofcontents import TableOfContents
 
-        doc = SimpleDocTemplate(
+        # 章标题 style 名（afterFlowable 据此识别并发 TOCEntry）。
+        CHAPTER_HEADING_STYLE = "ChapterHeading"
+
+        class TocDocTemplate(SimpleDocTemplate):
+            """自定义 doc template：章标题渲染后通知 TOC（拿真实页码）."""
+
+            def afterFlowable(self, flowable):
+                if isinstance(flowable, Paragraph):
+                    style_name = flowable.style.name
+                    if style_name == CHAPTER_HEADING_STYLE:
+                        text = flowable.getPlainText()
+                        page = self.page
+                        self.notify("TOCEntry", (0, text, page))
+
+        doc = TocDocTemplate(
             str(path),
             pagesize=A4,
             leftMargin=20 * mm,
@@ -330,23 +354,56 @@ class ExportService:
             title=f"审查报告 - {task.title}",
         )
         base = getSampleStyleSheet()
-        title_style = ParagraphStyle(
-            "ReportTitle",
+        # 封面样式（居中大标题 + 副标题 + 元信息）。
+        cover_title_style = ParagraphStyle(
+            "CoverTitle",
             parent=base["Title"],
             fontName="Helvetica-Bold",
-            fontSize=22,
-            leading=28,
-            alignment=TA_LEFT,
+            fontSize=28,
+            leading=36,
+            alignment=TA_CENTER,
             textColor="#000000",
         )
-        h2_style = ParagraphStyle(
-            "ReportH2",
-            parent=base["Heading2"],
+        cover_sub_style = ParagraphStyle(
+            "CoverSub",
+            parent=base["BodyText"],
+            fontName="Helvetica",
+            fontSize=14,
+            leading=20,
+            alignment=TA_CENTER,
+            textColor="#1f1f1f",
+            spaceBefore=8,
+            spaceAfter=8,
+        )
+        cover_meta_style = ParagraphStyle(
+            "CoverMeta",
+            parent=base["BodyText"],
+            fontName="Helvetica",
+            fontSize=11,
+            leading=18,
+            alignment=TA_CENTER,
+            textColor="#595959",
+        )
+        # 目录标题样式（不用 ChapterHeading，避免目录页自身进 TOC）。
+        toc_title_style = ParagraphStyle(
+            "TOCTitle",
+            parent=base["Heading1"],
             fontName="Helvetica-Bold",
-            fontSize=16,
-            leading=22,
-            spaceBefore=12,
-            spaceAfter=6,
+            fontSize=20,
+            leading=26,
+            alignment=TA_CENTER,
+            textColor="#000000",
+            spaceAfter=16,
+        )
+        # 章标题样式（afterFlowable 据此 style 名发 TOCEntry）。
+        chapter_heading_style = ParagraphStyle(
+            CHAPTER_HEADING_STYLE,
+            parent=base["Heading1"],
+            fontName="Helvetica-Bold",
+            fontSize=18,
+            leading=24,
+            spaceBefore=14,
+            spaceAfter=8,
             textColor="#000000",
         )
         body_style = ParagraphStyle(
@@ -368,31 +425,98 @@ class ExportService:
             textColor="#595959",
         )
 
-        flowables: list[Any] = []
-        flowables.append(Paragraph(f"审查报告", title_style))
-        flowables.append(Spacer(1, 4 * mm))
-        flowables.append(Paragraph(f"任务：{task.title}", body_style))
-        flowables.append(Paragraph(f"任务编号：{task.id}", body_style))
-        flowables.append(HRFlowable(width="100%", thickness=0.5, color="#000000"))
-        flowables.append(Spacer(1, 4 * mm))
+        toc = TableOfContents()
+        toc.levelStyles = [
+            ParagraphStyle(
+                name="TOCLevel1",
+                fontName="Helvetica",
+                fontSize=11,
+                leading=20,
+                leftIndent=20,
+                firstLineIndent=-20,
+                spaceBefore=0,
+                textColor="#1f1f1f",
+            )
+        ]
 
+        flowables: list[Any] = []
+
+        # ----- 封面（整页）-----
+        flowables.append(Spacer(1, 50 * mm))
+        flowables.append(HRFlowable(width="100%", thickness=1, color="#000000"))
+        flowables.append(Spacer(1, 16 * mm))
+        flowables.append(Paragraph("银行/支付流水审查报告", cover_title_style))
+        flowables.append(Spacer(1, 10 * mm))
+        flowables.append(Paragraph(self._escape_html(task.title or ""), cover_sub_style))
+        flowables.append(Spacer(1, 24 * mm))
+
+        # 元信息块（缺项跳过）。
+        meta_lines = self._cover_meta_lines(task)
+        for line in meta_lines:
+            flowables.append(Paragraph(self._escape_html(line), cover_meta_style))
+        flowables.append(Spacer(1, 16 * mm))
+        flowables.append(HRFlowable(width="100%", thickness=1, color="#000000"))
+        flowables.append(PageBreak())
+
+        # ----- 目录页 -----
+        flowables.append(Paragraph("目录", toc_title_style))
+        flowables.append(toc)
+        flowables.append(PageBreak())
+
+        # ----- 正文各章 -----
+        # 章标题用 chapter_heading_style（afterFlowable 发 TOCEntry 抓真实页码）；
+        # 章节正文走 markdown 渲染器（report_markdown.render_pdf）正确排版
+        # ##/列表/表格/加粗，不再字面显示符号。
+        from app.services.report_markdown import parse_markdown_blocks, render_pdf
+
+        md_styles = {
+            "h2": ParagraphStyle(
+                "MdH2",
+                parent=base["Heading2"],
+                fontName="Helvetica-Bold",
+                fontSize=14,
+                leading=18,
+                spaceBefore=10,
+                spaceAfter=4,
+                textColor="#000000",
+            ),
+            "h3": ParagraphStyle(
+                "MdH3",
+                parent=base["Heading3"],
+                fontName="Helvetica-Bold",
+                fontSize=12,
+                leading=16,
+                spaceBefore=8,
+                spaceAfter=3,
+                textColor="#000000",
+            ),
+            "body": body_style,
+            "quote": ParagraphStyle(
+                "MdQuote",
+                parent=base["BodyText"],
+                fontName="Helvetica",
+                fontSize=10.5,
+                leading=15,
+                leftIndent=12,
+                spaceAfter=6,
+                textColor="#595959",
+            ),
+        }
         for ch in chapters:
-            flowables.append(Paragraph(ch.title, h2_style))
-            for para in ch.content.split("\n\n"):
-                text = para.strip()
-                if text:
-                    flowables.append(Paragraph(self._escape_html(text), body_style))
+            flowables.append(Paragraph(ch.title, chapter_heading_style))
+            render_pdf(flowables, parse_markdown_blocks(ch.content), md_styles)
             flowables.append(Spacer(1, 3 * mm))
 
         if annotations:
             flowables.append(PageBreak())
-            flowables.append(Paragraph("批注附录", h2_style))
+            flowables.append(Paragraph("批注附录", chapter_heading_style))
             for ann in annotations:
                 label = "已解决" if ann.resolved else "待解决"
                 head = f"[{label}] {ann.author}："
                 flowables.append(Paragraph(self._escape_html(head + ann.content), ann_style))
 
-        doc.build(flowables)
+        # multiBuild 两遍渲染：第一遍拿页码填 TOC，第二遍生成最终页。
+        doc.multiBuild(flowables)
 
     def _write_report_docx(
         self,
@@ -401,23 +525,86 @@ class ExportService:
         chapters: list[ReportChapter],
         annotations: list[ReportAnnotation],
     ) -> None:
-        """python-docx 黑白年报排版（标题样式 + 段落 + 批注附录）."""
+        """python-docx 黑白年报排版（封面整页 + 目录域 + 各章 + 批注附录）.
+
+        结构：封面整页（大标题/副标题/元信息块/横线）→ 目录页（原生 TOC 域
+        ``TOC \\o "1-2"``，用户在 Word 里「更新域」才显页码）→ 正文各章 →
+        批注附录。封面/目录后各插 page break。
+        """
         from docx import Document
-        from docx.shared import Pt
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+        from docx.oxml.ns import qn
+        from docx.oxml import OxmlElement
+        from docx.shared import Pt, RGBColor
 
         doc = Document()
-        title = doc.add_heading(f"审查报告 - {task.title}", level=0)
-        for run in title.runs:
-            run.font.color.rgb = None  # default black
+
+        # ----- 封面整页 -----
+        # 上横线。
+        self._docx_horizontal_rule(doc)
+        # 顶部留白。
+        for _ in range(4):
+            doc.add_paragraph("")
+        # 大标题（居中、加粗、大字号）。
+        title_p = doc.add_paragraph()
+        title_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        run = title_p.add_run("银行/支付流水审查报告")
+        run.bold = True
+        run.font.size = Pt(32)
+        run.font.color.rgb = RGBColor(0x00, 0x00, 0x00)
+        doc.add_paragraph("")
+        # 副标题（任务名，居中）。
+        sub_p = doc.add_paragraph()
+        sub_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        sub_run = sub_p.add_run(task.title or "")
+        sub_run.font.size = Pt(16)
+        sub_run.font.color.rgb = RGBColor(0x1F, 0x1F, 0x1F)
+        # 留白到中下部。
+        for _ in range(6):
+            doc.add_paragraph("")
+        # 元信息块（居中、缺项跳过）。
+        meta_lines = self._cover_meta_lines(task)
+        for line in meta_lines:
+            meta_p = doc.add_paragraph()
+            meta_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            meta_run = meta_p.add_run(line)
+            meta_run.font.size = Pt(11)
+            meta_run.font.color.rgb = RGBColor(0x59, 0x59, 0x59)
+        # 留白。
+        for _ in range(3):
+            doc.add_paragraph("")
+        # 下横线。
+        self._docx_horizontal_rule(doc)
+        # 封面后分页。
+        doc.add_page_break()
+
+        # ----- 目录页（原生 TOC 域）-----
+        toc_title_p = doc.add_paragraph()
+        toc_title_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        toc_title_run = toc_title_p.add_run("目录")
+        toc_title_run.bold = True
+        toc_title_run.font.size = Pt(20)
+        toc_title_run.font.color.rgb = RGBColor(0x00, 0x00, 0x00)
+        doc.add_paragraph("")
+        # 插入 TOC 域：TOC \o "1-2"（捕获 Heading 1-2）。
+        self._docx_insert_toc_field(doc)
+        # 提示文案。
+        hint_p = doc.add_paragraph()
+        hint_run = hint_p.add_run("打开后若未显示页码，请右键→更新域。")
+        hint_run.font.size = Pt(9)
+        hint_run.italic = True
+        hint_run.font.color.rgb = RGBColor(0x8C, 0x8C, 0x8C)
+        # 目录后分页。
+        doc.add_page_break()
+
+        # ----- 正文各章 -----
+        # 章标题用 Heading 1（TOC 域 \o "1-2" 捕获）；章节正文走 markdown 渲染器
+        # （report_markdown.render_docx）正确排版 ##/列表/表格/加粗，不再字面显示符号。
+        from app.services.report_markdown import parse_markdown_blocks, render_docx
 
         for ch in chapters:
             doc.add_heading(ch.title, level=1)
-            for para in ch.content.split("\n\n"):
-                text = para.strip()
-                if text:
-                    p = doc.add_paragraph(text)
-                    for run in p.runs:
-                        run.font.size = Pt(10.5)
+            render_docx(doc, parse_markdown_blocks(ch.content))
 
         if annotations:
             doc.add_heading("批注附录", level=1)
@@ -436,7 +623,10 @@ class ExportService:
         chapters: list[ReportChapter],
         annotations: list[ReportAnnotation],
     ) -> None:
-        """模板字符串生成自包含 HTML（单色内联 CSS，黑白年报）."""
+        """模板字符串生成自包含 HTML（单色内联 CSS，黑白年报）.
+
+        含封面（大标题/副标题/元信息块/横线）+ 各章 + 批注附录。
+        """
         parts: list[str] = [
             "<!DOCTYPE html>",
             '<html lang="zh-CN">',
@@ -446,6 +636,10 @@ class ExportService:
             "<style>",
             "body{font-family:-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;"
             "color:#1f1f1f;background:#fff;max-width:800px;margin:24px auto;padding:0 16px;}",
+            ".cover{text-align:center;padding:60px 0 40px;border-bottom:1px solid #000;margin-bottom:32px;}",
+            ".cover h1{font-size:32px;font-weight:700;border:none;padding:0;margin-bottom:12px;}",
+            ".cover .sub{font-size:16px;color:#1f1f1f;margin-bottom:32px;}",
+            ".cover .meta{color:#595959;font-size:13px;margin:6px 0;}",
             "h1{font-size:28px;font-weight:700;border-bottom:1px solid #000;padding-bottom:8px;}",
             "h2{font-size:20px;font-weight:700;margin-top:24px;}",
             "p{font-size:14px;line-height:1.7;white-space:pre-wrap;}",
@@ -456,17 +650,17 @@ class ExportService:
             "</style>",
             "</head>",
             "<body>",
-            f"<h1>审查报告</h1>",
-            f'<p class="meta">任务：{self._escape_html(task.title)}</p>',
-            f'<p class="meta">任务编号：{task.id}</p>',
-            "<hr style=\"border:none;border-top:1px solid #000\"/>",
+            '<div class="cover">',
+            "<h1>银行/支付流水审查报告</h1>",
+            f'<div class="sub">{self._escape_html(task.title or "")}</div>',
         ]
+        for line in self._cover_meta_lines(task):
+            parts.append(f'<p class="meta">{self._escape_html(line)}</p>')
+        parts.append("</div>")
         for ch in chapters:
             parts.append(f"<h2>{self._escape_html(ch.title)}</h2>")
-            for para in ch.content.split("\n\n"):
-                text = para.strip()
-                if text:
-                    parts.append(f"<p>{self._escape_html(text)}</p>")
+            for html_block in self._markdown_blocks_to_html(ch.content):
+                parts.append(html_block)
         if annotations:
             parts.append("<h2>批注附录</h2>")
             for ann in annotations:
@@ -648,6 +842,65 @@ class ExportService:
             "updated_at": f.updated_at.isoformat() if f.updated_at else "",
         }
 
+    def _markdown_blocks_to_html(self, md: str) -> list[str]:
+        """把约束子集 markdown 渲染成 HTML 片段（用于 _write_report_html）.
+
+        复用 report_markdown.parse_markdown_blocks 解析，转成 HTML 字符串列表。
+        单色：表头灰底加粗（inline style），引用灰字。
+        """
+        from app.services.report_markdown import parse_markdown_blocks
+
+        parts: list[str] = []
+        for block in parse_markdown_blocks(md):
+            btype = block["type"]
+            if btype == "heading":
+                level = min(block["level"], 6)
+                parts.append(
+                    f"<h{level}>{self._escape_html(block['text'])}</h{level}>"
+                )
+            elif btype == "paragraph":
+                parts.append(f"<p>{self._inline_to_html(block['text'])}</p>")
+            elif btype == "list_item":
+                tag = "ol" if block["ordered"] else "ul"
+                parts.append(
+                    f"<{tag}><li>{self._inline_to_html(block['text'])}</li></{tag}>"
+                )
+            elif btype == "table":
+                parts.append(
+                    '<table style="border-collapse:collapse;width:100%;'
+                    'margin:8px 0;">'
+                )
+                parts.append("<thead><tr>")
+                for h in block["headers"]:
+                    parts.append(
+                        '<th style="border:1px solid #bfbfbf;padding:4px 8px;'
+                        'background:#f0f0f0;font-weight:700;text-align:left;">'
+                        f"{self._escape_html(h)}</th>"
+                    )
+                parts.append("</tr></thead><tbody>")
+                for row in block["rows"]:
+                    parts.append("<tr>")
+                    for c in row:
+                        parts.append(
+                            '<td style="border:1px solid #bfbfbf;padding:4px 8px;">'
+                            f"{self._escape_html(c)}</td>"
+                        )
+                    parts.append("</tr>")
+                parts.append("</tbody></table>")
+            elif btype == "quote":
+                parts.append(
+                    '<blockquote style="border-left:2px solid #bfbfbf;'
+                    'margin:8px 0;padding:4px 12px;color:#595959;">'
+                    f"{self._inline_to_html(block['text'])}</blockquote>"
+                )
+        return parts
+
+    def _inline_to_html(self, text: str) -> str:
+        """把 **加粗** 转成 <b>（先 escape HTML）."""
+        from app.services.report_markdown import _inline_to_html
+
+        return _inline_to_html(text)
+
     @staticmethod
     def _escape_html(text: str) -> str:
         """转义 HTML 特殊字符（< > & " '）."""
@@ -658,6 +911,94 @@ class ExportService:
             .replace('"', "&quot;")
             .replace("'", "&#39;")
         )
+
+    @staticmethod
+    def _cover_meta_lines(task: Task) -> list[str]:
+        """封面元信息块（等宽对齐风格文本，缺项跳过，不报错）.
+
+        返回若干行纯文本：
+          被审查人：{name} · {id} · {department}（缺项跳过）
+          审查周期：{start} ~ {end}
+          生成日期：{now YYYY-MM-DD}
+          任务编号：#{task.id}
+        """
+        from datetime import date
+
+        lines: list[str] = []
+        # 被审查人（拼 name/id/department，缺项跳过）。
+        subject_parts = [
+            p for p in (
+                task.employee_name,
+                task.employee_id,
+                task.department,
+            ) if p
+        ]
+        if subject_parts:
+            lines.append("被审查人：" + " · ".join(subject_parts))
+        # 审查周期。
+        start_str = task.audit_start.strftime("%Y-%m-%d") if task.audit_start else None
+        end_str = task.audit_end.strftime("%Y-%m-%d") if task.audit_end else None
+        if start_str or end_str:
+            lines.append(
+                f"审查周期：{start_str or '—'} ~ {end_str or '—'}"
+            )
+        # 生成日期。
+        lines.append("生成日期：" + date.today().strftime("%Y-%m-%d"))
+        # 任务编号。
+        lines.append(f"任务编号：#{task.id}")
+        return lines
+
+    @staticmethod
+    def _docx_horizontal_rule(doc) -> None:
+        """在 docx 文档当前位置插入一条横线（黑色、单色、底边框）."""
+        from docx.oxml.ns import qn
+        from docx.oxml import OxmlElement
+
+        p = doc.add_paragraph()
+        pPr = p._p.get_or_add_pPr()
+        pBdr = OxmlElement("w:pBdr")
+        bottom = OxmlElement("w:bottom")
+        bottom.set(qn("w:val"), "single")
+        bottom.set(qn("w:sz"), "6")  # 0.75pt
+        bottom.set(qn("w:space"), "1")
+        bottom.set(qn("w:color"), "000000")
+        pBdr.append(bottom)
+        pPr.append(pBdr)
+
+    @staticmethod
+    def _docx_insert_toc_field(doc) -> None:
+        """在 docx 文档当前位置插入原生 TOC 域（``TOC \\o "1-2"``）.
+
+        Word 打开时若域未计算，用户需「右键→更新域」才显示页码（python-docx
+        无法预渲染域值，PRD 接受此限制）。结构：fldChar begin → instrText →
+        fldChar separate → placeholder → fldChar end。
+        """
+        from docx.oxml.ns import qn
+        from docx.oxml import OxmlElement
+
+        p = doc.add_paragraph()
+        run = p.add_run()
+        # begin.
+        fldChar_begin = OxmlElement("w:fldChar")
+        fldChar_begin.set(qn("w:fldCharType"), "begin")
+        run._r.append(fldChar_begin)
+        # instrText.
+        instr = OxmlElement("w:instrText")
+        instr.set(qn("xml:space"), "preserve")
+        instr.text = 'TOC \\o "1-2" \\h \\z \\u'
+        run._r.append(instr)
+        # separate.
+        fldChar_sep = OxmlElement("w:fldChar")
+        fldChar_sep.set(qn("w:fldCharType"), "separate")
+        run._r.append(fldChar_sep)
+        # placeholder（域值未计算时的占位文本）。
+        placeholder = OxmlElement("w:t")
+        placeholder.text = "右键此处选择「更新域」以生成目录。"
+        run._r.append(placeholder)
+        # end.
+        fldChar_end = OxmlElement("w:fldChar")
+        fldChar_end.set(qn("w:fldCharType"), "end")
+        run._r.append(fldChar_end)
 
     async def _load_task(self, db: AsyncSession, task_id: int) -> Task:
         result = await db.execute(select(Task).where(Task.id == task_id))
