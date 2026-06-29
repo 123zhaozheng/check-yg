@@ -31,13 +31,15 @@ import { useStartExtraction, useTask } from "@/hooks/use-tasks"
 /**
  * 数据导入 /tasks/:id/import (docs §C2).
  *
- * Single channel (银行流水) upload area: channel title + 开始处理 primary
- * button + large dashed dropzone + 选择文件 outline button. Below: file
- * table (文件名 / 类型 / 大小 / 解析状态胶囊 / 上传时间 / 操作). TanStack
- * Query polls the documents list every 2s while any doc is
- * pending/processing and stops once all are settled.
+ * Left channel list (银行流水/支付渠道/证券交易/票据凭证/其他) with a black
+ * active bar + per-channel file count badge. Right upload area: selected
+ * channel title + 上传文件/开始处理 primary buttons + large dashed dropzone
+ * + 选择文件 outline button. Below: file table (文件名 / 类型 / 大小 / 解析
+ * 状态胶囊 / 上传时间 / 操作) filtered to the selected channel. TanStack Query
+ * polls the documents list every 2s while any doc is pending/processing and
+ * stops once all are settled.
  *
- * Channel key is the Chinese label itself, persisted verbatim as the
+ * Channel keys are the Chinese labels themselves, persisted verbatim as the
  * backend `channel` string (mirrors Task.expected_channels semantics).
  */
 export const Route = createFileRoute("/__authenticated/tasks/$id/import")({
@@ -45,7 +47,13 @@ export const Route = createFileRoute("/__authenticated/tasks/$id/import")({
 })
 
 /** Channel key = Chinese label (stored verbatim as backend `channel`). */
-const CHANNEL = "银行流水"
+const CHANNELS = [
+  "银行流水",
+  "支付渠道",
+  "证券交易",
+  "票据凭证",
+  "其他",
+] as const
 
 /** File extensions the backend scanner actually accepts (no .csv — scanner
  *  does not support it). Frontend validation + dropzone copy align to this. */
@@ -57,11 +65,14 @@ function ImportPage() {
   const { id } = useParams({ from: "/__authenticated/tasks/$id/import" })
   const taskId = Number(id)
 
+  const [selectedChannel, setSelectedChannel] = React.useState<string>(
+    CHANNELS[0],
+  )
   const [portraitDocId, setPortraitDocId] = React.useState<number | null>(null)
   const [portraitRequestKey, setPortraitRequestKey] = React.useState(0)
 
-  // Pull ALL documents (no channel filter) so the file list and hasPending
-  // check work at the task level.
+  // Pull ALL documents (no channel filter) so the file list, hasPending check
+  // and per-channel badges all work at the task level.
   const allDocsQuery = useDocumentList(taskId, {})
   const allDocs = allDocsQuery.data?.items ?? []
 
@@ -69,11 +80,22 @@ function ImportPage() {
   const taskQuery = useTask(taskId)
   const taskStatus = taskQuery.data?.status ?? "draft"
 
-  // Filtered view for the 银行流水 channel (derived from allDocs so we keep a
-  // single query at the task level).
+  // Filtered view for the currently selected channel.
   const channelDocs = allDocs.filter(
-    (d) => (d.channel ?? "其他") === CHANNEL,
+    (d) => (d.channel ?? "其他") === selectedChannel,
   )
+
+  // Per-channel counts (exclude soft-deleted so the badges reflect live docs).
+  const countsByChannel = React.useMemo(() => {
+    const counts: Record<string, number> = {}
+    for (const ch of CHANNELS) counts[ch] = 0
+    for (const d of allDocs) {
+      if (d.status === "deleted") continue
+      const key = d.channel ?? "其他"
+      counts[key] = (counts[key] ?? 0) + 1
+    }
+    return counts
+  }, [allDocs])
 
   // 开始处理 is enabled only when there is at least one pending document and
   // the task is not already running. Running tasks auto-pick up new uploads via
@@ -102,7 +124,7 @@ function ImportPage() {
     const valid = filterAccepted(files)
     if (valid.length === 0) return
     rememberFiles(valid)
-    upload.mutate({ files: valid, channel: CHANNEL })
+    upload.mutate({ files: valid, channel: selectedChannel })
   }
 
   function handleRetry(doc: DocumentItem) {
@@ -113,7 +135,7 @@ function ImportPage() {
       hiddenInputRef.current?.click()
       return
     }
-    upload.mutate({ files: [cached], channel: doc.channel ?? CHANNEL })
+    upload.mutate({ files: [cached], channel: doc.channel ?? selectedChannel })
   }
 
   function handleDelete(docId: number) {
@@ -165,14 +187,56 @@ function ImportPage() {
     setIsDragging(false)
   }
 
+  const channelLabel =
+    CHANNELS.find((c) => c === selectedChannel) ?? selectedChannel
+
   return (
-    <div className="flex h-[calc(100vh-220px)] min-h-[420px] flex-col">
-      {/* Upload area + file table */}
-      <section className="flex min-h-0 flex-1 flex-col rounded-[var(--radius-lg)] border border-ink-400 bg-ink-100 p-6">
+    <div className="flex h-[calc(100vh-220px)] min-h-[420px] gap-4">
+      {/* Left: channel list */}
+      <aside className="flex w-56 flex-shrink-0 flex-col rounded-[var(--radius-lg)] border border-ink-400 bg-ink-100">
+        <div className="border-b border-ink-400 p-4">
+          <h3 className="font-sans text-base font-semibold text-ink-900">
+            数据渠道
+          </h3>
+        </div>
+        <div className="scroll-thin flex-1 space-y-1 overflow-y-auto p-2">
+          {CHANNELS.map((ch) => {
+            const active = ch === selectedChannel
+            const count = countsByChannel[ch] ?? 0
+            return (
+              <button
+                key={ch}
+                onClick={() => setSelectedChannel(ch)}
+                className={cn(
+                  "flex w-full items-center justify-between rounded-[var(--radius-DEFAULT)] px-3 py-2.5 text-left transition-colors",
+                  active
+                    ? "bg-ink-900 text-ink-50"
+                    : "hover:bg-ink-200",
+                )}
+              >
+                <span className="font-sans text-sm">{ch}</span>
+                <span
+                  className={cn(
+                    "rounded-[var(--radius-DEFAULT)] px-1.5 py-0.5 font-mono text-[11px]",
+                    active
+                      ? "bg-ink-700 text-ink-50"
+                      : "border border-ink-400 bg-ink-200 text-ink-700",
+                  )}
+                >
+                  {count}
+                </span>
+              </button>
+            )
+          })}
+        </div>
+      </aside>
+
+      {/* Right: upload area + file table */}
+      <section className="flex min-w-0 flex-1 flex-col rounded-[var(--radius-lg)] border border-ink-400 bg-ink-100 p-6">
         {/* Header: channel title + 上传文件 + 开始处理 */}
         <div className="mb-5 flex items-center justify-between">
           <h3 className="font-sans text-lg font-semibold text-ink-900">
-            银行流水上传
+            {channelLabel}上传
           </h3>
           <div className="flex items-center gap-2">
             <Button variant="secondary" size="sm" onClick={openPicker}>
