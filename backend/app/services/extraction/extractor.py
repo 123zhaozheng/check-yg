@@ -436,6 +436,13 @@ class FlowExtractor:
         for doc_path, doc_result in zip(documents, stage1_results):
             if self._cancel_requested:
                 break
+            # 无论 stage1 是否产出表格/画像（0 表格、不支持格式、stage1 异常、
+            # checkpoint 命中但 flow_tables 为空 都会返回 None），该文档都已被
+            # "处理过"——必须先登记路径到 processed_document_paths，否则 runner
+            # 批循环下一轮 _collect_pending_documents 会再次把它当 pending 收集，
+            # 导致同一文档被无限重处理（CPU 拉满 + balance_check 每轮写库疯涨）。
+            result.processed_documents += 1
+            result.processed_document_paths.append(str(doc_path))
             if not doc_result:
                 continue
             completed_records = doc_result.get("completed_records")
@@ -455,8 +462,6 @@ class FlowExtractor:
             excluded_records = doc_result.get("excluded_records") or []
             if excluded_records:
                 result.extracted_records.extend(excluded_records)
-            result.processed_documents += 1
-            result.processed_document_paths.append(str(doc_path))
             result.total_tables += int(doc_result.get("total_tables", 0) or 0)
             result.flow_tables += len(doc_result.get("flow_tables", []))
 
