@@ -1,0 +1,5 @@
+{"file": "docs/research/pydantic-ai-conventions.md", "reason": "portrait/normalizer 是 pydantic-ai agent；加 balance 字段要守 output_type 契约 + 提示词保真约定（提示词逐字搬运硬底线）"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "FlowRecordRow 加 balance 列的 additive 迁移规范（nullable、downgrade drop、不动现有列）"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "新 balance_check service（app/services/audit/）放哪 + 命名"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "校验复用 Finding 状态机 + parse_amount + PATCH；非对称机制产同输出陷阱（portrait 运行时 vs 迁移）"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "单测覆盖要求（校验纯逻辑、portrait 9 字段、normalizer balance 抽取）"}
