@@ -17,5 +17,33 @@ services:
       timeout: 3s
       retries: 10
 
+  backend:
+    image: 123zzt/check-yg:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: check-yg-app
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://check_yg:check_yg@postgres:5432/check_yg
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      # 容器内连宿主机 ollama（开发联调用 host.docker.internal）
+      LLM_API_ENDPOINT: ${LLM_API_ENDPOINT:-http://host.docker.internal:11434/v1}
+      LLM_API_KEY: ${LLM_API_KEY:-ollama}
+      LLM_MODEL_NAME: ${LLM_MODEL_NAME:-qwen2.5:7b}
+      LLM_TIMEOUT: ${LLM_TIMEOUT:-60}
+      MINERU_MODE: ${MINERU_MODE:-local}
+      MINERU_URL: ${MINERU_URL:-http://host.docker.internal:8000}
+      MINERU_TIMEOUT: ${MINERU_TIMEOUT:-300}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - check-yg-data:/app/backend/data
+
 volumes:
   check-yg-pg-data:
+  check-yg-data:

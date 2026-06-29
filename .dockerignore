@@ -1,0 +1,44 @@
+# Version control
+.git
+.gitignore
+
+# Node / frontend build artifacts
+**/node_modules
+frontend/dist
+frontend/.vite
+
+# Backend runtime / data products
+backend/data/uploads
+backend/data/outputs
+backend/data/checkpoints
+backend/data/*.db
+
+# Python caches
+**/__pycache__
+**/*.pyc
+.venv
+**/.venv
+
+# Local env / test caches
+.env
+.pytest_cache
+
+# Tooling / agent config (not needed for image)
+.trellis
+.claude
+.agents
+.codex
+.tools
+
+# Legacy / non-runtime sources
+archive
+docs
+web
+src
+tests
+
+# Misc
+*.log
+*.md
+.DS_Store
+Thumbs.db
