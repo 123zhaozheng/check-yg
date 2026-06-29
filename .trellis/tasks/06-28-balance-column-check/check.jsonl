@@ -1,3 +1,0 @@
-{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "质量门 + 单测要求核对"}
-{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "校验复用 Finding/parse_amount 是否到位、有无重复造轮子"}
-{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "迁移 additive 是否合规、不动现有列/字段"}
