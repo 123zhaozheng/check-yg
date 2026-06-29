@@ -210,7 +210,7 @@ function ImportPage() {
                 className={cn(
                   "flex w-full items-center justify-between rounded-[var(--radius-DEFAULT)] px-3 py-2.5 text-left transition-colors",
                   active
-                    ? "bg-ink-900 text-ink-50"
+                    ? "bg-ink-300 text-ink-900"
                     : "hover:bg-ink-200",
                 )}
               >
@@ -219,7 +219,7 @@ function ImportPage() {
                   className={cn(
                     "rounded-[var(--radius-DEFAULT)] px-1.5 py-0.5 font-mono text-[11px]",
                     active
-                      ? "bg-ink-700 text-ink-50"
+                      ? "bg-ink-500 text-ink-50"
                       : "border border-ink-400 bg-ink-200 text-ink-700",
                   )}
                 >
