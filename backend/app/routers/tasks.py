@@ -260,7 +260,15 @@ async def list_tasks(
     if employee_id:
         query = query.where(Task.employee_id == employee_id)
     if search:
-        query = query.where(Task.title.ilike(f"%{search}%"))
+        # 全局搜索同时匹配 任务名 OR 员工工号 OR 员工姓名（ilike 对 NULL 安全）。
+        # employee_id 精确查询参数（上方）不受影响，页内筛选仍走精确匹配。
+        query = query.where(
+            or_(
+                Task.title.ilike(f"%{search}%"),
+                Task.employee_id.ilike(f"%{search}%"),
+                Task.employee_name.ilike(f"%{search}%"),
+            )
+        )
 
     # Default: hide archived. Only when archived=True do we surface archived rows;
     # passing archived=False also hides them (explicit). Omitting archived keeps

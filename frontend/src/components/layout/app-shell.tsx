@@ -16,9 +16,11 @@ import {
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
-import { api } from "@/lib/api"
+import { StatusPill } from "@/components/ui/status-pill"
+import { api, type TaskItem } from "@/lib/api"
 import { queryClient } from "@/lib/query-client"
 import { useCurrentUser } from "@/hooks/use-current-user"
+import { useTaskList } from "@/hooks/use-tasks"
 import { ShieldLogo } from "@/components/icons/shield-logo"
 
 /**
@@ -86,6 +88,34 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate()
   const { user } = useCurrentUser()
   const [loggingOut, setLoggingOut] = React.useState(false)
+
+  // Topbar 全局搜索：受控 input + 300ms debounce（复用 tasks/index.tsx 模式），
+  // 非空时全状态搜（不传 status_filter），下拉最多 8 条命中（任务名/员工名/工号 OR）.
+  const [searchQ, setSearchQ] = React.useState("")
+  const [debouncedQ, setDebouncedQ] = React.useState("")
+  const [panelOpen, setPanelOpen] = React.useState(false)
+  React.useEffect(() => {
+    const t = setTimeout(() => setDebouncedQ(searchQ), 300)
+    return () => clearTimeout(t)
+  }, [searchQ])
+
+  const searchEnabled = debouncedQ.trim().length > 0
+  const searchQuery = useTaskList({
+    search: debouncedQ || undefined,
+    page: 1,
+    page_size: 8,
+    archived: false,
+  })
+  const searchResults = searchEnabled
+    ? searchQuery.data?.items ?? []
+    : []
+
+  function handleSelectTask(taskId: number) {
+    setSearchQ("")
+    setDebouncedQ("")
+    setPanelOpen(false)
+    void navigate({ to: "/tasks/$id", params: { id: String(taskId) } })
+  }
 
   const sidebarWidth = collapsed ? "w-16" : "w-60"
 
@@ -249,9 +279,33 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-ink-600" />
               <input
                 type="text"
+                value={searchQ}
+                onChange={(e) => {
+                  setSearchQ(e.target.value)
+                  setPanelOpen(true)
+                }}
+                onFocus={() => setPanelOpen(true)}
+                onBlur={() => {
+                  // 延迟关闭，让点击候选行先触发跳转.
+                  setTimeout(() => setPanelOpen(false), 150)
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") {
+                    setPanelOpen(false)
+                    ;(e.target as HTMLInputElement).blur()
+                  }
+                }}
                 placeholder="搜索任务名 / 员工标识…"
                 className="h-8 w-64 rounded-[var(--radius-DEFAULT)] border border-ink-400 bg-ink-100 pl-8 pr-3 text-sm text-ink-900 placeholder:text-ink-600 focus:border-ink-900 focus:outline-none"
               />
+              {panelOpen && searchEnabled && (
+                <SearchPanel
+                  loading={searchQuery.isLoading || searchQuery.isFetching}
+                  isError={searchQuery.isError}
+                  items={searchResults}
+                  onSelect={handleSelectTask}
+                />
+              )}
             </div>
             <Button
               variant="ghost"
@@ -281,4 +335,95 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </div>
     </div>
   )
+}
+
+/**
+ * 全局搜索下拉候选面板。
+ *
+ * 绝对定位在 input 下方，每条「任务名 · 员工名/工号 · 阶段胶囊」，最多 8 条；
+ * 点击跳转 /tasks/:id。加载中显示「搜索中…」，无结果显示「无匹配任务」.
+ * 全状态搜索（不限 status），后端 search 走 title/employee_name/employee_id OR.
+ */
+function SearchPanel({
+  loading,
+  isError,
+  items,
+  onSelect,
+}: {
+  loading: boolean
+  isError: boolean
+  items: TaskItem[]
+  onSelect: (taskId: number) => void
+}) {
+  return (
+    <div
+      // 阻止 mousedown 关闭面板导致 input onBlur 抢先触发（候选行点击先于失焦）.
+      onMouseDown={(e) => e.preventDefault()}
+      className="absolute left-0 right-0 top-full z-50 mt-1 overflow-hidden rounded-[var(--radius-DEFAULT)] border border-ink-400 bg-ink-100 shadow-[var(--shadow-popover)]"
+    >
+      {loading ? (
+        <div className="px-3 py-3 text-sm text-ink-600">搜索中…</div>
+      ) : isError ? (
+        <div className="px-3 py-3 text-sm text-ink-800">搜索失败，请重试。</div>
+      ) : items.length === 0 ? (
+        <div className="px-3 py-3 text-sm text-ink-600">无匹配任务</div>
+      ) : (
+        <ul className="max-h-80 overflow-y-auto">
+          {items.map((task) => {
+            const stage = stageFromStatus(task.status)
+            return (
+              <li key={task.id}>
+                <button
+                  type="button"
+                  // 候选行优先用 mousedown 触发跳转，规避 input onBlur 延迟关闭.
+                  onMouseDown={(e) => {
+                    e.preventDefault()
+                    onSelect(task.id)
+                  }}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-ink-300"
+                >
+                  <span className="min-w-0 flex-1 truncate font-sans text-sm text-ink-900">
+                    {task.title}
+                  </span>
+                  {(task.employee_name || task.employee_id) && (
+                    <span className="hidden shrink-0 font-mono text-xs text-ink-600 sm:inline">
+                      {task.employee_name ?? task.employee_id}
+                    </span>
+                  )}
+                  <StatusPill tone={stage.tone} className="shrink-0">
+                    {stage.label}
+                  </StatusPill>
+                </button>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+/**
+ * task.status → 灰阶阶段胶囊（与 tasks/index.tsx 的 stageFromStatus 保持一致）.
+ * 复刻本地一份避免跨页面耦合；色调/文案对齐设计规范.
+ */
+function stageFromStatus(
+  status: string,
+): { tone: "pending" | "in-progress" | "done" | "reported" | "failed"; label: string } {
+  switch (status) {
+    case "draft":
+      return { tone: "pending", label: "待导入" }
+    case "running":
+      return { tone: "in-progress", label: "清洗中" }
+    case "paused":
+      return { tone: "pending", label: "已暂停" }
+    case "completed":
+      return { tone: "done", label: "已完成" }
+    case "failed":
+      return { tone: "failed", label: "失败" }
+    case "cancelled":
+      return { tone: "pending", label: "已取消" }
+    default:
+      return { tone: "pending", label: "待导入" }
+  }
 }

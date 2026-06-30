@@ -15,6 +15,7 @@ import {
   Dialog,
   DialogBody,
   DialogClose,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
@@ -70,6 +71,8 @@ function ImportPage() {
   )
   const [portraitDocId, setPortraitDocId] = React.useState<number | null>(null)
   const [portraitRequestKey, setPortraitRequestKey] = React.useState(0)
+  // 处理进行中加文件拦截弹框（项目无 toast，统一用 Dialog）.
+  const [lockOpen, setLockOpen] = React.useState(false)
 
   // Pull ALL documents (no channel filter) so the file list, hasPending check
   // and per-channel badges all work at the task level.
@@ -160,10 +163,19 @@ function ImportPage() {
   const [isDragging, setIsDragging] = React.useState(false)
 
   function openPicker() {
+    if (isRunning) {
+      setLockOpen(true)
+      return
+    }
     hiddenInputRef.current?.click()
   }
 
   function onInputChange(e: React.ChangeEvent<HTMLInputElement>) {
+    if (isRunning) {
+      setLockOpen(true)
+      e.target.value = ""
+      return
+    }
     const files = Array.from(e.target.files ?? [])
     handleUpload(files)
     // Reset so picking the same file twice still fires change.
@@ -173,6 +185,10 @@ function ImportPage() {
   function onDrop(e: React.DragEvent<HTMLDivElement>) {
     e.preventDefault()
     setIsDragging(false)
+    if (isRunning) {
+      setLockOpen(true)
+      return
+    }
     const files = Array.from(e.dataTransfer.files)
     handleUpload(files)
   }
@@ -361,6 +377,7 @@ function ImportPage() {
           if (!open) setPortraitDocId(null)
         }}
       />
+      <LockDialog open={lockOpen} onOpenChange={setLockOpen} />
     </div>
   )
 }
@@ -521,6 +538,38 @@ function PortraitDialog({
           <PortraitContent portrait={portrait} />
         )}
       </DialogBody>
+    </Dialog>
+  )
+}
+
+/**
+ * 处理进行中加文件拦截弹框。
+ *
+ * 任务 running 期间 openPicker / 拖拽 / onInputChange 全部前置拦截并打开
+ * 本弹框，提示用户等待当前批次处理完成后再追加文件（后端仍允许兜底追加，
+ * 前端拦截以避免「边加边跑」的混乱心智模型）.
+ */
+function LockDialog({
+  open,
+  onOpenChange,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange} className="max-w-md">
+      <DialogHeader>
+        <DialogTitle>无法添加文件</DialogTitle>
+        <DialogClose onOpenChange={onOpenChange} />
+      </DialogHeader>
+      <DialogBody className="text-sm text-ink-800">
+        处理进行中，请等待当前批次处理完成后再添加文件。
+      </DialogBody>
+      <DialogFooter>
+        <Button size="sm" onClick={() => onOpenChange(false)}>
+          我知道了
+        </Button>
+      </DialogFooter>
     </Dialog>
   )
 }

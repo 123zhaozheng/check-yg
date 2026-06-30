@@ -29,12 +29,16 @@ export function useTaskList(params: TaskListParams) {
   })
 }
 
-/** Read a single task by id (for config-derived fields like last_analysis_at). */
+/** Read a single task by id (for config-derived fields like last_analysis_at).
+ *  Polls every 2s while the task is running so the import page's 开始处理
+ *  button resets to 可点击 within 2s of the runner flipping status→completed. */
 export function useTask(taskId: number) {
   return useQuery({
     queryKey: [...TASKS_QUERY_KEY, "detail", taskId],
     queryFn: () => getTask(taskId),
     placeholderData: (prev) => prev,
+    refetchInterval: (query) =>
+      query.state.data?.status === "running" ? 2000 : false,
   })
 }
 

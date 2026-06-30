@@ -105,6 +105,53 @@ async def test_list_filters_by_employee_id_and_search(client):
 
 
 @pytest.mark.asyncio
+async def test_list_search_matches_title_or_employee(client):
+    """全局 search 同时匹配 任务名 OR 员工姓名 OR 员工工号。"""
+    await client.post(
+        "/api/tasks/",
+        json={"title": "2026 张三审查", "employee_name": "张三", "employee_id": "ZS-0421"},
+    )
+    await client.post(
+        "/api/tasks/",
+        json={"title": "Beta audit", "employee_name": "李四", "employee_id": "LS-0888"},
+    )
+    await client.post(
+        "/api/tasks/",
+        json={"title": "Gamma audit", "employee_name": "王五", "employee_id": "WW-9999"},
+    )
+
+    # 命中 title。
+    by_title = await client.get("/api/tasks/?search=Beta")
+    titles = [item["title"] for item in by_title.json()["items"]]
+    assert titles == ["Beta audit"]
+
+    # 命中 employee_name（张三）。
+    by_name = await client.get("/api/tasks/?search=张三")
+    titles = [item["title"] for item in by_name.json()["items"]]
+    assert titles == ["2026 张三审查"]
+
+    # 命中 employee_id（LS-0888）。
+    by_id = await client.get("/api/tasks/?search=LS-0888")
+    titles = [item["title"] for item in by_id.json()["items"]]
+    assert titles == ["Beta audit"]
+
+    # 一个关键词同时命中多个字段维度（「张」既出现在 title 又出现在 employee_name）。
+    broad = await client.get("/api/tasks/?search=张")
+    titles = {item["title"] for item in broad.json()["items"]}
+    # 只有一条任务 title/employee_name 含「张」，去重后应只有一条（不会重复返回）。
+    assert titles == {"2026 张三审查"}
+
+    # 不匹配时返回空。
+    none_resp = await client.get("/api/tasks/?search=NOPE-XYZ")
+    assert none_resp.json()["items"] == []
+
+    # employee_id 精确查询参数仍按精确匹配工作（不被 search 的 OR 改动）。
+    by_employee = await client.get("/api/tasks/?employee_id=WW-9999")
+    titles = [item["title"] for item in by_employee.json()["items"]]
+    assert titles == ["Gamma audit"]
+
+
+@pytest.mark.asyncio
 async def test_start_task_requires_existing_folder(client):
     created = await client.post("/api/tasks/", json={"title": "Needs folder"})
     task_id = created.json()["id"]
