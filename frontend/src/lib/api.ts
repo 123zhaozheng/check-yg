@@ -1038,7 +1038,7 @@ export function updateMe(body: UpdateMeBody): Promise<UserMeResponse> {
 /** reasoning 预算档位（off=不传 reasoning_effort；reasoning 模型默认 low）. */
 export type ThinkingLevel = "off" | "low" | "medium" | "high"
 
-/** 6 个阶段：前三个真实生效，后三个预留（占位，待接入真实 LLM）. */
+/** 6 个阶段：classification / portrait / normalization / ai_analysis / ai_qa / report_generation. */
 export type Stage =
   | "classification"
   | "portrait"

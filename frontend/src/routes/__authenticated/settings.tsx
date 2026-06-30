@@ -487,13 +487,13 @@ function extractDetail(err: unknown): string | undefined {
 // 集成与模型 Tab — 模型卡片管理 + 阶段指派 + llm.* 兜底配置（06-23-llm-model-card）
 // ---------------------------------------------------------------------------
 
-const STAGE_LABELS: { stage: Stage; label: string; reserved?: boolean }[] = [
+const STAGE_LABELS: { stage: Stage; label: string }[] = [
   { stage: "classification", label: "分类" },
   { stage: "portrait", label: "画像" },
   { stage: "normalization", label: "标准化" },
-  { stage: "ai_analysis", label: "AI 分析", reserved: true },
-  { stage: "ai_qa", label: "AI 问答", reserved: true },
-  { stage: "report_generation", label: "报告生成", reserved: true },
+  { stage: "ai_analysis", label: "AI 分析" },
+  { stage: "ai_qa", label: "AI 问答" },
+  { stage: "report_generation", label: "报告生成" },
 ]
 
 const THINKING_OPTIONS: ThinkingLevel[] = ["off", "low", "medium", "high"]
@@ -711,23 +711,18 @@ function StageAssignmentCard({ isAdmin }: { isAdmin: boolean }) {
           <h2 className="font-sans text-base font-bold text-ink-900">阶段模型指派</h2>
           <p className="mt-1 text-xs text-ink-600">
             为每个阶段指定一张模型卡片；未指派时回退「集成与模型」兜底配置 +
-            模块默认值。标注「预留」的阶段待后续接入真实 LLM 后生效。
+            模块默认值。
           </p>
         </div>
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          {STAGE_LABELS.map(({ stage, label, reserved }) => {
+          {STAGE_LABELS.map(({ stage, label }) => {
             const assignment = assignments.find((a) => a.stage === stage)
             const value = assignment?.llm_model_id ?? ""
             return (
               <div key={stage} className="flex flex-col gap-1">
                 <label className="text-xs font-bold uppercase tracking-widest text-ink-600">
                   {label}
-                  {reserved && (
-                    <span className="ml-2 font-normal normal-case text-ink-600">
-                      （预留，待接入）
-                    </span>
-                  )}
                 </label>
                 <select
                   value={value}

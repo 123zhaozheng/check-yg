@@ -5,10 +5,6 @@
 report_generation）至多一行（stage 唯一）。``llm_model_id`` nullable——
 nullable 表示该阶段未指派卡片，运行时回退 runtime ``llm.*`` 设置项 + 模块
 硬编码兜底常量（决策5）。
-
-阶段枚举见 :data:`STAGES`。前三个（classification/portrait/normalization）
-已接真实 LLM；后三个（ai_analysis/ai_qa/report_generation）为预留映射位，
-当前 analysis.py / report_chapter_builder 是占位，等后续接真实 LLM 时生效。
 """
 
 from datetime import datetime
@@ -19,7 +15,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.models.base import Base, TimestampMixin
 
 
-# 阶段枚举。前三个真实生效；后三个预留（占位，待接入真实 LLM）。
+# 阶段枚举。
 STAGE_CLASSIFICATION = "classification"
 STAGE_PORTRAIT = "portrait"
 STAGE_NORMALIZATION = "normalization"
@@ -38,8 +34,6 @@ STAGES = (
 
 # 已接真实 LLM 的阶段（extractor 三模块）。
 ACTIVE_STAGES = (STAGE_CLASSIFICATION, STAGE_PORTRAIT, STAGE_NORMALIZATION)
-# 预留映射位阶段（占位，待后续任务接通真实 LLM）。
-RESERVED_STAGES = (STAGE_AI_ANALYSIS, STAGE_AI_QA, STAGE_REPORT_GENERATION)
 
 
 class LLMModelAssignment(Base, TimestampMixin):
