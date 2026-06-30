@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 20
-- **Last Active**: 2026-06-28
+- **Total Sessions**: 21
+- **Last Active**: 2026-06-30
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~682 | Active |
+| `journal-1.md` | ~716 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 21 | 2026-06-30 | 导入流程锁定 + 全局任务搜索跳转 | `8d813681`, `48bf2596` | `feat/web-split` |
 | 20 | 2026-06-28 | Report generation and export polish | `d7d34c8` | `feat/web-split` |
 | 19 | 2026-06-26 | 精简前端UI过度的技术性说明文案 + greenlet依赖修复 | `ad548fa`, `d5306b9` | `feat/web-split` |
 | 18 | 2026-06-23 | 关键词库 + 关键词审查阶段 + 删概览 + 清洗规则折叠 | `fa2a380f`, `07e4cada` | `feat/web-split` |

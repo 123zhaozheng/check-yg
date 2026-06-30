@@ -680,3 +680,37 @@ Implemented LLM-backed async report generation, constrained markdown rendering f
 ### Next Steps
 
 - None - task complete
+
+
+## Session 21: 导入流程锁定 + 全局任务搜索跳转
+
+**Date**: 2026-06-30
+**Task**: 导入流程锁定 + 全局任务搜索跳转
+**Branch**: `feat/web-split`
+
+### Summary
+
+导入页处理中锁定文件添加(前端拦截+Dialog)、useTask running态2s轮询使开始处理按钮自动复位、topbar全局搜索框接入(受控+debounce+下拉跳转)、后端list_tasks search扩展为title/employee_id/employee_name OR。5文件256增3删,后端21测试通过前端tsc通过。gitignore加backend/.tmp。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `8d813681` | (see git log) |
+| `48bf2596` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
