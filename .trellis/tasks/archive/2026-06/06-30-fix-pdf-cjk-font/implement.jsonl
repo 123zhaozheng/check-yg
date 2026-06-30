@@ -1,0 +1,2 @@
+{"file": ".trellis/tasks/06-30-fix-pdf-cjk-font/prd.md", "reason": "本任务 PRD：根因（export_service 全 Helvetica 绕过 CID 兜底）+ 精确改法 + 11 处行号 + 验收/验证方式"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "后端代码规范与禁用模式"}
