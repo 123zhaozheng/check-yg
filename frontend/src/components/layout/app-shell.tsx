@@ -370,7 +370,6 @@ function SearchPanel({
       ) : (
         <ul className="max-h-80 overflow-y-auto">
           {items.map((task) => {
-            const stage = stageFromStatus(task.status)
             return (
               <li key={task.id}>
                 <button
@@ -390,8 +389,8 @@ function SearchPanel({
                       {task.employee_name ?? task.employee_id}
                     </span>
                   )}
-                  <StatusPill tone={stage.tone} className="shrink-0">
-                    {stage.label}
+                  <StatusPill tone={stageLabelToTone(task.stage)} className="shrink-0">
+                    {task.stage}
                   </StatusPill>
                 </button>
               </li>
@@ -404,26 +403,28 @@ function SearchPanel({
 }
 
 /**
- * task.status → 灰阶阶段胶囊（与 tasks/index.tsx 的 stageFromStatus 保持一致）.
- * 复刻本地一份避免跨页面耦合；色调/文案对齐设计规范.
+ * 后端 stage label → 灰阶胶囊 tone（与 tasks/index.tsx 的 stageLabelToTone 一致）.
+ * stage label 来自后端 _derive_stage_label（单一真相源），不再按 task.status 推。
+ * 复刻本地一份避免跨页面耦合；色调对齐设计规范.
  */
-function stageFromStatus(
-  status: string,
-): { tone: "pending" | "in-progress" | "done" | "reported" | "failed"; label: string } {
-  switch (status) {
-    case "draft":
-      return { tone: "pending", label: "待导入" }
-    case "running":
-      return { tone: "in-progress", label: "清洗中" }
-    case "paused":
-      return { tone: "pending", label: "已暂停" }
-    case "completed":
-      return { tone: "done", label: "已完成" }
-    case "failed":
-      return { tone: "failed", label: "失败" }
-    case "cancelled":
-      return { tone: "pending", label: "已取消" }
+function stageLabelToTone(
+  stage: string,
+): "pending" | "in-progress" | "done" | "reported" | "failed" {
+  switch (stage) {
+    case "已完成":
+    case "清洗完成":
+      return "done"
+    case "报告生成":
+      return "reported"
+    case "清洗中":
+    case "分析中":
+      return "in-progress"
+    case "失败":
+      return "failed"
+    case "待导入":
+    case "已暂停":
+    case "已取消":
     default:
-      return { tone: "pending", label: "待导入" }
+      return "pending"
   }
 }

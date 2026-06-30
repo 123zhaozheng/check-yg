@@ -23,6 +23,11 @@ from .progress import ProgressReport
 
 logger = logging.getLogger(__name__)
 
+# Standardization-finished notification titles per terminal status. Success is
+# now "analyzing" (post-standardization phase); "completed" is reserved for
+# report finalization in finalize_report.
+_FINISH_TITLES = {"analyzing": "标准化完成", "failed": "任务失败", "cancelled": "任务已取消"}
+
 
 class ExtractionTaskRunner:
     """Run extraction jobs in-process and expose pause/resume/cancel controls."""
@@ -275,7 +280,7 @@ class ExtractionTaskRunner:
             return list(last_result.get("processed_document_paths", []) or [])
 
     async def _mark_finished(self, task_id: int, owner_id: int, result: dict, append: bool = False) -> None:
-        status = "failed" if result.get("failed_documents") or result.get("errors") else "completed"
+        status = "failed" if result.get("failed_documents") or result.get("errors") else "analyzing"
         # Current-run extracted_records (standard + unparsed + excluded) with
         # raw_payload. Persisted separately from the merged final_result so
         # append runs only insert new documents' records (path-aware filter in
@@ -294,7 +299,10 @@ class ExtractionTaskRunner:
             if task.status == "cancelled":
                 status = "cancelled"
             task.status = status
-            task.completed_at = datetime.now(timezone.utc)
+            # completed_at 仅在 failed 时标记失败时间；analyzing 属于进行中，
+            # 真正终态的 completed_at 延后到 finalize_report 设置。
+            if status == "failed":
+                task.completed_at = datetime.now(timezone.utc)
             task.config = {
                 **(task.config or {}),
                 "last_result": final_result,
@@ -306,7 +314,7 @@ class ExtractionTaskRunner:
             session.add(
                 TaskLog(
                     task_id=task_id,
-                    level="info" if status == "completed" else "warning",
+                    level="info" if status == "analyzing" else "warning",
                     message="Extraction finished with status: %s" % status,
                 )
             )
@@ -315,7 +323,7 @@ class ExtractionTaskRunner:
         await notify_user(
             owner_id,
             event="task.%s" % status,
-            title="任务已完成" if status == "completed" else "任务结束",
+            title=_FINISH_TITLES.get(status, "任务结束"),
             message="抽取记录数: %s" % final_result.get("total_records", 0),
             resource={"task_id": task_id, "status": status},
         )

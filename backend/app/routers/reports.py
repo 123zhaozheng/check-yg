@@ -14,6 +14,7 @@ owner-only 校验：通过 ``Report.task_id`` → ``Task.owner_id == current_use
 但 ``GET /reports/{id}`` + download 仍走旧服务以兼容历史报告）。
 """
 
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -29,6 +30,7 @@ from app.models import (
     ReportAnnotation,
     ReportChapter,
     Task,
+    TaskLog,
     User,
 )
 from app.schemas.review import (
@@ -440,6 +442,19 @@ async def finalize_report(
     report = await _load_owned_report(db, report_id, current_user)
     _ensure_draft(report)
     report.status = "final"
+    # 报告定稿 = 业务终态。同步把所属 task 推进到 completed（标准化后的
+    # analyzing 一直停留到这里才真正"已完成"）。
+    task = await db.get(Task, report.task_id)
+    if task is not None and task.status != "completed":
+        task.status = "completed"
+        task.completed_at = datetime.now(timezone.utc)
+        db.add(
+            TaskLog(
+                task_id=task.id,
+                level="info",
+                message="Task marked completed (report finalized)",
+            )
+        )
     await db.commit()
 
     loaded = (

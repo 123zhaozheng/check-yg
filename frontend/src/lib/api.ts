@@ -221,6 +221,8 @@ export interface TaskItem {
   audit_end?: string | null
   expected_channels?: string[] | null
   archived: boolean
+  /** 后端推导的当前阶段中文 label（analyzing 细分 清洗完成/分析中/报告生成/已完成）。 */
+  stage: string
 }
 
 export interface TaskListResponse {

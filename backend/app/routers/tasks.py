@@ -17,7 +17,8 @@ from sqlalchemy.orm import selectinload
 from ..auth.dependencies import get_current_user
 from ..config import settings
 from ..database import get_db
-from ..models import Document, Finding, FlowRecordRow, KeywordHit, Task, TaskLog, User
+from ..models import Document, Finding, FlowRecordRow, KeywordHit, Report, Task, TaskLog, User
+from ..routers.dashboard import _derive_stage_label
 from ..schemas.audit import (
     ChatRequest as AuditChatRequest,
     ChatResponse as AuditChatResponse,
@@ -49,6 +50,17 @@ findings_router = APIRouter(tags=["findings"])
 # Shared scanner so upload endpoints validate the same supported extensions
 # as the extraction pipeline.
 _SCANNER = DocumentScanner()
+
+# Correlated subquery: latest Report.status per Task row. 与 dashboard.py 的
+# _LATEST_REPORT_STATUS 等价，但本地重新定义一份避免跨 router import 私有符号；
+# 驱动 TaskResponse.stage 对 analyzing 态的细分（清洗完成/分析中/报告生成/已完成）。
+_LATEST_REPORT_STATUS = (
+    select(Report.status)
+    .where(Report.task_id == Task.id)
+    .order_by(Report.created_at.desc())
+    .limit(1)
+    .scalar_subquery()
+).label("latest_report_status")
 
 
 class TaskCreateRequest(BaseModel):
@@ -90,6 +102,9 @@ class TaskResponse(BaseModel):
     audit_end: Optional[datetime] = None
     expected_channels: Optional[list[str]] = None
     archived: bool = False
+    # 用户可读的当前阶段中文 label（dashboard 与 task list 共享的单一真相源，
+    # 由 _derive_stage_label 推导；analyzing 态会细分 清洗完成/分析中/报告生成/已完成）。
+    stage: str
 
     class Config:
         from_attributes = True
@@ -102,7 +117,15 @@ class TaskListResponse(BaseModel):
     page_size: int
 
 
-def _task_response(task: Task) -> TaskResponse:
+def _task_response(
+    task: Task, latest_report_status: Optional[str] = None
+) -> TaskResponse:
+    # stage 走共享单一真相源 _derive_stage_label：单任务 GET 等不传
+    # latest_report_status（None → analyzing 细分退化为看 has_last_analysis），
+    # 仅 list_tasks 在批量查询时一并取 correlated subquery 填进来保证准确。
+    stage, _progress = _derive_stage_label(
+        task.status or "draft", task.config, latest_report_status
+    )
     return TaskResponse(
         id=task.id,
         title=task.title,
@@ -120,6 +143,7 @@ def _task_response(task: Task) -> TaskResponse:
         audit_end=task.audit_end,
         expected_channels=task.expected_channels,
         archived=task.archived,
+        stage=stage,
     )
 
 
@@ -245,10 +269,14 @@ async def list_tasks(
     ``archived`` defaults to "未归档" (False) when omitted so the task list
     hides soft-deleted rows unless the caller explicitly asks for them.
     """
-    query = select(Task)
+    # 一并取 latest Report.status 的 correlated subquery，传给 _task_response
+    # 以保证 analyzing 态 stage 细分（清洗完成/分析中/报告生成/已完成）与首页一致。
+    query = select(Task, _LATEST_REPORT_STATUS)
 
     if status_filter:
-        query = query.where(Task.status == status_filter)
+        statuses = [s.strip() for s in status_filter.split(",") if s.strip()]
+        if statuses:
+            query = query.where(Task.status.in_(statuses))
     if stage:
         # Stage is the high-level pipeline step stored in Task.status; the list
         # filter passes it straight through (draft/import → running → completed).
@@ -285,9 +313,9 @@ async def list_tasks(
     query = query.order_by(Task.created_at.desc())
     query = query.offset((page - 1) * page_size).limit(page_size)
     result = await db.execute(query)
-    tasks = result.scalars().all()
+    rows = result.all()
 
-    items = [_task_response(t) for t in tasks]
+    items = [_task_response(task, latest_report_status) for task, latest_report_status in rows]
 
     return TaskListResponse(items=items, total=total, page=page, page_size=page_size)
 

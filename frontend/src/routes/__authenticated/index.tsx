@@ -28,9 +28,12 @@ export const Route = createFileRoute("/__authenticated/")({
 function DashboardPage() {
   const navigate = useNavigate()
   const invalidateDashboard = useInvalidateDashboard()
-  const { data, isLoading, isFetching } = useDashboard()
+  // dataUpdatedAt is the wall-clock time of the last successful fetch (TanStack
+  // Query tracks it). Drives the "上次同步" header so it moves on every
+  // refresh / passive poll, instead of staying pinned to a stale task row.
+  const { data, dataUpdatedAt, isLoading, isFetching } = useDashboard()
 
-  const lastSync = data ? formatLastSync(data) : "—"
+  const lastSync = formatLastSync(dataUpdatedAt)
 
   return (
     <>
@@ -399,13 +402,16 @@ function EmptyState({
 function stageTone(stage: string): React.ComponentProps<typeof StatusPill>["tone"] {
   switch (stage) {
     case "已完成":
+    case "清洗完成":
       return "done"
+    case "报告生成":
+      return "reported"
     case "清洗中":
+    case "分析中":
       return "in-progress"
     case "失败":
       return "failed"
-    case "待开始":
-    case "导入中":
+    case "待导入":
     case "已暂停":
     case "已取消":
     default:
@@ -431,10 +437,9 @@ function formatHours(hours: number): string {
   return `${hours.toFixed(1)}小时`
 }
 
-function formatLastSync(data: { in_progress_tasks?: { updated_at?: string }[] }): string {
-  const latest = data.in_progress_tasks?.[0]?.updated_at
-  if (!latest) return "—"
-  return formatRelative(latest)
+function formatLastSync(dataUpdatedAt?: number): string {
+  if (!dataUpdatedAt) return "—"
+  return formatRelative(new Date(dataUpdatedAt).toISOString())
 }
 
 function formatRelative(iso: string): string {

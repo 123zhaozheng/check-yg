@@ -358,7 +358,7 @@ async def test_append_task_records_all_folders_in_config(client, db_session, tmp
 
     row = await session.execute(select(TaskModel).where(TaskModel.id == task_id))
     task = row.scalar_one()
-    task.status = "completed"
+    task.status = "analyzing"
     await session.commit()
 
     resp = await client.post(f"/api/tasks/{task_id}/append", json={"document_folder": str(folder_b)})
@@ -661,7 +661,7 @@ async def test_list_documents_filters_by_channel(client, db_session, monkeypatch
     # Reset task to completed so append-upload is accepted.
     row = await session.execute(select(Task).where(Task.id == task_id))
     task = row.scalar_one()
-    task.status = "completed"
+    task.status = "analyzing"
     await session.commit()
 
     await client.post(
@@ -769,7 +769,7 @@ async def test_append_upload_rejects_unsupported_files_regression(client, db_ses
 
     row = await session.execute(select(Task).where(Task.id == task_id))
     task = row.scalar_one()
-    task.status = "completed"
+    task.status = "analyzing"
     await session.commit()
 
     resp = await client.post(

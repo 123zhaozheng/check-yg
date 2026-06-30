@@ -30,8 +30,9 @@ from ..models import Report, Review, Task, User
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
 # In-progress = not yet finalized. Drafts count as "active" work the user still
-# needs to push forward, per docs §B1 "进行中任务数".
-_IN_PROGRESS_STATUSES = ("draft", "running", "paused")
+# needs to push forward, per docs §B1 "进行中任务数". analyzing = 标准化完成进入
+# 分析/报告阶段，仍属"进行中"，只有报告定稿才会切到 completed。
+_IN_PROGRESS_STATUSES = ("draft", "running", "paused", "analyzing")
 # How many in-progress rows to surface on the dashboard.
 _IN_PROGRESS_LIMIT = 8
 _RECENT_REPORTS_LIMIT = 5
@@ -53,6 +54,7 @@ class DashboardInProgressTask(BaseModel):
     stage: str
     progress: int  # 0-100, grayscale bar on the frontend
     updated_at: datetime
+    latest_report_status: Optional[str] = None  # 驱动 stage 细分（报告生成/已完成）
 
 
 class DashboardRecentReport(BaseModel):
@@ -83,32 +85,73 @@ def _visibility_filter(query, current_user: User, is_admin: bool):
     return query
 
 
-def _stage_and_progress(task: Task) -> tuple[str, int]:
-    """Derive a grayscale stage label + 0-100 progress from task state.
+def _derive_stage_label(
+    status: str,
+    config: dict | None,
+    latest_report_status: str | None,
+) -> tuple[str, int]:
+    """Derive the user-facing stage label + 0-100 progress from task state.
 
-    Maps the 4-stage grayscale progression (docs §B1 / status-pill tones):
-    导入=浅灰 → 清洗=中灰 → 分析=深灰 → 报告=黑底白字. We only have
-    ``status`` + ``config.last_result`` to work with (live % comes via
-    websocket, not stored on the row), so progress is a coarse heuristic.
+    单一真相源：dashboard 和 task list 都用这个，避免两端不一致。
+    has_last_result / has_last_analysis 从 config 参数算，分支语义与原
+    ``_stage_and_progress`` 一致。
+
+    New status semantics: ``completed`` 严格表示"报告已定稿"（仅在
+    finalize_report 设置），所以该分支直接给"已完成"/100。``analyzing`` 是
+    标准化完成后的分析/报告阶段（属"进行中"），按 latest ``Report.status`` 与
+    ``config.last_analysis_at`` 细分：清洗完成 → 分析中 → 报告生成（→ 已完成
+    兜底，正常 finalize 会先把 task.status 改成 completed，不会走到 final 这支）。
+    ``running`` 统一显示"清洗中"（避免首页与任务列表不一致），按是否有 result 分进度。
     """
-    status = task.status or "draft"
-    config = task.config or {}
-    has_last_result = bool(config.get("last_result"))
+    cfg = config or {}
+    has_last_result = bool(cfg.get("last_result"))
+    has_last_analysis = bool(cfg.get("last_analysis_at"))
 
     if status == "failed":
         return "失败", 0
     if status == "cancelled":
         return "已取消", 0
     if status == "completed":
+        # completed = 报告已定稿（finalize_report 设置），即业务终态。
         return "已完成", 100
+    if status == "analyzing":
+        # 标准化完成进入分析/报告阶段，按报告/分析进度细分。
+        if latest_report_status == "final":
+            return "已完成", 100  # 兜底，正常不会走到（finalize 会先改 task.status）
+        if latest_report_status in ("generating", "generated"):
+            return "报告生成", 80
+        if has_last_analysis:
+            return "分析中", 60
+        return "清洗完成", 40
     if status == "running":
-        # Without a persisted progress number we approximate by phase:
-        # records present → past import, into cleaning/normalize.
-        return ("清洗中", 60) if has_last_result else ("导入中", 20)
+        # 清洗中：统一文案，按是否已有 result 区分进度。
+        return ("清洗中", 40) if has_last_result else ("清洗中", 20)
     if status == "paused":
-        return ("已暂停", 50) if has_last_result else ("导入中", 20)
+        return ("已暂停", 30) if has_last_result else ("已暂停", 10)
     # draft
-    return "待开始", 0
+    return "待导入", 0
+
+
+def _stage_and_progress(
+    task: Task,
+    latest_report_status: Optional[str] = None,
+) -> tuple[str, int]:
+    """Dashboard 薄包装：转调共享的 _derive_stage_label（单一真相源）。"""
+    return _derive_stage_label(
+        task.status or "draft", task.config, latest_report_status
+    )
+
+
+# Correlated subquery: latest Report.status per Task row, drives the stage
+# subdivision above. SQLite + Postgres both accept correlated subqueries in
+# the SELECT list; one round trip keeps the dashboard query cheap.
+_LATEST_REPORT_STATUS = (
+    select(Report.status)
+    .where(Report.task_id == Task.id)
+    .order_by(Report.created_at.desc())
+    .limit(1)
+    .scalar_subquery()
+).label("latest_report_status")
 
 
 @router.get("/", response_model=DashboardData)
@@ -119,33 +162,35 @@ async def get_dashboard(
     """Aggregate dashboard data for the current user."""
     is_admin = await check_admin_permission(db, current_user)
 
+    # All dashboard queries hide archived rows by default — archived tasks
+    # live in /tasks?archived=true, never on the landing page.
+    def _hide_archived(q):
+        return _visibility_filter(q, current_user, is_admin).where(
+            Task.archived.is_(False)
+        )
+
     # --- KPIs --------------------------------------------------------------
-    active_query = _visibility_filter(
-        select(func.count(Task.id)).where(Task.status.in_(_IN_PROGRESS_STATUSES)),
-        current_user,
-        is_admin,
+    active_query = _hide_archived(
+        select(func.count(Task.id)).where(Task.status.in_(_IN_PROGRESS_STATUSES))
     )
     active_tasks = (await db.execute(active_query)).scalar() or 0
 
     now = datetime.now(timezone.utc)
     month_start = datetime(now.year, now.month, 1, tzinfo=timezone.utc)
-    completed_query = _visibility_filter(
+    completed_query = _hide_archived(
         select(func.count(Task.id)).where(
             Task.status == "completed",
             Task.completed_at.is_not(None),
             Task.completed_at >= month_start,
-        ),
-        current_user,
-        is_admin,
+        )
     )
     monthly_completed = (await db.execute(completed_query)).scalar() or 0
 
     # Pending alerts = reviews still pending on tasks the user can see.
-    # This is the cleanest "待处理告警" signal available without S3 fields.
     review_query = (
         select(func.count(Review.id))
         .join(Task, Task.id == Review.task_id)
-        .where(Review.status == "pending")
+        .where(Review.status == "pending", Task.archived.is_(False))
     )
     review_query = _visibility_filter(review_query, current_user, is_admin)
     pending_alerts = (await db.execute(review_query)).scalar() or 0
@@ -153,31 +198,33 @@ async def get_dashboard(
     # Avg audit hours = mean(completed_at - created_at) in hours for completed
     # tasks. SQLite lacks `EXTRACT(EPOCH FROM ...)`; compute the avg in Python
     # from the fetched rows so the query is portable across pg + sqlite.
-    avg_query = _visibility_filter(
+    avg_query = _hide_archived(
         select(Task.created_at, Task.completed_at).where(
             Task.status == "completed",
             Task.completed_at.is_not(None),
-        ),
-        current_user,
-        is_admin,
+        )
     )
     avg_rows = (await db.execute(avg_query)).all()
     avg_audit_hours = _mean_audit_hours(avg_rows)
 
     # --- In-progress task list --------------------------------------------
-    in_progress_query = _visibility_filter(
-        select(Task).where(Task.status.in_(_IN_PROGRESS_STATUSES)),
-        current_user,
-        is_admin,
-    ).order_by(Task.updated_at.desc()).limit(_IN_PROGRESS_LIMIT)
+    in_progress_query = _hide_archived(
+        select(Task, _LATEST_REPORT_STATUS)
+        .where(Task.status.in_(_IN_PROGRESS_STATUSES))
+        .order_by(Task.updated_at.desc())
+        .limit(_IN_PROGRESS_LIMIT)
+    )
+    in_progress_rows = (await db.execute(in_progress_query)).all()
     in_progress_tasks = [
-        _in_progress_task(t) for t in (await db.execute(in_progress_query)).scalars().all()
+        _in_progress_task(task, latest_report_status)
+        for task, latest_report_status in in_progress_rows
     ]
 
     # --- Recent reports (join task for title, owner-scoped) ----------------
     recent_reports_query = (
         select(Report, Task.title)
         .join(Task, Task.id == Report.task_id)
+        .where(Task.archived.is_(False))
     )
     if not is_admin:
         recent_reports_query = recent_reports_query.where(Task.owner_id == current_user.id)
@@ -194,7 +241,7 @@ async def get_dashboard(
     pending_review_query = (
         select(Review, Task.title)
         .join(Task, Task.id == Review.task_id)
-        .where(Review.status == "pending")
+        .where(Review.status == "pending", Task.archived.is_(False))
     )
     if not is_admin:
         pending_review_query = pending_review_query.where(Task.owner_id == current_user.id)
@@ -218,6 +265,7 @@ async def get_dashboard(
         report_actions_query = (
             select(Report, Task.title)
             .join(Task, Task.id == Report.task_id)
+            .where(Task.archived.is_(False))
         )
         if not is_admin:
             report_actions_query = report_actions_query.where(Task.owner_id == current_user.id)
@@ -264,8 +312,10 @@ def _mean_audit_hours(rows: list[Any]) -> float:
     return round(sum(hours) / len(hours), 1)
 
 
-def _in_progress_task(task: Task) -> DashboardInProgressTask:
-    stage, progress = _stage_and_progress(task)
+def _in_progress_task(
+    task: Task, latest_report_status: Optional[str] = None
+) -> DashboardInProgressTask:
+    stage, progress = _stage_and_progress(task, latest_report_status)
     return DashboardInProgressTask(
         id=task.id,
         title=task.title,
@@ -274,6 +324,7 @@ def _in_progress_task(task: Task) -> DashboardInProgressTask:
         stage=stage,
         progress=progress,
         updated_at=task.updated_at,
+        latest_report_status=latest_report_status,
     )
 
 

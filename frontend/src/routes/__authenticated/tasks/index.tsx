@@ -71,7 +71,7 @@ function TasksPage() {
       p.archived = true
     } else {
       p.archived = false
-      if (tab === "running") p.status_filter = "running"
+      if (tab === "running") p.status_filter = "draft,running,paused,analyzing"
       else if (tab === "completed") p.status_filter = "completed"
     }
     return p
@@ -249,7 +249,6 @@ function TaskRow({
   onView: () => void
   onArchive: () => void
 }) {
-  const stage = stageFromStatus(task.status)
   const statusView = statusViewFromStatus(task.status)
   const channels = formatChannels(task.expected_channels)
 
@@ -266,7 +265,7 @@ function TaskRow({
       <td className="px-4 py-3 text-xs text-ink-700">{channels}</td>
       <td className="px-4 py-3 text-xs text-ink-700">#{task.owner_id}</td>
       <td className="px-4 py-3">
-        <StatusPill tone={stage.tone}>{stage.label}</StatusPill>
+        <StatusPill tone={stageLabelToTone(task.stage)}>{task.stage}</StatusPill>
       </td>
       <td className="px-4 py-3">
         <span className="flex items-center gap-2">
@@ -365,25 +364,30 @@ function Pagination({
   )
 }
 
-/** Map task.status → a grayscale stage pill tone + label (导入/清洗/分析/报告). */
-function stageFromStatus(
-  status: string,
-): { tone: "pending" | "in-progress" | "done" | "reported" | "failed"; label: string } {
-  switch (status) {
-    case "draft":
-      return { tone: "pending", label: "待导入" }
-    case "running":
-      return { tone: "in-progress", label: "清洗中" }
-    case "paused":
-      return { tone: "pending", label: "已暂停" }
-    case "completed":
-      return { tone: "done", label: "已完成" }
-    case "failed":
-      return { tone: "failed", label: "失败" }
-    case "cancelled":
-      return { tone: "pending", label: "已取消" }
+/**
+ * Map backend stage label → StatusPill grayscale tone.
+ * stage label 来自后端 _derive_stage_label（单一真相源），不再按 task.status 推。
+ * 与 dashboard index.tsx 的 stageTone 同构，覆盖后端所有可能返回的中文 label。
+ */
+function stageLabelToTone(
+  stage: string,
+): "pending" | "in-progress" | "done" | "reported" | "failed" {
+  switch (stage) {
+    case "已完成":
+    case "清洗完成":
+      return "done"
+    case "报告生成":
+      return "reported"
+    case "清洗中":
+    case "分析中":
+      return "in-progress"
+    case "失败":
+      return "failed"
+    case "待导入":
+    case "已暂停":
+    case "已取消":
     default:
-      return { tone: "pending", label: "待导入" }
+      return "pending"
   }
 }
 
@@ -391,6 +395,8 @@ function stageFromStatus(
 function statusViewFromStatus(status: string): { active: boolean; label: string } {
   switch (status) {
     case "running":
+      return { active: true, label: "进行中" }
+    case "analyzing":
       return { active: true, label: "进行中" }
     case "completed":
       return { active: true, label: "已完成" }
