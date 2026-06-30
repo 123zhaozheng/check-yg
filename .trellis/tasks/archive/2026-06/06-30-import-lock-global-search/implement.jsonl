@@ -1,0 +1,5 @@
+{"file": ".trellis/tasks/06-30-import-lock-global-search/prd.md", "reason": "本任务 PRD：4 项改动的详细方案、验收标准、关键调研结论（runner 批循环天然只收 pending）"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "本任务跨前后端（import.tsx + use-tasks.ts + app-shell.tsx + tasks.py），需对齐跨层数据流思维"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "全局搜索 debounce 模式可复用 tasks/index.tsx L51-58；Dialog 组件复用；修改后端 search 参数需先 grep 现有调用"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "后端 tasks.py search 扩展需遵循后端代码规范与禁用模式"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "后端改动涉及的错误处理与 UI 错误展示规范"}

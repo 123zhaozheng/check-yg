@@ -1,0 +1,1 @@
+{"file": "docs/research/pydantic-ai-conventions.md", "reason": "agent 接线规范基线：deps_type 传类型 / deps= 传实例 / toolsets 注入 / 模块级单例 / get_agent 缓存 key 含 instructions / 阶段卡 _resolve_agent_params。本任务新 Report agent 严格遵守"}

@@ -1,0 +1,2 @@
+{"file": "docs/research/pydantic-ai-conventions.md", "reason": "校验 Report agent 是否遵循 pydantic-ai conventions：deps_type/output_type/toolsets/单例缓存/exception 等所有接法与其一致"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "校验基线：单 agent 输出结构 + discriminated union 校验失败有日志；docx 路径全删验证（_write_report_docx 不存在，调用方返回 NotImplemented/400）；5 个图表工具均有单元测试；matplotlib 中文 fallback 验证"}

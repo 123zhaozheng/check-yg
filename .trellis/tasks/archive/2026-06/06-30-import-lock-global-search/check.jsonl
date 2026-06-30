@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/06-30-import-lock-global-search/prd.md", "reason": "验收标准来源：6 条验收标准逐条核对"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "后端 search OR 改动需符合质量规范、测试要求"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "核对跨层数据流：前端轮询 ↔ 后端 task.status 翻转、search 参数前后端一致"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "核对是否复用了 debounce/Dialog 而非重复造轮子"}
