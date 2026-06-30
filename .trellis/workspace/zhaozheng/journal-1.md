@@ -783,3 +783,36 @@ Implemented LLM-backed async report generation, constrained markdown rendering f
 ### Next Steps
 
 - None - task complete
+
+
+## Session 24: 清理 LLM 阶段过时「预留」标记
+
+**Date**: 2026-06-30
+**Task**: 清理 LLM 阶段过时「预留」标记
+**Branch**: `feat/web-split`
+
+### Summary
+
+ai_analysis/ai_qa/report_generation 三阶段早已接通真实 LLM（analysis.py:146/151、report_agent.py:158 在用 STAGE_AI_ANALYSIS/AI_QA/REPORT_GENERATION），设置页的「（预留，待接入）」标识是过时脏代码。删除范围：前端 settings.tsx 的 STAGE_LABELS.reserved 字段 + 渲染块 + 段落提示；api.ts Stage 注释；后端 llm_model_assignment.py 零引用的 RESERVED_STAGES 死常量 + docstring/注释里「后三个预留/占位」过时措辞。保留 6 个 STAGE_* 常量与 ACTIVE_STAGES（runner.py 运行时在用）。前端 tsc 通过。本次为 inline 清理，无 trellis task，跳过 archive。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `3841f554` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

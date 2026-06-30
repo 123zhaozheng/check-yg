@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 23
+- **Total Sessions**: 24
 - **Last Active**: 2026-06-30
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~785 | Active |
+| `journal-1.md` | ~818 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 24 | 2026-06-30 | 清理 LLM 阶段过时「预留」标记 | `3841f554` | `feat/web-split` |
 | 23 | 2026-06-30 | AI 分析页状态持久化修复 | `d423c87a` | `feat/web-split` |
 | 22 | 2026-06-30 | PDF 中文字体修复 + docx 移除 + LLM agent 参数 + 任务状态语义修正 | `61c7b49a`, `2ec3d794`, `9b122c65`, `68ef42f7` | `feat/web-split` |
 | 21 | 2026-06-30 | 导入流程锁定 + 全局任务搜索跳转 | `8d813681`, `48bf2596` | `feat/web-split` |
