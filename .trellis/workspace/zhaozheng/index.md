@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 22
+- **Total Sessions**: 23
 - **Last Active**: 2026-06-30
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~752 | Active |
+| `journal-1.md` | ~785 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 23 | 2026-06-30 | AI 分析页状态持久化修复 | `d423c87a` | `feat/web-split` |
 | 22 | 2026-06-30 | PDF 中文字体修复 + docx 移除 + LLM agent 参数 + 任务状态语义修正 | `61c7b49a`, `2ec3d794`, `9b122c65`, `68ef42f7` | `feat/web-split` |
 | 21 | 2026-06-30 | 导入流程锁定 + 全局任务搜索跳转 | `8d813681`, `48bf2596` | `feat/web-split` |
 | 20 | 2026-06-28 | Report generation and export polish | `d7d34c8` | `feat/web-split` |

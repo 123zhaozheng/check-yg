@@ -750,3 +750,36 @@ Implemented LLM-backed async report generation, constrained markdown rendering f
 ### Next Steps
 
 - None - task complete
+
+
+## Session 23: AI 分析页状态持久化修复
+
+**Date**: 2026-06-30
+**Task**: AI 分析页状态持久化修复
+**Branch**: `feat/web-split`
+
+### Summary
+
+修复 /tasks/:id/analyze 页点'开始分析'后切走再切回丢失分析中状态的问题。根因：running 曾为纯本地 useState，组件卸载即销毁。改为派生 isRunning = optimisticRunning || summary?.status==="running"（读后端持久态 task.config.last_analysis_summary.status），导航往返 useTask 重取后自动恢复；并补完成态 taskQuery.refetch()——WS-healthy 时 summary.status 不会被自动刷新，必须 refetch 让后端回填的 finished 落地，否则按钮/进度条卡死。仅前端 analyze.tsx，无后端改动。tsc 通过，check subagent 验证 5 个场景（含 WS-healthy 完成态、导航往返、二次重跑、无循环）全部成立。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d423c87a` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
