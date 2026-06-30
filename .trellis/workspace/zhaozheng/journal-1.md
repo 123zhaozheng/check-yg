@@ -714,3 +714,39 @@ Implemented LLM-backed async report generation, constrained markdown rendering f
 ### Next Steps
 
 - None - task complete
+
+
+## Session 22: PDF 中文字体修复 + docx 移除 + LLM agent 参数 + 任务状态语义修正
+
+**Date**: 2026-06-30
+**Task**: PDF 中文字体修复 + docx 移除 + LLM agent 参数 + 任务状态语义修正
+**Branch**: `feat/web-split`
+
+### Summary
+
+1) PDF 中文豆腐块：reportlab 注册 STSong-Light CID 宋体，export_service 11 处 Helvetica 替换。2) 移除已废弃 docx 导出，默认导出改 pdf。3) LLM agent 加 supports_tool_choice_required 参数，AsyncOpenAI max_retries 3→5。4) 任务状态语义修正：runner 标准化完成设 analyzing（不再 completed），completed_at 仅 failed 标记，finalize_report 定稿才推进 task 到 completed；抽出 _derive_stage_label 单一真相源，TaskResponse 暴露 stage，dashboard/任务列表统一用后端 stage，删除前端 stageFromStatus 推断；dashboard 全查询过滤 archived，上次同步改用 dataUpdatedAt + 30s 轮询，list_tasks status_filter 支持逗号分隔多值。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `61c7b49a` | (see git log) |
+| `2ec3d794` | (see git log) |
+| `9b122c65` | (see git log) |
+| `68ef42f7` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
