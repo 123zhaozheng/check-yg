@@ -555,6 +555,32 @@ async def test_reasoning_card_thinking_reaches_endpoint_as_reasoning_effort(monk
     )
 
 
+def test_agent_factory_configures_openai_http_retries():
+    """OpenAI HTTP client retries transient 429/5xx failures five times."""
+    from app.llm.agent_factory import _agent_cache, get_agent
+    from app.llm.types import DocumentPortrait
+
+    _agent_cache.clear()
+    captured: dict = {}
+
+    class FakeAsyncOpenAI:
+        def __init__(self, **kw):
+            captured.update(kw)
+
+    with patch("openai.AsyncOpenAI", FakeAsyncOpenAI):
+        get_agent(
+            DocumentPortrait,
+            "instructions",
+            base_url="https://llm.example.test/v1",
+            api_key="sk-test",
+            model="test-model",
+            timeout=30,
+            max_tokens=1000,
+        )
+
+    assert captured["max_retries"] == 5
+
+
 @pytest.mark.asyncio
 async def test_seed_default_llm_models_idempotent_assignments_empty(db_session):
     """seed_default_llm_models inserts 4 cards idempotently; assignments stay empty."""

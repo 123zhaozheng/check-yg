@@ -64,13 +64,13 @@ def _build_agent(
     max_tokens: int,
     thinking: Optional[str] = None,
     temperature: Optional[float] = None,
+    supports_tool_choice_required: bool = True,
     retries: int = 3,
     deps_type: type | None = None,
     toolsets: Optional[Sequence] = None,
 ) -> Agent:
     """构造一个 pydantic-ai agent（模块级单例，按调用方参数缓存）。"""
-    # AsyncOpenAI(max_retries=3) 处理瞬时 HTTP 429/5xx 重试，与旧 httpx 实现的
-    # 应用层 3 次重试深度对齐（conventions.md 建议值）。output schema 校验失败
+    # AsyncOpenAI(max_retries=5) 处理瞬时 HTTP 429/5xx 重试。output schema 校验失败
     # 的重试由 agent 的 ``retries={"output": N}`` 管，二者互补。
     # http_client 传 trust_env=False 的 AsyncClient，等价旧实现，避免内网/ollama
     # 环境走系统代理。
@@ -81,7 +81,7 @@ def _build_agent(
         openai_client=AsyncOpenAI(
             base_url=normalized_url,
             api_key=api_key,
-            max_retries=3,
+            max_retries=5,
             timeout=timeout,
             http_client=httpx.AsyncClient(trust_env=False),
         ),
@@ -106,10 +106,20 @@ def _build_agent(
     # 时不传 profile，保留默认行为（thinking 也不会在 model_settings 里，安全）。
     # 只设 supports_thinking，不动 openai_supports_reasoning（避免触发
     # ``_drop_sampling_params_for_reasoning`` 丢 temperature）。
+    # profile 构造：supports_thinking（reasoning 模型）+ openai_supports_tool_choice_required
+    #（某些 OpenAI 兼容代理/模型不吃 tool_choice=required，如 deepseek-v4-flash 在代理
+    # thinking mode 下拒 required/object）。两者都默认 True，仅当调用方显式传 False
+    # 时才覆盖。任一为 True 即需建 profile（None profile 两字段都走默认 True）。
+    need_profile = send_thinking or not supports_tool_choice_required
+    profile_kwargs: dict = {}
+    if send_thinking:
+        profile_kwargs["supports_thinking"] = True
+    if not supports_tool_choice_required:
+        profile_kwargs["openai_supports_tool_choice_required"] = False
     chat_model = OpenAIChatModel(
         model,
         provider=provider,
-        profile=OpenAIModelProfile(supports_thinking=True) if send_thinking else None,
+        profile=OpenAIModelProfile(**profile_kwargs) if need_profile else None,
         settings=ModelSettings(timeout=timeout, max_tokens=max_tokens),
     )
     # deps_type 传类型（conventions.md），None 时 agent 无 deps（与旧三模块一致）。
@@ -135,6 +145,7 @@ def get_agent(
     max_tokens: int,
     thinking: Optional[str] = None,
     temperature: Optional[float] = None,
+    supports_tool_choice_required: bool = True,
     deps_type: type | None = None,
     toolsets: Optional[Sequence] = None,
 ) -> Agent:
@@ -172,6 +183,7 @@ def get_agent(
         int(max_tokens),
         thinking or "off",
         None if temperature is None else float(temperature),
+        bool(supports_tool_choice_required),
         output_type,
         instructions,
         deps_type,
@@ -189,6 +201,7 @@ def get_agent(
                 max_tokens=max_tokens,
                 thinking=thinking,
                 temperature=temperature,
+                supports_tool_choice_required=supports_tool_choice_required,
                 deps_type=deps_type,
                 toolsets=toolsets,
             )

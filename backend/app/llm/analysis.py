@@ -174,6 +174,7 @@ def _resolve_agent_params(
             "max_tokens": fallback_max_tokens,
             "thinking": None,
             "temperature": None,
+            "supports_tool_choice_required": True,  # 无卡片时默认 True（兼容旧行为）
         }
 
     thinking = model.default_thinking
@@ -187,6 +188,11 @@ def _resolve_agent_params(
         "max_tokens": model.default_max_tokens or fallback_max_tokens,
         "thinking": thinking,
         "temperature": model.default_temperature,
+        # 模型卡片声明不支持 tool_choice=required（如某些 OpenAI 兼容代理在
+        # thinking mode 下拒 required/object）→ 透传给 agent_factory 建 profile
+        # 时设 openai_supports_tool_choice_required=False，pydantic-ai 会自动
+        # 降级为 tool_choice='auto'（见 openai.py::_support_tool_forcing）。
+        "supports_tool_choice_required": bool(model.supports_tool_choice_required),
     }
 
 
@@ -577,6 +583,7 @@ def get_dimension_agent(
         max_tokens=params["max_tokens"],
         thinking=params["thinking"],
         temperature=params["temperature"],
+        supports_tool_choice_required=params["supports_tool_choice_required"],
         deps_type=AuditDeps,
         toolsets=[_readonly_toolset()],
     )
@@ -639,6 +646,7 @@ def get_qa_agent(*, model: Optional[LLMModel] = None) -> Agent:
         max_tokens=params["max_tokens"],
         thinking=params["thinking"],
         temperature=params["temperature"],
+        supports_tool_choice_required=params["supports_tool_choice_required"],
         deps_type=AuditDeps,
         toolsets=[_readonly_toolset()],
     )
