@@ -54,23 +54,12 @@ function AnalyzePage() {
   const taskId = Number(id)
 
   const [selectedId, setSelectedId] = React.useState<number | null>(null)
-  // 跑分析中：true 时开 findings 轮询 + 进度条.
-  const [running, setRunning] = React.useState(false)
+  // 跑分析中：乐观态覆盖 mutation 提交后到服务端刷新前的空白；真实状态由
+  // task.config.last_analysis_summary.status 驱动，导航回来不丢失。
+  const [optimisticRunning, setOptimisticRunning] = React.useState(false)
 
   const taskQuery = useTask(taskId)
   const queryClient = useQueryClient()
-  // WS analysis.progress 订阅（RVP 主通道）：跑分析中开。每跑完一个维度推一条：
-  //   - 确定式进度条 (completed/total_dimensions)
-  //   - invalidate findings → 左列实时增量（WS-primary，不等全跑完）
-  // WS 断 → healthy=false → useFindingsLive 轮询接手（兜底，不全开防重复）.
-  const { progress, healthy: wsHealthy } = useAnalysisProgress(taskId, running, () => {
-    void queryClient.invalidateQueries({ queryKey: ["findings", "list", taskId] })
-  })
-  const findingsLive = useFindingsLive(taskId, running && !wsHealthy)
-  const startAnalysis = useStartAnalysis(taskId)
-  const patchFinding = usePatchFinding(taskId)
-
-  const findings = findingsLive.data?.items ?? []
   const config = taskQuery.data?.config as
     | {
         last_analysis_at?: string
@@ -80,6 +69,20 @@ function AnalyzePage() {
     | undefined
   const lastAnalysisAt = config?.last_analysis_at
   const summary = config?.last_analysis_summary
+  const isRunning = optimisticRunning || summary?.status === "running"
+
+  // WS analysis.progress 订阅（RVP 主通道）：跑分析中开。每跑完一个维度推一条：
+  //   - 确定式进度条 (completed/total_dimensions)
+  //   - invalidate findings → 左列实时增量（WS-primary，不等全跑完）
+  // WS 断 → healthy=false → useFindingsLive 轮询接手（兜底，不全开防重复）.
+  const { progress, healthy: wsHealthy } = useAnalysisProgress(taskId, isRunning, () => {
+    void queryClient.invalidateQueries({ queryKey: ["findings", "list", taskId] })
+  })
+  const findingsLive = useFindingsLive(taskId, isRunning && !wsHealthy)
+  const startAnalysis = useStartAnalysis(taskId)
+  const patchFinding = usePatchFinding(taskId)
+
+  const findings = findingsLive.data?.items ?? []
   // 确定式进度：WS progress.completed（每维度增量）优先；WS 未通时回退
   // task.config.last_analysis_summary.completed（后端每维度也增量写库）.
   const wsCompleted = progress?.completed ?? 0
@@ -97,36 +100,46 @@ function AnalyzePage() {
     if (findings.length > 0 && !findings.some((f) => f.id === selectedId)) {
       setSelectedId(findings[0].id)
     }
-    if (findings.length === 0 && !running) {
+    if (findings.length === 0 && !isRunning) {
       setSelectedId(null)
     }
-  }, [findings, selectedId, running])
+  }, [findings, selectedId, isRunning])
 
-  // 跑完收尾：后端在跑完时回填 last_analysis_summary.completed>=total → 停轮询.
+  // 服务端确认已开始后清乐观态，避免与服务端状态冲突。
   React.useEffect(() => {
-    if (running && finished) {
-      setRunning(false)
+    if (optimisticRunning && summary?.status === "running") {
+      setOptimisticRunning(false)
     }
-  }, [running, finished])
+  }, [optimisticRunning, summary?.status])
+
+  // 跑完收尾：WS 推到 completed>=total → finished 翻 true。但 WS-healthy 时 summary.status
+  // 不会被自动刷新（仍 "running"），派生的 isRunning 不会自行转 false —— 这里 refetch task
+  // 让后端回填的 summary.status="finished" 落地，按钮/进度条才能收尾。
+  React.useEffect(() => {
+    if (isRunning && finished) {
+      setOptimisticRunning(false)
+      void taskQuery.refetch()
+    }
+  }, [isRunning, finished, taskQuery])
 
   // WS 降级兜底：WS 断（!wsHealthy）时定时 refetch task，让 summary.completed
   // （后端每维度增量写库）跟上，进度条确定式仍可走。WS 通时 progress 直接驱动，不轮询.
   React.useEffect(() => {
-    if (!running || wsHealthy) return
+    if (!isRunning || wsHealthy) return
     const handle = setInterval(() => {
       void taskQuery.refetch()
     }, 1500)
     return () => clearInterval(handle)
-  }, [running, wsHealthy, taskQuery])
+  }, [isRunning, wsHealthy, taskQuery])
 
   const selected = findings.find((f) => f.id === selectedId) ?? null
 
   async function handleAnalyze() {
-    setRunning(true)
+    setOptimisticRunning(true)
     try {
       await startAnalysis.mutateAsync()
     } catch {
-      setRunning(false)
+      setOptimisticRunning(false)
     }
   }
 
@@ -144,9 +157,9 @@ function AnalyzePage() {
         <div className="flex flex-wrap items-center gap-3">
           <Button
             onClick={handleAnalyze}
-            disabled={startAnalysis.isPending || running}
+            disabled={startAnalysis.isPending || isRunning}
           >
-            {startAnalysis.isPending || running ? "分析中…" : "开始分析"}
+            {startAnalysis.isPending || isRunning ? "分析中…" : "开始分析"}
           </Button>
         </div>
         <div className="flex flex-col gap-0.5 text-xs text-ink-700 md:items-end">
@@ -155,7 +168,7 @@ function AnalyzePage() {
           </span>
           <span>
             启用维度：{totalDimensions > 0 ? `${totalDimensions} 个` : "—"}
-            {running ? ` · 已发现 ${findingsCount} 条` : ""}
+            {isRunning ? ` · 已发现 ${findingsCount} 条` : ""}
           </span>
         </div>
       </div>
@@ -164,7 +177,7 @@ function AnalyzePage() {
           WS progress.completed 每维度增量推送 → 进度条按维度数跳格. WS 未通时
           回退 task.config.last_analysis_summary.completed（每维度也写库）.
           totalDimensions 还没拿到（WS 首条未到 + summary 未回填）走不定 pulse.） */}
-      {running && (
+      {isRunning && (
         <div className="flex flex-col gap-1.5 rounded-[var(--radius-lg)] border border-ink-400 bg-ink-100 p-3">
           <div className="flex items-center justify-between text-xs text-ink-700">
             <span>
@@ -218,12 +231,12 @@ function AnalyzePage() {
                 加载中…
               </div>
             )}
-            {!findingsLive.isLoading && findings.length === 0 && !running && (
+            {!findingsLive.isLoading && findings.length === 0 && !isRunning && (
               <div className="px-3 py-10 text-center text-sm text-ink-700">
                 暂无维度发现。点击「开始分析」运行 AI 审查。
               </div>
             )}
-            {findings.length === 0 && running && (
+            {findings.length === 0 && isRunning && (
               <div className="px-3 py-10 text-center text-sm text-ink-700">
                 正在跑维度分析，发现将实时显示…
               </div>
