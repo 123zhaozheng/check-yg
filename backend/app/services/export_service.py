@@ -142,13 +142,13 @@ class ExportService:
 
         export_dir = self.output_dir / str(task.id)
         export_dir.mkdir(parents=True, exist_ok=True)
-        ext = {"pdf": "pdf", "docx": "docx", "html": "html"}.get(fmt, fmt)
+        ext = {"pdf": "pdf", "html": "html"}.get(fmt, fmt)
         path = export_dir / f"task_{task.id}_report_{fmt}.{ext}"
 
         if fmt == "pdf":
             self._write_report_pdf(path, task, chapters, annotations)
         elif fmt == "docx":
-            self._write_report_docx(path, task, chapters, annotations)
+            raise NotImplementedError("docx export removed")
         elif fmt == "html":
             self._write_report_html(path, task, chapters, annotations)
         else:
@@ -329,6 +329,13 @@ class ExportService:
             HRFlowable,
         )
         from reportlab.platypus.tableofcontents import TableOfContents
+        # 注册 reportlab 内置 CID 宋体（STSong-Light，无需字体文件，跨平台含 Docker）。
+        # Helvetica 仅含拉丁字形，中文会渲染成豆腐块。
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+        CN_FONT = "STSong-Light"
+        if CN_FONT not in pdfmetrics.getRegisteredFontNames():
+            pdfmetrics.registerFont(UnicodeCIDFont(CN_FONT))
 
         # 章标题 style 名（afterFlowable 据此识别并发 TOCEntry）。
         CHAPTER_HEADING_STYLE = "ChapterHeading"
@@ -358,7 +365,7 @@ class ExportService:
         cover_title_style = ParagraphStyle(
             "CoverTitle",
             parent=base["Title"],
-            fontName="Helvetica-Bold",
+            fontName=CN_FONT,
             fontSize=28,
             leading=36,
             alignment=TA_CENTER,
@@ -367,7 +374,7 @@ class ExportService:
         cover_sub_style = ParagraphStyle(
             "CoverSub",
             parent=base["BodyText"],
-            fontName="Helvetica",
+            fontName=CN_FONT,
             fontSize=14,
             leading=20,
             alignment=TA_CENTER,
@@ -378,7 +385,7 @@ class ExportService:
         cover_meta_style = ParagraphStyle(
             "CoverMeta",
             parent=base["BodyText"],
-            fontName="Helvetica",
+            fontName=CN_FONT,
             fontSize=11,
             leading=18,
             alignment=TA_CENTER,
@@ -388,7 +395,7 @@ class ExportService:
         toc_title_style = ParagraphStyle(
             "TOCTitle",
             parent=base["Heading1"],
-            fontName="Helvetica-Bold",
+            fontName=CN_FONT,
             fontSize=20,
             leading=26,
             alignment=TA_CENTER,
@@ -399,7 +406,7 @@ class ExportService:
         chapter_heading_style = ParagraphStyle(
             CHAPTER_HEADING_STYLE,
             parent=base["Heading1"],
-            fontName="Helvetica-Bold",
+            fontName=CN_FONT,
             fontSize=18,
             leading=24,
             spaceBefore=14,
@@ -409,7 +416,7 @@ class ExportService:
         body_style = ParagraphStyle(
             "ReportBody",
             parent=base["BodyText"],
-            fontName="Helvetica",
+            fontName=CN_FONT,
             fontSize=10.5,
             leading=16,
             spaceAfter=6,
@@ -418,7 +425,7 @@ class ExportService:
         ann_style = ParagraphStyle(
             "ReportAnn",
             parent=base["BodyText"],
-            fontName="Helvetica",
+            fontName=CN_FONT,
             fontSize=9.5,
             leading=14,
             leftIndent=12,
@@ -429,7 +436,7 @@ class ExportService:
         toc.levelStyles = [
             ParagraphStyle(
                 name="TOCLevel1",
-                fontName="Helvetica",
+                fontName=CN_FONT,
                 fontSize=11,
                 leading=20,
                 leftIndent=20,
@@ -477,7 +484,7 @@ class ExportService:
             "h2": ParagraphStyle(
                 "MdH2",
                 parent=base["Heading2"],
-                fontName="Helvetica-Bold",
+                fontName=CN_FONT,
                 fontSize=14,
                 leading=18,
                 spaceBefore=10,
@@ -487,7 +494,7 @@ class ExportService:
             "h3": ParagraphStyle(
                 "MdH3",
                 parent=base["Heading3"],
-                fontName="Helvetica-Bold",
+                fontName=CN_FONT,
                 fontSize=12,
                 leading=16,
                 spaceBefore=8,
@@ -498,7 +505,7 @@ class ExportService:
             "quote": ParagraphStyle(
                 "MdQuote",
                 parent=base["BodyText"],
-                fontName="Helvetica",
+                fontName=CN_FONT,
                 fontSize=10.5,
                 leading=15,
                 leftIndent=12,
