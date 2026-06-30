@@ -79,6 +79,7 @@ backend/data/*.db
 backend/data/uploads/
 backend/data/checkpoints/
 backend/data/outputs/
+backend/.tmp/
 
 # Vite cache (frontend dev)
 .vite/
