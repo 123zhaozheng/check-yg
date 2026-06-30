@@ -863,7 +863,7 @@ export function finalizeReport(reportId: number): Promise<ReportDetail> {
 export type ExportScope = "report" | "raw" | "standard" | "findings"
 
 /** 报告导出格式：pdf / docx / html. */
-export type ReportExportFormat = "pdf" | "docx" | "html"
+export type ReportExportFormat = "pdf" | "html"
 
 /** 数据导出格式：excel / csv. */
 export type DataExportFormat = "excel" | "csv"

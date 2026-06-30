@@ -158,7 +158,7 @@ async def test_export_report_pdf_generates_file(client, db_session, temp_output_
 
 
 @pytest.mark.asyncio
-async def test_export_report_docx_generates_file(client, db_session, temp_output_dir):
+async def test_export_report_docx_returns_400(client, db_session, temp_output_dir):
     """POST /tasks/{id}/export/report format=docx 生成 docx 文件."""
     session, user = db_session
     task, _report = await _seed_task_with_report(session, user.id)
@@ -167,13 +167,8 @@ async def test_export_report_docx_generates_file(client, db_session, temp_output
         f"/api/tasks/{task.id}/export/report",
         json={"format": "docx", "include_annotations": False},
     )
-    assert resp.status_code == 200
-    assert resp.json()["format"] == "docx"
-    assert resp.json()["scope"] == "report"
-    path = Path(resp.json()["file_path"])
-    assert path.exists()
-    # docx is a zip; magic bytes PK.
-    assert path.read_bytes()[:2] == b"PK"
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "docx export removed"
 
 
 @pytest.mark.asyncio

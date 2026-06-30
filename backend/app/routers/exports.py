@@ -118,6 +118,8 @@ async def export_task_report(
             fmt=request.format,
             include_annotations=request.include_annotations,
         )
+    except NotImplementedError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     except ValueError as exc:
         if str(exc) in ("Report is still generating", "Report generation failed"):
             raise HTTPException(status_code=409, detail=str(exc))
@@ -223,7 +225,6 @@ def _media_type_for(fmt: str) -> str:
         "excel": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         "csv": "text/csv; charset=utf-8",
         "pdf": "application/pdf",
-        "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         "html": "text/html; charset=utf-8",
         "bundle": "application/zip",
     }.get(fmt, "application/octet-stream")

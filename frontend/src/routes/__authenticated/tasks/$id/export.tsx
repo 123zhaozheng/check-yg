@@ -49,7 +49,7 @@ function ExportPage() {
 
   function handleExportReport() {
     exportReport.mutate({
-      format: "docx",
+      format: "pdf",
       include_annotations: includeAnnotations,
     })
   }
