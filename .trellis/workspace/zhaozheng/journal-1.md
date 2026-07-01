@@ -816,3 +816,36 @@ ai_analysis/ai_qa/report_generation 三阶段早已接通真实 LLM（analysis.p
 ### Next Steps
 
 - None - task complete
+
+
+## Session 25: 流水号可点击弹窗（原始↔标准化对照）
+
+**Date**: 2026-07-01
+**Task**: 流水号可点击弹窗（原始↔标准化对照）
+**Branch**: `feat/web-split`
+
+### Summary
+
+关键词审查页流水行列、AI 分析页关联记录 chip 的 #流水号 从纯文本/静态 chip 改为可点击，弹 max-w-3xl Dialog 展示左原始 cells / 右标准化字段对照。新增后端 GET /tasks/{id}/records/{record_id} 单条端点（双 id 防越权），抽 RawVsStandardCompare 为共享组件（清洗页零行为变化复用），新增 FlowRecordLink + useFlowRecord。grill 敲定 8 决策：纯弹窗可下钻不塞摘要、2 处接入、纯查看无操作、单色硬底线、共享组件抽取、finding.id 不动。trellis-check 自修 1 处（plain 下划线改 hover-only）。前端 typecheck + build 通过，后端 57 测试绿。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `aea71c8a` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

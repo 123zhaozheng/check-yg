@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 24
-- **Last Active**: 2026-06-30
+- **Total Sessions**: 25
+- **Last Active**: 2026-07-01
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~818 | Active |
+| `journal-1.md` | ~851 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 25 | 2026-07-01 | 流水号可点击弹窗（原始↔标准化对照） | `aea71c8a` | `feat/web-split` |
 | 24 | 2026-06-30 | 清理 LLM 阶段过时「预留」标记 | `3841f554` | `feat/web-split` |
 | 23 | 2026-06-30 | AI 分析页状态持久化修复 | `d423c87a` | `feat/web-split` |
 | 22 | 2026-06-30 | PDF 中文字体修复 + docx 移除 + LLM agent 参数 + 任务状态语义修正 | `61c7b49a`, `2ec3d794`, `9b122c65`, `68ef42f7` | `feat/web-split` |
