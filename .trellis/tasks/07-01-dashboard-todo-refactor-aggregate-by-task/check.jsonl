@@ -1,4 +1,0 @@
-{"file": ".trellis/tasks/07-01-dashboard-todo-refactor-aggregate-by-task/prd.md", "reason": "验收标准（8 条）在此——检查时逐条对照：四类计数、按任务聚合、排序、上限 8、空列表整块隐藏、已 final 报告不再冒待办等"}
-{"file": ".trellis/tasks/07-01-dashboard-todo-refactor-aggregate-by-task/research/data-sources.md", "reason": "校验后端查询是否用对了每类的真实状态字段（Finding.source 区分 balance_check vs rule/null、KeywordHit.status、Report.status=='generated'），含原 bug 根因"}
-{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "核对后端 todos 契约变更是否在前端 hook + 组件两侧都同步、旧 pending_actions 是否彻底清除无残留消费方"}
-{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "代码质量/lint/type-check/测试的验收基准"}
