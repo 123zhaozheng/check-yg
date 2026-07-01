@@ -494,6 +494,7 @@ const STAGE_LABELS: { stage: Stage; label: string }[] = [
   { stage: "ai_analysis", label: "AI 分析" },
   { stage: "ai_qa", label: "AI 问答" },
   { stage: "report_generation", label: "报告生成" },
+  { stage: "keyword_generation", label: "关键词生成" },
 ]
 
 const THINKING_OPTIONS: ThinkingLevel[] = ["off", "low", "medium", "high"]

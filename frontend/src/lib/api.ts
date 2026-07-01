@@ -1067,7 +1067,7 @@ export function updateMe(body: UpdateMeBody): Promise<UserMeResponse> {
 /** reasoning 预算档位（off=不传 reasoning_effort；reasoning 模型默认 low）. */
 export type ThinkingLevel = "off" | "low" | "medium" | "high"
 
-/** 6 个阶段：classification / portrait / normalization / ai_analysis / ai_qa / report_generation. */
+/** 7 个阶段：classification / portrait / normalization / ai_analysis / ai_qa / report_generation / keyword_generation. */
 export type Stage =
   | "classification"
   | "portrait"
@@ -1075,6 +1075,7 @@ export type Stage =
   | "ai_analysis"
   | "ai_qa"
   | "report_generation"
+  | "keyword_generation"
 
 /** 模型卡片响应——api_key 脱敏（********XXXX）. */
 export interface LLMModel {
@@ -1316,6 +1317,15 @@ export function importKeywordLibrary(file: File): Promise<KeywordImportStats> {
  */
 export function exportKeywordLibrary(): Promise<Response> {
   return apiFetch<Response>("/keyword-library/export", { method: "GET" })
+}
+
+/** POST /api/keyword-library/generate-terms — AI 生成关键词（admin）. */
+export function generateKeywordTerms(body: {
+  name: string
+  risk_level: KeywordRiskLevel
+  note?: string | null
+}): Promise<{ terms: string[] }> {
+  return api.post<{ terms: string[] }>("/keyword-library/generate-terms", body)
 }
 
 /** POST /api/tasks/{taskId}/keyword-review/run — 运行关键词审查（owner）. */

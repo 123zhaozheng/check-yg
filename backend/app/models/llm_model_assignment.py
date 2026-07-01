@@ -22,6 +22,7 @@ STAGE_NORMALIZATION = "normalization"
 STAGE_AI_ANALYSIS = "ai_analysis"
 STAGE_AI_QA = "ai_qa"
 STAGE_REPORT_GENERATION = "report_generation"
+STAGE_KEYWORD_GENERATION = "keyword_generation"
 
 STAGES = (
     STAGE_CLASSIFICATION,
@@ -30,6 +31,7 @@ STAGES = (
     STAGE_AI_ANALYSIS,
     STAGE_AI_QA,
     STAGE_REPORT_GENERATION,
+    STAGE_KEYWORD_GENERATION,
 )
 
 # 已接真实 LLM 的阶段（extractor 三模块）。

@@ -28,8 +28,13 @@ from ..schemas.keyword import (
     KeywordCardListItem,
     KeywordCardUpdate,
     KeywordImportStats,
+    KeywordGenerateTermsRequest,
+    KeywordGenerateTermsResponse,
 )
 from ..services.keyword.keyword_library_service import KeywordLibraryService
+
+# AI 关键词生成（07-01-ai-50）
+from app.llm.keyword_generator import generate_terms
 
 router = APIRouter(prefix="/keyword-library", tags=["keyword-library"])
 
@@ -188,3 +193,51 @@ async def export_keyword_library(
             "Content-Disposition": 'attachment; filename="keyword_library.xlsx"'
         },
     )
+
+
+@router.post("/generate-terms", response_model=KeywordGenerateTermsResponse)
+async def generate_keyword_terms(
+    request: KeywordGenerateTermsRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """AI 生成关键词（admin）。body: name/risk_level/note → terms[]。
+
+    生成结果只填前端表单态，不自动落库；用户仍需点「保存」才建卡。
+    失败（LLM 不可用/超时/返回过少）时返回空列表，不改动用户已手敲的 terms。
+    """
+    if not await _require_admin(db, current_user):
+        raise HTTPException(status_code=403, detail="Admin permission required")
+
+    clean_name = (request.name or "").strip()
+    if not clean_name:
+        raise HTTPException(status_code=422, detail="卡片名称不能为空")
+
+    risk = (request.risk_level or "").strip()
+    if risk not in ("高", "中", "低"):
+        raise HTTPException(status_code=422, detail="风险等级必须为 高/中/低")
+
+    try:
+        # 阶段卡片接线：keyword_generation → env 兜底
+        from app.llm.keyword_generator import get_keyword_generation_model
+
+        stage_model = await get_keyword_generation_model(db)
+        terms = await generate_terms(
+            clean_name,
+            risk,
+            request.note,
+            model=stage_model,
+        )
+    except Exception as exc:
+        # 任何异常都吞掉，返回空列表（前端保持原 terms 不变，只给提示）
+        # 避免把 LLM 错误直接暴露成 500 影响 dialog 其他操作。
+        raise HTTPException(
+            status_code=422,
+            detail=f"AI 生成失败：{exc}",
+        ) from exc
+
+    # 后端去重保序（对齐 service._dedup_terms 逻辑，避免 LLM 自己重复输出）
+    from app.services.keyword.keyword_library_service import KeywordLibraryService
+
+    deduped = KeywordLibraryService._dedup_terms(terms)
+    return KeywordGenerateTermsResponse(terms=deduped)

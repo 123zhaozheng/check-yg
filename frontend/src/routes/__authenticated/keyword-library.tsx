@@ -1,6 +1,6 @@
 import * as React from "react"
 import { createFileRoute } from "@tanstack/react-router"
-import { Download, Upload } from "lucide-react"
+import { Download, Sparkles, Upload } from "lucide-react"
 
 import { PageHeader } from "@/components/layout/page-header"
 import { Button } from "@/components/ui/button"
@@ -28,6 +28,7 @@ import {
   useCreateKeywordCard,
   useDeleteKeywordCard,
   useExportKeywordLibrary,
+  useGenerateKeywordTerms,
   useImportKeywordLibrary,
   useKeywordCard,
   useKeywordCards,
@@ -260,6 +261,7 @@ function KeywordCardDialog({
 }) {
   const createCard = useCreateKeywordCard()
   const updateCard = useUpdateKeywordCard()
+  const generateTerms = useGenerateKeywordTerms()
   const [name, setName] = React.useState(initial?.name ?? "")
   const [riskLevel, setRiskLevel] = React.useState<KeywordRiskLevel>(
     initial?.risk_level ?? "中",
@@ -312,6 +314,33 @@ function KeywordCardDialog({
 
   const pending = createCard.isPending || updateCard.isPending
 
+  // AI 生成按钮触发条件（仅 create 模式）：
+  // name 非空 + note 非空 + terms 全空
+  const canGenerateTerms =
+    mode === "create" &&
+    name.trim().length > 0 &&
+    note.trim().length > 0 &&
+    !terms.some((t) => t.trim().length > 0)
+
+  async function handleGenerateTerms() {
+    if (!canGenerateTerms || generateTerms.isPending) return
+    setError(null)
+    try {
+      const result = await generateTerms.mutateAsync({
+        name: name.trim(),
+        risk_level: riskLevel,
+        note: note.trim() || null,
+      })
+      // 后端已去重保序；直接替换当前空列表
+      if (result.terms && result.terms.length > 0) {
+        setTerms(result.terms)
+      }
+    } catch (err) {
+      // 失败不改动现有 terms（当前为空则保持空）；显示错误
+      setError(extractDetail(err) ?? "AI 生成失败")
+    }
+  }
+
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()} className="max-w-2xl">
       <DialogHeader>
@@ -353,7 +382,30 @@ function KeywordCardDialog({
             <label className="text-xs font-bold uppercase tracking-widest text-ink-600">
               备注
             </label>
-            <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="可选" />
+            <div className="flex items-center gap-2">
+              <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="可选" className="flex-1" />
+              {mode === "create" && (
+                <button
+                  type="button"
+                  onClick={handleGenerateTerms}
+                  disabled={!canGenerateTerms || generateTerms.isPending}
+                  title={
+                    terms.some((t) => t.trim())
+                      ? "清空关键词列表后可使用 AI 生成"
+                      : !name.trim() || !note.trim()
+                      ? "填写卡片名称和备注后可使用 AI 生成"
+                      : "AI 生成关键词"
+                  }
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-[var(--radius-DEFAULT)] border border-ink-400 bg-ink-100 text-ink-700 hover:bg-ink-200 hover:text-ink-900 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {generateTerms.isPending ? (
+                    <span className="inline-block size-4 animate-spin rounded-full border-2 border-ink-300 border-t-ink-700" />
+                  ) : (
+                    <Sparkles className="size-4" />
+                  )}
+                </button>
+              )}
+            </div>
           </div>
           {mode === "create" && (
             <div className="flex flex-col gap-1">

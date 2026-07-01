@@ -7,7 +7,6 @@ from typing import Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.keyword import (
-    HIT_STATUSES,
     RISK_LEVELS,
     RISK_MEDIUM,
 )
@@ -138,3 +137,26 @@ class KeywordHitPatchRequest(BaseModel):
 
     status: Optional[str] = None
     note: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# AI 关键词生成（07-01-ai-50）
+# ---------------------------------------------------------------------------
+
+
+class KeywordGenerateTermsRequest(BaseModel):
+    """POST /api/keyword-library/generate-terms 请求体。
+
+    仅用于 AI 生成按钮：name + risk_level + note → terms[]。
+    生成结果只填前端表单态，不自动落库。
+    """
+
+    name: str = Field(..., min_length=1, max_length=200)
+    risk_level: str = Field(..., pattern="^(%s)$" % "|".join(RISK_LEVELS))
+    note: Optional[str] = None
+
+
+class KeywordGenerateTermsResponse(BaseModel):
+    """POST /api/keyword-library/generate-terms 响应。"""
+
+    terms: list[str] = Field(default_factory=list)

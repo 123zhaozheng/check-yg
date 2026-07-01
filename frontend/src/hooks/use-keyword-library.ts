@@ -4,11 +4,13 @@ import {
   createKeywordCard,
   deleteKeywordCard,
   exportKeywordLibrary,
+  generateKeywordTerms,
   getKeywordCard,
   importKeywordLibrary,
   listKeywordCards,
   updateKeywordCard,
   type KeywordCardUpsertBody,
+  type KeywordRiskLevel,
 } from "@/lib/api"
 
 /**
@@ -70,6 +72,21 @@ export function useDeleteKeywordCard() {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: [...KEYWORD_LIBRARY_QUERY_KEY] })
     },
+  })
+}
+
+/** POST /api/keyword-library/generate-terms — AI 生成关键词（admin）.
+ *
+ * Mutation does NOT invalidate cache — result only fills form state in the
+ * create dialog. User must still click "保存" to actually create the card.
+ */
+export function useGenerateKeywordTerms() {
+  return useMutation({
+    mutationFn: (body: {
+      name: string
+      risk_level: KeywordRiskLevel
+      note?: string | null
+    }) => generateKeywordTerms(body),
   })
 }
 

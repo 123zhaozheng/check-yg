@@ -140,3 +140,22 @@ class DimensionFindingResult(BaseModel):
         default="",
         description="本维度推理摘要（零命中时为「未发现X异常」）",
     )
+
+
+# ---------------------------------------------------------------------------
+# AI 关键词生成 agent output_type (keyword_generator.py).
+# 用于「关键词库」页「新建关键词卡片」dialog 的 AI 生成按钮。
+# 输入：卡片 name + risk_level + note；输出：约 50 个语义相关的关键词列表。
+# ---------------------------------------------------------------------------
+class KeywordTerms(BaseModel):
+    """keyword generation agent 输出：关键词列表容器。
+
+    用于「关键词库」新建卡片 dialog 的 AI 生成按钮。
+    agent.run 后由调用方去重（对齐 service._dedup_terms 逻辑），再填入前端表单态。
+    生成结果**只填表单态，不自动落库**；用户仍需点「保存」才建卡。
+    """
+
+    terms: list[str] = Field(
+        default_factory=list,
+        description="AI 生成的关键词列表（约 50 个，语义相关于 name+note）。",
+    )
