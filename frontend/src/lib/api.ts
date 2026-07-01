@@ -517,6 +517,15 @@ export function listTaskRecords(
   )
 }
 
+/** GET /api/tasks/{taskId}/records/{recordId} — single flow_record drill-down
+ * (流水号弹窗用). Owner-checked server-side; returns raw_payload for 原始↔标准对照. */
+export function getTaskRecord(
+  taskId: number,
+  recordId: number,
+): Promise<FlowRecordItem> {
+  return api.get<FlowRecordItem>(`/tasks/${taskId}/records/${recordId}`)
+}
+
 /** GET /api/tasks/{taskId}/excluded — excluded + unparsed, active only (可捞回).
  * `record_type` narrows to one type so the sub-tabs paginate independently. */
 export function listExcluded(

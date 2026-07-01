@@ -3,6 +3,7 @@
 
 Covers:
 * GET /tasks/{id}/records (default standard, filter by record_type, channel, pagination)
+* GET /tasks/{id}/records/{record_id} (single drill-down — 流水号弹窗)
 * GET /tasks/{id}/excluded (excluded + unparsed, active only)
 * POST /tasks/{id}/records/{record_id}/restore (status → restored, row stays)
 * POST /tasks/{id}/cleaning/commit (writes cleaning_committed timestamp)
@@ -234,6 +235,61 @@ async def test_restore_unknown_record_returns_404(client, db_session):
     await session.refresh(task)
 
     resp = await client.post(f"/api/tasks/{task.id}/records/999999/restore")
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_get_single_record_returns_row_with_raw_payload(client, db_session):
+    """GET /records/{id} returns the single row (流水号弹窗 drill-down)."""
+    session, _user = db_session
+    task = Task(title="Single record", owner_id=_user.id, status="completed")
+    session.add(task)
+    await session.commit()
+    await session.refresh(task)
+    ids = await _seed_records(session, task.id)
+
+    resp = await client.get(f"/api/tasks/{task.id}/records/{ids['standard_1']}")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["id"] == ids["standard_1"]
+    assert data["record_type"] == "standard"
+    assert data["raw_payload"]["cells"] == ["2026-06-17", "张三", "100.00"]
+    # Any record_type is reachable by id (not just standard) — the dialog may
+    # drill into excluded/unparsed rows too.
+    resp_ex = await client.get(f"/api/tasks/{task.id}/records/{ids['excluded']}")
+    assert resp_ex.status_code == 200
+    assert resp_ex.json()["record_type"] == "excluded"
+
+
+@pytest.mark.asyncio
+async def test_get_single_record_unknown_returns_404(client, db_session):
+    session, _user = db_session
+    task = Task(title="Single 404", owner_id=_user.id, status="completed")
+    session.add(task)
+    await session.commit()
+    await session.refresh(task)
+
+    resp = await client.get(f"/api/tasks/{task.id}/records/999999")
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_get_single_record_cross_task_id_pair_returns_404(client, db_session):
+    """record_id from another task must not leak — the task_id+record_id pair
+    filter blocks cross-task lookups even if the id exists elsewhere."""
+    from app.models import Task as TaskModel
+
+    session, _user = db_session
+    task_a = TaskModel(title="Task A", owner_id=_user.id, status="completed")
+    task_b = TaskModel(title="Task B", owner_id=_user.id, status="completed")
+    session.add_all([task_a, task_b])
+    await session.commit()
+    await session.refresh(task_a)
+    await session.refresh(task_b)
+    ids_a = await _seed_records(session, task_a.id)
+
+    # record belongs to task_a → asking via task_b must 404.
+    resp = await client.get(f"/api/tasks/{task_b.id}/records/{ids_a['standard_1']}")
     assert resp.status_code == 404
 
 

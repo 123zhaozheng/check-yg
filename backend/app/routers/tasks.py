@@ -1035,6 +1035,35 @@ async def restore_task_record(
     return _record_response(row)
 
 
+@router.get("/{task_id}/records/{record_id}", response_model=RecordResponse)
+async def get_task_record(
+    task_id: int,
+    record_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Fetch a single flow_record by id (drill-down from the keyword-review /
+    analyze pages' 流水号 click).
+
+    Owner-only (``_load_owned_task``). The ``task_id`` + ``record_id`` pair
+    prevents cross-task lookups even if the caller guesses another task's id.
+    Returns the row with ``raw_payload`` so the front-end can render the
+    原始↔标准 compare dialog.
+    """
+    await _load_owned_task(db, task_id, current_user)
+
+    result = await db.execute(
+        select(FlowRecordRow).where(
+            FlowRecordRow.id == record_id,
+            FlowRecordRow.task_id == task_id,
+        )
+    )
+    row = result.scalar_one_or_none()
+    if not row:
+        raise HTTPException(status_code=404, detail="Record not found")
+    return _record_response(row)
+
+
 @router.post("/{task_id}/cleaning/commit", response_model=TaskResponse)
 async def commit_cleaning(
     task_id: int,

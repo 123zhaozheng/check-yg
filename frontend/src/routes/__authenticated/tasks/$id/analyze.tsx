@@ -17,6 +17,7 @@ import {
   useStartAnalysis,
 } from "@/hooks/use-analysis"
 import { useTask } from "@/hooks/use-tasks"
+import { FlowRecordLink } from "@/components/flow-record-link"
 import type { ChatSedimentedDimension, ChatToolTrace, LastAnalysisSummary } from "@/lib/api"
 
 /**
@@ -260,6 +261,7 @@ function AnalyzePage() {
         <section className="flex min-h-0 min-w-0 flex-1 flex-col rounded-[var(--radius-lg)] border border-ink-400 bg-ink-100">
           {selected ? (
             <FindingDetail
+              taskId={taskId}
               finding={selected}
               onPatch={(body) => handlePatch(selected.id, body)}
               patching={patchFinding.isPending}
@@ -363,10 +365,12 @@ function FindingListItem({
  * ------------------------------------------------------------------------- */
 
 function FindingDetail({
+  taskId,
   finding,
   onPatch,
   patching,
 }: {
+  taskId: number
   finding: FindingItem
   onPatch: (body: { status?: "accepted" | "ignored"; comment?: string }) => void
   patching: boolean
@@ -432,12 +436,12 @@ function FindingDetail({
           {evidenceIds.length > 0 ? (
             <div className="flex flex-wrap gap-1.5">
               {evidenceIds.map((rid) => (
-                <span
+                <FlowRecordLink
                   key={rid}
-                  className="rounded-[var(--radius-DEFAULT)] border border-ink-400 bg-ink-200 px-2 py-0.5 font-mono text-xs text-ink-900"
-                >
-                  #{rid}
-                </span>
+                  taskId={taskId}
+                  recordId={rid}
+                  variant="chip"
+                />
               ))}
             </div>
           ) : (

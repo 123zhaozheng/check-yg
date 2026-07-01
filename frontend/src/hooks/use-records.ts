@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   commitCleaning,
   exportCleaningLog,
+  getTaskRecord,
   listExcluded,
   listTaskRecords,
   restoreRecord,
@@ -25,6 +26,17 @@ export function useTaskRecords(taskId: number, params: RecordListParams = {}) {
     queryKey: [...RECORDS_QUERY_KEY, "list", taskId, params],
     queryFn: () => listTaskRecords(taskId, params),
     placeholderData: (prev) => prev,
+  })
+}
+
+/** Fetch a single flow_record by id (流水号弹窗 drill-down). enabled-gated so
+ * the query only fires when the dialog is open (recordId != null). TanStack
+ * Query caches by recordId — re-clicking the same row reuses the cached data. */
+export function useFlowRecord(taskId: number, recordId: number | null) {
+  return useQuery({
+    queryKey: [...RECORDS_QUERY_KEY, "detail", taskId, recordId],
+    queryFn: () => getTaskRecord(taskId, recordId as number),
+    enabled: recordId != null,
   })
 }
 

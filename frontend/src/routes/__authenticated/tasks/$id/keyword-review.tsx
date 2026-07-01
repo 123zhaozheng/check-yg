@@ -12,6 +12,7 @@ import type {
 } from "@/lib/api"
 import { useTask } from "@/hooks/use-tasks"
 import { useKeywordCards } from "@/hooks/use-keyword-library"
+import { FlowRecordLink } from "@/components/flow-record-link"
 import {
   useKeywordHits,
   usePatchKeywordHit,
@@ -242,6 +243,7 @@ function KeywordReviewPage() {
                   {hits.map((hit) => (
                     <HitRow
                       key={hit.id}
+                      taskId={taskId}
                       hit={hit}
                       cardName={cardNameById.get(hit.keyword_card_id) ?? "—"}
                       onPatch={(body) => handlePatch(hit.id, body)}
@@ -277,11 +279,13 @@ function KeywordReviewPage() {
 
 /** 命中行 — 含命中片段高亮（单色用粗体 + 下划线，不用彩色）+ 备注输入. */
 function HitRow({
+  taskId,
   hit,
   cardName,
   onPatch,
   patching,
 }: {
+  taskId: number
   hit: KeywordHitItem
   cardName: string
   onPatch: (body: { status?: KeywordHitStatus; note?: string }) => void
@@ -303,9 +307,7 @@ function HitRow({
   return (
     <tr className="align-top hover:bg-ink-300">
       <td className="px-3 py-3 text-ink-800">
-        <div className="flex flex-col gap-0.5">
-          <span className="text-ink-700">#{hit.flow_record_id}</span>
-        </div>
+        <FlowRecordLink taskId={taskId} recordId={hit.flow_record_id} />
       </td>
       <td className="px-3 py-3 text-ink-900">{cardName}</td>
       <td className="px-3 py-3 font-bold text-ink-900">{hit.matched_snippet}</td>

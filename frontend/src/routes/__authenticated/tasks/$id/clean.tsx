@@ -17,6 +17,7 @@ import {
   useTaskRecords,
 } from "@/hooks/use-records"
 import { useFindings, usePatchFinding } from "@/hooks/use-analysis"
+import { RawVsStandardCompare } from "@/components/flow-record-compare"
 
 /**
  * 清洗标准化 /tasks/:id/clean (docs §C3).
@@ -646,7 +647,10 @@ function StandardRecordsTable({
                     {expanded && (
                       <tr className="border-b-2 border-ink-400 bg-ink-300">
                         <td colSpan={9} className="p-0">
-                          <RawVsStandardCompare row={row} />
+                          {/* 展开态 padding 包在外层，组件本身零 padding（弹窗共用） */}
+                          <div className="px-6 py-4">
+                            <RawVsStandardCompare row={row} />
+                          </div>
                         </td>
                       </tr>
                     )}
@@ -668,61 +672,8 @@ function StandardRecordsTable({
   )
 }
 
-/** 原始↔标准对照 (双栏). 原始 cells from raw_payload; 标准 from the row.
- *  Differences highlighted with bg-ink-200 (light gray), never a colored diff. */
-function RawVsStandardCompare({ row }: { row: FlowRecordItem }) {
-  const rawCells = row.raw_payload?.cells ?? []
-  const standardFields: { label: string; value: string }[] = [
-    { label: "交易时间", value: row.transaction_time ?? "" },
-    { label: "交易对手", value: row.counterparty_name ?? "" },
-    { label: "对手账号", value: row.counterparty_account ?? "" },
-    { label: "金额", value: row.amount ?? "" },
-    { label: "余额", value: row.balance ?? "" },
-    { label: "原始金额", value: row.raw_amount ?? "" },
-    { label: "摘要", value: row.summary ?? "" },
-    { label: "收支类型", value: row.transaction_type ?? "" },
-  ]
-
-  return (
-    <div className="flex gap-6 px-6 py-4 font-sans text-sm">
-      {/* Original raw */}
-      <div className="flex-1">
-        <div className="mb-2 text-[11px] font-bold uppercase tracking-wider text-ink-700">
-          原始数据（来源：{row.channel || "未知渠道"}）
-        </div>
-        <div className="grid grid-cols-[120px_1fr] gap-x-4 gap-y-1.5 font-mono text-xs">
-          {rawCells.map((cell, idx) => (
-            <React.Fragment key={idx}>
-              <div className="text-ink-700">单元格 {idx + 1}:</div>
-              <div className="bg-ink-200 px-1.5 py-0.5 text-ink-900">
-                {cell || "（空）"}
-              </div>
-            </React.Fragment>
-          ))}
-          {rawCells.length === 0 && (
-            <div className="col-span-2 text-ink-700">无原始数据</div>
-          )}
-        </div>
-      </div>
-      {/* Standard */}
-      <div className="flex-1 border-l border-ink-400 pl-6">
-        <div className="mb-2 text-[11px] font-bold uppercase tracking-wider text-ink-900">
-          标准化（已应用 schema）
-        </div>
-        <div className="grid grid-cols-[120px_1fr] gap-x-4 gap-y-1.5 font-mono text-xs">
-          {standardFields.map((f) => (
-            <React.Fragment key={f.label}>
-              <div className="text-ink-700">{f.label}:</div>
-              <div className="border border-ink-400 bg-ink-100 px-1.5 py-0.5 font-bold text-ink-900">
-                {f.value || "（空）"}
-              </div>
-            </React.Fragment>
-          ))}
-        </div>
-      </div>
-    </div>
-  )
-}
+/** 原始↔标准对照（双栏）已抽到 ``@/components/flow-record-compare``，清洗页展开 +
+ *  流水号弹窗共用（抽共享见 prd §二.1，零行为差异）. */
 
 /** 排除项视图 — excluded / unparsed sub-tab, each row has a 捞回 button. */
 function ExcludedView({
