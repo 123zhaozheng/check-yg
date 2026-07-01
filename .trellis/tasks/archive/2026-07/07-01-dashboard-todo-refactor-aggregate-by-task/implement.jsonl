@@ -1,0 +1,5 @@
+{"file": ".trellis/tasks/07-01-dashboard-todo-refactor-aggregate-by-task/prd.md", "reason": "本次重构的唯一需求源：四类待办的数据边界、展示形态、后端契约 DashboardTodoTask、前端改动点、验收标准都在这里，实现前必读"}
+{"file": ".trellis/tasks/07-01-dashboard-todo-refactor-aggregate-by-task/research/data-sources.md", "reason": "四类待审内容（余额校验/关键词/AI分析/文档定稿）的真实状态字段、表、动作入口的逐条 file:line 摸底，写聚合查询时按图索骥"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "本任务跨层改动（后端契约 DashboardData.todos 改名+改结构 → 前端 hook TS 类型 → 前端组件），需按此指南核对契约一致性、避免漏改消费方"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "后端代码标准与禁用模式、测试要求；聚合查询 + 新 pydantic 模型需符合此规范"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "查询要 owner-scoped + archived=False（沿用 dashboard 现有 _visibility_filter），聚合走 GROUP BY 避免 N+1，按此规范写 SQLAlchemy async 查询"}
