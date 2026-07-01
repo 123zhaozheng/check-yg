@@ -1,0 +1,6 @@
+{"file": ".trellis/tasks/07-01-ai-50/prd.md", "reason": "验收标准与所有 Q1-Q5 决策的唯一真源：只做新建 dialog、固定 50 个、新增阶段 keyword_generation、按钮内联 loading、生成后去重、失败不改用户词。check 须逐条对照验收清单与 MVP 边界。"}
+{"file": "docs/research/pydantic-ai-conventions.md", "reason": "核查 pydantic-ai 合规：agent 是否模块级单例（get_agent 缓存）、deps_type=类型/deps=实例是否分清、FastAPI 是否用 await（禁 run_sync）、output_type 是否结构化正确、output_validator 是否兜底铁规则、retries 配置是否正确。"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "核查复用约束：是否复用 agent_factory.get_agent、是否复用 keyword_library_service._dedup_terms 做去重、是否复用 _resolve_agent_params 解析阶段卡片、是否复用 check_admin_permission + ValueError→422 模式。"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "核查文件落位：keyword_generator.py 是否在 app/llm/、output_type 是否在 app/llm/types.py、router 挂载是否在 keyword_library.py、前端 hook 是否在 frontend/src/hooks/、页面改动是否在 keyword-library.tsx。"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "后端质量门：lint/type-check/测试覆盖要求。核查 agent 单测、去重单测、空值拒绝单测、阶段卡片兜底单测、前端集成测试是否覆盖触发条件与失败路径。"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "核查错误处理范式：LLM 不可用/超时/解析失败是否给中文提示、是否不改动用户已手敲的 terms、是否用 ValueError→422、是否复用现有异常风格。"}
