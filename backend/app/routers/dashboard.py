@@ -2,7 +2,8 @@
 """Dashboard aggregation router.
 
 ``GET /api/dashboard`` returns a single payload summarizing the landing page:
-KPI counts, in-progress task list, recent reports, and pending actions.
+KPI counts, in-progress task list, recent reports, and a per-task todo list
+(四类待办：余额校验审批 / 关键词复核 / AI 分析确认 / 文档定稿).
 
 Scope notes:
 - Only aggregates existing Task/Report/Review fields — does NOT depend on any
@@ -25,7 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..auth.dependencies import get_current_user
 from ..auth.permissions import check_admin_permission
 from ..database import get_db
-from ..models import Report, Review, Task, User
+from ..models import Finding, KeywordHit, Report, Review, Task, User
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
@@ -36,7 +37,8 @@ _IN_PROGRESS_STATUSES = ("draft", "running", "paused", "analyzing")
 # How many in-progress rows to surface on the dashboard.
 _IN_PROGRESS_LIMIT = 8
 _RECENT_REPORTS_LIMIT = 5
-_PENDING_ACTIONS_LIMIT = 6
+# 「待我处理」按任务聚合的待办清单上限（对齐 _IN_PROGRESS_LIMIT）。
+_TODOS_LIMIT = 8
 
 
 class DashboardKpis(BaseModel):
@@ -64,18 +66,25 @@ class DashboardRecentReport(BaseModel):
     created_at: datetime
 
 
-class DashboardPendingAction(BaseModel):
-    id: int
-    type: str  # "review_pending" | "report_pending"
-    title: str
+class DashboardTodoItem(BaseModel):
+    type: str  # "balance_check" | "keyword" | "analysis" | "report_finalize"
+    label: str  # "余额校验审批" | "关键词复核" | "AI 分析确认" | "文档定稿"
+    action: str  # "审批" | "复核" | "确认" | "定稿" (按钮文案)
+    count: Optional[int]  # 该类待办数；文档定稿为 None
+
+
+class DashboardTodoTask(BaseModel):
     task_id: int
+    title: str
+    items: list[DashboardTodoItem]  # 按固定顺序，仅含有待办的类型
+    latest_todo_at: datetime  # 排序键 = max(各 item 最近一条时间)
 
 
 class DashboardData(BaseModel):
     kpis: DashboardKpis
     in_progress_tasks: list[DashboardInProgressTask]
     recent_reports: list[DashboardRecentReport]
-    pending_actions: list[DashboardPendingAction]
+    todos: list[DashboardTodoTask]
 
 
 def _visibility_filter(query, current_user: User, is_admin: bool):
@@ -236,51 +245,12 @@ async def get_dashboard(
         for r, title in (await db.execute(recent_reports_query)).all()
     ]
 
-    # --- Pending actions (待我处理) ---------------------------------------
-    # Pending reviews first, then reports on tasks without a finalized review.
-    pending_review_query = (
-        select(Review, Task.title)
-        .join(Task, Task.id == Review.task_id)
-        .where(Review.status == "pending", Task.archived.is_(False))
-    )
-    if not is_admin:
-        pending_review_query = pending_review_query.where(Task.owner_id == current_user.id)
-    pending_review_query = pending_review_query.order_by(Review.created_at.desc()).limit(
-        _PENDING_ACTIONS_LIMIT
-    )
-    pending_actions: list[DashboardPendingAction] = []
-    for review, title in (await db.execute(pending_review_query)).all():
-        pending_actions.append(
-            DashboardPendingAction(
-                id=review.id,
-                type="review_pending",
-                title=f"待确认告警 · {title}",
-                task_id=review.task_id,
-            )
-        )
-
-    # Top up with recent reports (awaiting review/sign-off) if under the limit.
-    if len(pending_actions) < _PENDING_ACTIONS_LIMIT:
-        remaining = _PENDING_ACTIONS_LIMIT - len(pending_actions)
-        report_actions_query = (
-            select(Report, Task.title)
-            .join(Task, Task.id == Report.task_id)
-            .where(Task.archived.is_(False))
-        )
-        if not is_admin:
-            report_actions_query = report_actions_query.where(Task.owner_id == current_user.id)
-        report_actions_query = report_actions_query.order_by(Report.created_at.desc()).limit(
-            remaining
-        )
-        for report, title in (await db.execute(report_actions_query)).all():
-            pending_actions.append(
-                DashboardPendingAction(
-                    id=report.id,
-                    type="report_pending",
-                    title=f"待复核报告 · {title}",
-                    task_id=report.task_id,
-                )
-            )
+    # --- Todos (待我处理：按任务聚合的待办清单) ---------------------------
+    # 重构自旧的扁平 pending_actions（review_pending 凑数 + report_pending 不过滤
+    # status 的 bug）。现在按任务聚合四类真实待办：余额校验审批 / 关键词复核 /
+    # AI 分析确认 / 文档定稿。任一任务有任意一类 pending → 产出一个
+    # DashboardTodoTask；按 latest_todo_at 降序截 _TODOS_LIMIT。
+    todos = await _build_todo_tasks(db, current_user, is_admin)
 
     return DashboardData(
         kpis=DashboardKpis(
@@ -291,7 +261,7 @@ async def get_dashboard(
         ),
         in_progress_tasks=in_progress_tasks,
         recent_reports=recent_reports,
-        pending_actions=pending_actions,
+        todos=todos,
     )
 
 
@@ -335,3 +305,184 @@ def _recent_report(report: Report, task_title: str) -> DashboardRecentReport:
         task_title=task_title,
         created_at=report.created_at,
     )
+
+
+# --- Todos (待我处理) 构造 ------------------------------------------------
+# 四类待办的中文标签 + 按钮文案 + 固定顺序（balance_check → keyword →
+# analysis → report_finalize）。route_suffix 由前端维护（跨层职责分离）。
+_TODO_BALANCE_CHECK = ("balance_check", "余额校验审批", "审批")
+_TODO_KEYWORD = ("keyword", "关键词复核", "复核")
+_TODO_ANALYSIS = ("analysis", "AI 分析确认", "确认")
+_TODO_REPORT_FINALIZE = ("report_finalize", "文档定稿", "定稿")
+
+
+async def _build_todo_tasks(
+    db: AsyncSession, current_user: User, is_admin: bool
+) -> list[DashboardTodoTask]:
+    """按任务聚合四类待办，返回按 latest_todo_at 降序、上限 _TODOS_LIMIT 的清单。
+
+    四类（见 PRD §四类待办的数据边界）：
+      - balance_check: Finding.source=='balance_check' AND status=='pending'
+      - keyword:       KeywordHit.status=='pending'
+      - analysis:      Finding.source IN (null,'rule') AND status=='pending'
+      - report_finalize: Report.status=='generated'（存在即待办，count=None）
+
+    任一任务有任意一类 → 产出 DashboardTodoTask；四类全空 → 不出现在结果。
+    全部任务都没待办 → 返回 []（前端据此整块隐藏卡片）。
+    """
+    # 1) 候选任务集：当前用户可见 + 未归档。同时取 title/updated_at 供标题展示与
+    #    latest_todo_at 兜底。这一批 task_id 是后续四类聚合查询的范围限定。
+    tasks_query = _visibility_filter(
+        select(Task.id, Task.title, Task.updated_at).where(Task.archived.is_(False)),
+        current_user,
+        is_admin,
+    )
+    task_rows = {row.id: row for row in (await db.execute(tasks_query)).all()}
+    if not task_rows:
+        return []
+
+    visible_ids = list(task_rows.keys())
+
+    # 2) 余额校验审批：Finding.source=='balance_check' AND status=='pending'。
+    balance_rows = (
+        await db.execute(
+            select(
+                Finding.task_id,
+                func.count(Finding.id),
+                func.max(Finding.updated_at),
+            )
+            .where(
+                Finding.task_id.in_(visible_ids),
+                Finding.source == "balance_check",
+                Finding.status == "pending",
+            )
+            .group_by(Finding.task_id)
+        )
+    ).all()
+
+    # 3) AI 分析确认：Finding.source IN (null,'rule') AND status=='pending'。
+    #    source 可空，用 is_(None) 兼容历史/维度占位 finding。
+    analysis_rows = (
+        await db.execute(
+            select(
+                Finding.task_id,
+                func.count(Finding.id),
+                func.max(Finding.updated_at),
+            )
+            .where(
+                Finding.task_id.in_(visible_ids),
+                (Finding.source.is_(None)) | (Finding.source == "rule"),
+                Finding.status == "pending",
+            )
+            .group_by(Finding.task_id)
+        )
+    ).all()
+
+    # 4) 关键词复核：KeywordHit.status=='pending'。
+    keyword_rows = (
+        await db.execute(
+            select(
+                KeywordHit.task_id,
+                func.count(KeywordHit.id),
+                func.max(KeywordHit.updated_at),
+            )
+            .where(
+                KeywordHit.task_id.in_(visible_ids),
+                KeywordHit.status == "pending",
+            )
+            .group_by(KeywordHit.task_id)
+        )
+    ).all()
+
+    # 5) 文档定稿：Report.status=='generated'（存在即待办）。取最新一条 generated
+    #    报告的 created_at 作为该类时间戳。
+    report_rows = (
+        await db.execute(
+            select(Report.task_id, func.max(Report.created_at))
+            .where(
+                Report.task_id.in_(visible_ids),
+                Report.status == "generated",
+            )
+            .group_by(Report.task_id)
+        )
+    ).all()
+
+    balance_by_task = {r[0]: (int(r[1]), r[2]) for r in balance_rows}
+    analysis_by_task = {r[0]: (int(r[1]), r[2]) for r in analysis_rows}
+    keyword_by_task = {r[0]: (int(r[1]), r[2]) for r in keyword_rows}
+    report_by_task = {r[0]: r[1] for r in report_rows}
+
+    # 6) 合并：只保留至少有一类待办的任务，按固定顺序拼 items，latest_todo_at
+    #    取各类最近一条时间戳的 max；取不到回退 task.updated_at。
+    todo_tasks: list[DashboardTodoTask] = []
+    for task_id, row in task_rows.items():
+        items: list[DashboardTodoItem] = []
+        latest: list[datetime] = []
+
+        if task_id in balance_by_task:
+            count, ts = balance_by_task[task_id]
+            items.append(
+                DashboardTodoItem(
+                    type=_TODO_BALANCE_CHECK[0],
+                    label=_TODO_BALANCE_CHECK[1],
+                    action=_TODO_BALANCE_CHECK[2],
+                    count=count,
+                )
+            )
+            if ts is not None:
+                latest.append(ts)
+
+        if task_id in keyword_by_task:
+            count, ts = keyword_by_task[task_id]
+            items.append(
+                DashboardTodoItem(
+                    type=_TODO_KEYWORD[0],
+                    label=_TODO_KEYWORD[1],
+                    action=_TODO_KEYWORD[2],
+                    count=count,
+                )
+            )
+            if ts is not None:
+                latest.append(ts)
+
+        if task_id in analysis_by_task:
+            count, ts = analysis_by_task[task_id]
+            items.append(
+                DashboardTodoItem(
+                    type=_TODO_ANALYSIS[0],
+                    label=_TODO_ANALYSIS[1],
+                    action=_TODO_ANALYSIS[2],
+                    count=count,
+                )
+            )
+            if ts is not None:
+                latest.append(ts)
+
+        if task_id in report_by_task:
+            ts = report_by_task[task_id]
+            items.append(
+                DashboardTodoItem(
+                    type=_TODO_REPORT_FINALIZE[0],
+                    label=_TODO_REPORT_FINALIZE[1],
+                    action=_TODO_REPORT_FINALIZE[2],
+                    count=None,
+                )
+            )
+            if ts is not None:
+                latest.append(ts)
+
+        if not items:
+            continue
+
+        latest_todo_at = max(latest) if latest else row.updated_at
+        todo_tasks.append(
+            DashboardTodoTask(
+                task_id=task_id,
+                title=row.title,
+                items=items,
+                latest_todo_at=latest_todo_at,
+            )
+        )
+
+    todo_tasks.sort(key=lambda t: t.latest_todo_at, reverse=True)
+    return todo_tasks[:_TODOS_LIMIT]

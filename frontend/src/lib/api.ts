@@ -319,19 +319,39 @@ export interface DashboardRecentReport {
   created_at: string
 }
 
-export interface DashboardPendingAction {
-  id: number
-  /** "review_pending" | "report_pending" — drives the action button label. */
-  type: string
-  title: string
+/** 待办类型 — 决定按钮文案与前端路由 suffix。 */
+export type DashboardTodoType =
+  | "balance_check"
+  | "keyword"
+  | "analysis"
+  | "report_finalize"
+
+/** 单类待办子行（块内一行）。 */
+export interface DashboardTodoItem {
+  type: DashboardTodoType
+  /** 中文标签（"余额校验审批" / "关键词复核" / "AI 分析确认" / "文档定稿"）。 */
+  label: string
+  /** 按钮文案（"审批" / "复核" / "确认" / "定稿"）。 */
+  action: string
+  /** 该类待办数；文档定稿为 null。 */
+  count: number | null
+}
+
+/** 按任务聚合的待办块（块标题=任务名，块内多行=各类待办）。 */
+export interface DashboardTodoTask {
   task_id: number
+  title: string
+  /** 按固定顺序，仅含有待办的类型。 */
+  items: DashboardTodoItem[]
+  /** 排序键 = max(各 item 最近一条时间)。 */
+  latest_todo_at: string
 }
 
 export interface DashboardData {
   kpis: DashboardKpis
   in_progress_tasks: DashboardInProgressTask[]
   recent_reports: DashboardRecentReport[]
-  pending_actions: DashboardPendingAction[]
+  todos: DashboardTodoTask[]
 }
 
 /** GET /api/dashboard — aggregated landing-page payload. */

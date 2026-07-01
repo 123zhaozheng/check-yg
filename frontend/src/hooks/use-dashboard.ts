@@ -1,6 +1,12 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 
-import { getDashboard, type DashboardData } from "@/lib/api"
+import {
+  getDashboard,
+  type DashboardData,
+  type DashboardTodoItem,
+  type DashboardTodoTask,
+  type DashboardTodoType,
+} from "@/lib/api"
 
 /**
  * Dashboard aggregation (docs §B1 / S2).
@@ -39,4 +45,9 @@ export function useInvalidateDashboard() {
   return () => queryClient.invalidateQueries({ queryKey: DASHBOARD_QUERY_KEY })
 }
 
-export type { DashboardData }
+export type {
+  DashboardData,
+  DashboardTodoItem,
+  DashboardTodoTask,
+  DashboardTodoType,
+}

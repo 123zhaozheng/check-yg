@@ -8,6 +8,8 @@ import { StatusPill } from "@/components/ui/status-pill"
 import {
   useDashboard,
   useInvalidateDashboard,
+  type DashboardTodoTask,
+  type DashboardTodoType,
 } from "@/hooks/use-dashboard"
 import { cn } from "@/lib/utils"
 
@@ -34,6 +36,12 @@ function DashboardPage() {
   const { data, dataUpdatedAt, isLoading, isFetching } = useDashboard()
 
   const lastSync = formatLastSync(dataUpdatedAt)
+
+  // 待办任务块（按 latest_todo_at 降序，后端已截 8）。`showTodosCard` 控制卡片渲染
+  // 与底部 grid 列数：加载中保留卡片走 skeleton；加载完成且确为空则整块隐藏，
+  // 让"最近报告"独占整行。
+  const todos = data?.todos ?? []
+  const showTodosCard = isLoading || todos.length > 0
 
   return (
     <>
@@ -168,18 +176,29 @@ function DashboardPage() {
         </CardContent>
       </Card>
 
-      {/* Bottom split: recent reports + pending actions */}
-      <div className="mt-6 grid grid-cols-1 gap-4 pb-8 lg:grid-cols-2">
+      {/* Bottom split: recent reports + pending actions.
+          When there are no todo tasks, the "待我处理" card is hidden entirely
+          and "最近报告" stretches to fill the row (grid collapses to 1 col). */}
+      <div
+        className={cn(
+          "mt-6 grid grid-cols-1 gap-4 pb-8",
+          showTodosCard ? "lg:grid-cols-2" : "lg:grid-cols-1",
+        )}
+      >
         <RecentReportsCard
           isLoading={isLoading}
           reports={data?.recent_reports ?? []}
           onArchive={() => navigate({ to: "/tasks" })}
         />
-        <PendingActionsCard
-          isLoading={isLoading}
-          actions={data?.pending_actions ?? []}
-          onAction={(taskId) => navigate({ to: `/tasks/${taskId}/report` })}
-        />
+        {showTodosCard && (
+          <PendingActionsCard
+            isLoading={isLoading}
+            todos={todos}
+            onAction={(taskId, suffix) =>
+              navigate({ to: `/tasks/${taskId}/${suffix}` })
+            }
+          />
+        )}
       </div>
     </>
   )
@@ -294,14 +313,25 @@ function RecentReportsCard({
 /* Pending actions                                                            */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * 待办类型 → 路由 suffix 映射。路由是前端职责，后端只给 `type`，避免跨层耦合。
+ * 与 prd 的四类待办跳转目标一一对应。
+ */
+const TODO_ROUTE_SUFFIX: Record<DashboardTodoType, string> = {
+  balance_check: "clean",
+  keyword: "keyword-review",
+  analysis: "analyze",
+  report_finalize: "report",
+}
+
 function PendingActionsCard({
   isLoading,
-  actions,
+  todos,
   onAction,
 }: {
   isLoading: boolean
-  actions: { id: number; type: string; title: string; task_id: number }[]
-  onAction: (taskId: number) => void
+  todos: DashboardTodoTask[]
+  onAction: (taskId: number, suffix: string) => void
 }) {
   return (
     <Card>
@@ -310,45 +340,54 @@ function PendingActionsCard({
           <h2 className="font-sans text-base font-semibold text-ink-900">
             待我处理
           </h2>
-          {!isLoading && actions.length > 0 && (
+          {!isLoading && todos.length > 0 && (
             <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-ink-900 px-1.5 text-xs font-bold text-ink-100">
-              {actions.length}
+              {todos.length}
             </span>
           )}
         </div>
         {isLoading ? (
           <DashboardSkeleton rows={3} />
-        ) : actions.length === 0 ? (
-          <EmptyState message="暂无待处理事项。" />
         ) : (
           <div className="flex-1 divide-y divide-ink-400">
-            {actions.map((a) => {
-              const label = actionLabel(a.type)
-              const solid = a.type === "review_pending"
-              return (
-                <div
-                  key={`${a.type}-${a.id}`}
-                  className="flex flex-col gap-3 px-6 py-4 transition-colors hover:bg-ink-300 sm:flex-row sm:items-center sm:justify-between"
-                >
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="size-2 rounded-full bg-ink-900" />
-                      <h4 className="truncate font-medium text-ink-900">
-                        {a.title}
-                      </h4>
-                    </div>
-                  </div>
-                  <Button
-                    size="sm"
-                    variant={solid ? "primary" : "secondary"}
-                    onClick={() => onAction(a.task_id)}
-                    className="shrink-0"
-                  >
-                    {label}
-                  </Button>
-                </div>
-              )
-            })}
+            {todos.map((todo) => (
+              <div key={todo.task_id} className="px-6 py-4">
+                <h3 className="truncate font-medium text-ink-900">
+                  {todo.title}
+                </h3>
+                <ul className="mt-2 flex flex-col gap-1.5">
+                  {todo.items.map((item) => (
+                    <li
+                      key={item.type}
+                      className="flex items-center justify-between gap-3"
+                    >
+                      <div className="flex min-w-0 items-center gap-2">
+                        <span className="size-2 shrink-0 rounded-full bg-ink-900" />
+                        <span className="truncate text-sm text-ink-700">
+                          {item.label}
+                          {item.count != null && item.count > 0 && (
+                            <span className="font-mono text-xs text-ink-600">
+                              {" "}
+                              （{item.count} 条）
+                            </span>
+                          )}
+                        </span>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() =>
+                          onAction(todo.task_id, TODO_ROUTE_SUFFIX[item.type])
+                        }
+                        className="shrink-0"
+                      >
+                        {item.action}
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
           </div>
         )}
       </CardContent>
@@ -417,13 +456,6 @@ function stageTone(stage: string): React.ComponentProps<typeof StatusPill>["tone
     default:
       return "pending"
   }
-}
-
-/** Action button label by pending-action type. */
-function actionLabel(type: string): string {
-  if (type === "review_pending") return "复核"
-  if (type === "report_pending") return "签发"
-  return "处理"
 }
 
 function clampPct(pct: number): number {
