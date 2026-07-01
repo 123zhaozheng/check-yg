@@ -849,3 +849,36 @@ ai_analysis/ai_qa/report_generation 三阶段早已接通真实 LLM（analysis.p
 ### Next Steps
 
 - None - task complete
+
+
+## Session 26: 工作台「待我处理」重构为按任务聚合的待审清单
+
+**Date**: 2026-07-01
+**Task**: 工作台「待我处理」重构为按任务聚合的待审清单
+**Branch**: `feat/web-split`
+
+### Summary
+
+把工作台首页「待我处理」从两类硬塞凑数（review_pending 走永远 pending 的 Review.status、report_pending 不过滤 Report.status 导致已定稿报告冒「签发」）重构为按任务聚合的真实待办清单：余额校验审批(Finding.source=='balance_check')/关键词复核(KeywordHit.status=='pending')/AI 分析确认(Finding.source IN null,'rule')/文档定稿(Report.status=='generated')。后端 dashboard.py 新增 DashboardTodoItem/DashboardTodoTask，pending_actions→todos，_build_todo_tasks 用 GROUP BY 聚合四类计数按 latest_todo_at 降序上限 8。前端 TS 类型同步，PendingActionsCard 改按任务块渲染（块标题=任务名+子行固定顺序+计数+各自动词按钮审批/复核/确认/定稿+前端路由映射），四类全空整块隐藏且最近报告拉伸独占。流程：建任务→研究四类数据源→grill 10 个决策点→PRD 落盘→前后端两个 implement subagent 并行编码→check subagent 0 问题→提交。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4fbc2f53` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
