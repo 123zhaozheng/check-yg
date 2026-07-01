@@ -1,5 +1,0 @@
-{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "抽取 RawVsStandardCompare 为共享组件、清洗页零行为变化复用的判断准则"}
-{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "新增后端单条 GET 端点 + 前端 api/hook/组件全链路契约对齐"}
-{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "后端新端点的路由规范、响应模型、归属校验、命名约定"}
-{"file": ".trellis/spec/backend/error-handling.md", "reason": "recordId 不存在→404、越权→403/404 的错误处理范式"}
-{"file": ".trellis/spec/backend/directory-structure.md", "reason": "新端点落 tasks.py 现有 records 路由之后，确认目录归属"}
