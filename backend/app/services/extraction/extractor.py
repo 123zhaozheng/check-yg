@@ -747,8 +747,27 @@ class FlowExtractor:
         flow_tables = doc_result["flow_tables"]
         portrait = doc_result["portrait"]
 
+        total_rows = sum(len(ft.get("rows") or ft["table"].rows) for ft in flow_tables)
+        batch_count = (
+            sum(
+                (len(ft.get("rows") or ft["table"].rows) + batch_size - 1) // batch_size
+                for ft in flow_tables
+            )
+            if flow_tables
+            else 0
+        )
+        logger.info(
+            "阶段2文档标准化开始: %s, 流水表=%d, 待标准化行数=%d, 批大小=%d, 预计批次数=%d",
+            doc_path.name,
+            len(flow_tables),
+            total_rows,
+            batch_size,
+            batch_count,
+        )
+
         records: List[FlowRecord] = []
         extracted_records: List[Dict[str, Any]] = []
+        batch_no = 0
         for ft in flow_tables:
             await self._check_pause()
             if self._cancel_requested:
@@ -761,6 +780,17 @@ class FlowExtractor:
             # Process in batches
             for i in range(0, len(rows), batch_size):
                 batch = rows[i : i + batch_size]
+                batch_no += 1
+                logger.info(
+                    "阶段2批次标准化: %s, 表序号=%d, 批次=%d/%d, 行范围=%d-%d, 本批行数=%d",
+                    doc_path.name,
+                    table.table_index,
+                    batch_no,
+                    batch_count,
+                    data_start_row + i,
+                    data_start_row + i + len(batch) - 1,
+                    len(batch),
+                )
                 normalized = await self.normalizer.normalize(
                     batch, portrait, source_file=doc_path.name
                 )
@@ -858,6 +888,18 @@ class FlowExtractor:
         checkpoint["records"] = [record.to_dict() for record in records]
         self.checkpoint_manager.save_checkpoint(
             task_id, doc_path.name, checkpoint, document_path=str(doc_path)
+        )
+
+        standard_count = len(records)
+        unparsed_count = sum(
+            1 for r in extracted_records if r.get("record_type") == "unparsed"
+        )
+        logger.info(
+            "阶段2文档标准化完成: %s, 标准流水=%d, 噪音未解析=%d, LLM批次数=%d",
+            doc_path.name,
+            standard_count,
+            unparsed_count,
+            batch_no,
         )
 
         return {

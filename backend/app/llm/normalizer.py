@@ -19,6 +19,7 @@ Parity guarantees versus the original prompt:
 
 import json
 import logging
+import time
 from typing import Any, Optional
 
 from pydantic_ai import ModelRetry
@@ -220,23 +221,54 @@ class FlowDataNormalizer:
             ensure_ascii=False,
         )
 
+        portrait_source = (
+            "画像" if document_portrait is not None else "文件名兜底"
+        )
+        logger.info(
+            "流水标准化 LLM 请求开始: source_file=%s, 行数=%d, model=%s, "
+            "max_tokens=%d, 画像来源=%s",
+            source_file,
+            len(rows),
+            self.model,
+            self.max_tokens,
+            portrait_source,
+        )
+        started = time.perf_counter()
+
         try:
             result = await self._get_agent().run(user_message)
         except Exception as exc:
             # 失败诊断要够厚：标准化失败的根因有好几种（reasoning 模型烧光
             # token / 端点返回空壳 / 网络超时 / schema 校验失败），把类型+消息
             # 都打上，方便定位为什么流水行没被标准化。
+            elapsed_ms = int((time.perf_counter() - started) * 1000)
             logger.warning(
-                "流水行标准化失败（返回空列表，本批行不标准化）: "
-                "source_file=%s, 异常类型=%s, 异常=%s",
+                "流水标准化 LLM 请求失败（返回空列表，本批行不标准化）: "
+                "source_file=%s, 行数=%d, 耗时_ms=%d, 异常类型=%s, 异常=%s",
                 source_file,
+                len(rows),
+                elapsed_ms,
                 type(exc).__name__,
                 exc,
             )
             return []
 
         normalized: NormalizedRows = result.output
-        return [row.model_dump() for row in normalized.rows]
+        out_rows = [row.model_dump() for row in normalized.rows]
+        valid_count = sum(1 for r in out_rows if r.get("is_valid", True))
+        invalid_count = len(out_rows) - valid_count
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+        logger.info(
+            "流水标准化 LLM 请求完成: source_file=%s, 输入行数=%d, 返回行数=%d, "
+            "有效=%d, 噪音=%d, 耗时_ms=%d",
+            source_file,
+            len(rows),
+            len(out_rows),
+            valid_count,
+            invalid_count,
+            elapsed_ms,
+        )
+        return out_rows
 
     @staticmethod
     def _infer_document_context(document_name: str) -> dict[str, Any]:
