@@ -75,6 +75,7 @@ class FlowTableClassifier:
         max_tokens: int = _MAX_TOKENS_CLASSIFIER,
         thinking: Optional[str] = None,
         temperature: Optional[float] = None,
+        supports_tool_choice_required: bool = True,
     ):
         self.api_url = api_url
         self.api_key = api_key
@@ -84,6 +85,7 @@ class FlowTableClassifier:
         self.max_tokens = max_tokens
         self.thinking = thinking
         self.temperature = temperature
+        self.supports_tool_choice_required = supports_tool_choice_required
 
     def _agent(self):
         return get_agent(
@@ -96,6 +98,7 @@ class FlowTableClassifier:
             max_tokens=self.max_tokens,
             thinking=self.thinking,
             temperature=self.temperature,
+            supports_tool_choice_required=self.supports_tool_choice_required,
         )
 
     async def classify(

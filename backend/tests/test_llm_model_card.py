@@ -468,6 +468,55 @@ def test_extractor_non_reasoning_card_no_thinking():
     assert extractor.classifier.max_tokens == 4000
 
 
+def test_extractor_normalizer_supports_tool_choice_required_from_card():
+    """A normalization-stage card declaring ``supports_tool_choice_required=False``
+    (e.g. deepseek-v4-flash under thinking mode) → the flag reaches
+    ``extractor.normalizer.supports_tool_choice_required`` as False; unassigned
+    stages and True-declaring cards stay True (default behaviour).
+
+    Regression for the DeepSeek 400 ``Thinking mode does not support this
+    tool_choice`` failure: extractor must thread the card's flag into the
+    three modules so ``agent_factory.get_agent`` can downgrade
+    ``tool_choice=required`` to ``auto``.
+    """
+    false_card = LLMModel(
+        id=3,
+        display_name="deepseek-v4-flash",
+        model_name="deepseek-v4-flash",
+        provider_base_url="https://api.deepseek.com/v1",
+        api_key="sk-card",
+        context_length=131072,
+        max_output=8192,
+        supports_tool_call=True,
+        supports_tool_choice_required=False,
+        is_reasoning=True,
+        default_thinking="low",
+        default_max_tokens=6000,
+        default_temperature=None,
+    )
+    extractor = FlowExtractor(
+        runtime_settings={},
+        stage_models={STAGE_NORMALIZATION: false_card},
+    )
+    # Card declares False → normalizer carries False.
+    assert extractor.normalizer.supports_tool_choice_required is False
+    # Other modules unassigned → default True.
+    assert extractor.classifier.supports_tool_choice_required is True
+    assert extractor.portrait_extractor.supports_tool_choice_required is True
+
+    # A True-declaring card keeps True.
+    true_card = _make_reasoning_card()  # supports_tool_choice_required=True
+    extractor2 = FlowExtractor(
+        runtime_settings={},
+        stage_models={STAGE_NORMALIZATION: true_card},
+    )
+    assert extractor2.normalizer.supports_tool_choice_required is True
+
+    # Unassigned (no card) also defaults to True.
+    extractor3 = FlowExtractor(runtime_settings={}, stage_models={})
+    assert extractor3.normalizer.supports_tool_choice_required is True
+
+
 @pytest.mark.asyncio
 async def test_reasoning_card_thinking_reaches_endpoint_as_reasoning_effort(monkeypatch):
     """Regression: a reasoning card's ``thinking=low`` must actually be delivered to

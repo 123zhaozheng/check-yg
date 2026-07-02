@@ -195,6 +195,8 @@ class FlowExtractor:
                 "max_tokens": fallback_max_tokens,
                 "thinking": None,
                 "temperature": None,
+                # 无卡片时默认 True（兼容旧行为）。
+                "supports_tool_choice_required": True,
             }
 
         # 指派了卡片：从卡片读（卡片字段空时回退 env settings）。
@@ -220,6 +222,11 @@ class FlowExtractor:
             "max_tokens": model.default_max_tokens or fallback_max_tokens,
             "thinking": thinking,
             "temperature": card_temperature,
+            # 模型卡片声明不支持 tool_choice=required（如某些 OpenAI 兼容代理在
+            # thinking mode 下拒 required/object）→ 透传给 agent_factory 建 profile
+            # 时设 openai_supports_tool_choice_required=False，pydantic-ai 会自动
+            # 降级为 tool_choice='auto'。对齐 analysis.py::_resolve_agent_params。
+            "supports_tool_choice_required": bool(model.supports_tool_choice_required),
         }
 
     @staticmethod

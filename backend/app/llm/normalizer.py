@@ -148,6 +148,7 @@ class FlowDataNormalizer:
         max_tokens: int = _MAX_TOKENS_NORMALIZER,
         thinking: Optional[str] = None,
         temperature: Optional[float] = None,
+        supports_tool_choice_required: bool = True,
     ):
         self.api_url = api_url
         self.api_key = api_key
@@ -157,6 +158,7 @@ class FlowDataNormalizer:
         self.max_tokens = max_tokens
         self.thinking = thinking
         self.temperature = temperature
+        self.supports_tool_choice_required = supports_tool_choice_required
         self._agent = None  # lazy-build，注册 output_validator
 
     def _get_agent(self):
@@ -171,6 +173,7 @@ class FlowDataNormalizer:
                 max_tokens=self.max_tokens,
                 thinking=self.thinking,
                 temperature=self.temperature,
+                supports_tool_choice_required=self.supports_tool_choice_required,
             )
 
             @agent.output_validator
